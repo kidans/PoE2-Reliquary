@@ -1,0 +1,10 @@
+# JavaScript dependencies and build output
+node_modules/
+dist/
+
+# Tauri/Rust build output
+src-tauri/target/
+
+# Local editor and OS files
+.DS_Store
+*.swp
