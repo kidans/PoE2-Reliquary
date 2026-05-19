@@ -14,12 +14,13 @@
       {
         "label": "main",
         "title": "Lumen-Scan",
-        "width": 1280,
-        "height": 720,
+        "width": 540,
+        "height": 280,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
-        "resizable": true,
+        "resizable": false,
+        "shadow": false,
         "visible": true
       }
     ],
@@ -30,6 +31,6 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": []
+    "icon": ["icons/icon.ico"]
   }
 }
