@@ -867,21 +867,10 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
                         let locked_state = state.lock().await;
                         locked_state.trade_league.clone()
                     };
-                    let (selected_currency, selected_price_option) = {
-                        let locked_state = state.lock().await;
-                        (
-                            locked_state.price_currency.clone(),
-                            locked_state.price_option.clone(),
-                        )
-                    };
-                    let active_filters = {
-                        let mut locked_state = state.lock().await;
-                        locked_state.active_price_filters.clear();
-                        locked_state.active_price_filters.clone()
-                    };
                     let scanned_item = item_from_clipboard(raw_text, Some(&league));
                     {
                         let mut locked_state = state.lock().await;
+                        locked_state.active_price_filters.clear();
                         locked_state.scanned_item = Some(scanned_item.clone());
                         locked_state.price_check = Some(price_check::loading(&scanned_item));
                         locked_state.price_check_continuation = None;
@@ -910,16 +899,6 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
                                 state.clone(),
                                 item,
                                 league,
-                            );
-                        } else {
-                            spawn_price_check_worker(
-                                app_handle.clone(),
-                                state.clone(),
-                                item,
-                                league,
-                                selected_currency,
-                                selected_price_option,
-                                active_filters,
                             );
                         }
                     }

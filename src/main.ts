@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import "./styles.css";
 
 type TabId = "scan" | "trade" | "data";
+type PriceProfileId = "quick" | "exact" | "broad" | "base";
 
 type AppState = {
   scanned_item: ScannedItem | null;
@@ -276,6 +277,7 @@ let activeTab: TabId = "scan";
 let workerMessages: WorkerStatus[] = [];
 let compactMode = false;
 let selectedSpecKeys = new Set<string>();
+let selectedPriceProfile: PriceProfileId = "quick";
 let appliedWindowLayout: "scan" | "trade" | "idle" | "default" | "compact" | null = null;
 let evaluateLayoutFrame = 0;
 let tradeSearchQuery = "";
@@ -304,6 +306,29 @@ const CURRENCY_ICON_ALIASES: Record<string, string> = {
   alch: "alchemy",
   aug: "augment",
 };
+
+const PRICE_PROFILES: Array<{ id: PriceProfileId; label: string; title: string }> = [
+  {
+    id: "quick",
+    label: "Quick Price",
+    title: "Automatically selects the highest-impact searchable modifiers.",
+  },
+  {
+    id: "exact",
+    label: "Exact Match",
+    title: "Matches every searchable value exactly. This may return few results.",
+  },
+  {
+    id: "broad",
+    label: "Broad (-10%)",
+    title: "Uses the same searchable values with relaxed numeric minimums.",
+  },
+  {
+    id: "base",
+    label: "Crafting Base",
+    title: "Prices the base using item level and base-defining implicits/special mods.",
+  },
+];
 
 root.innerHTML = isListingPreviewWindow
   ? `
@@ -653,10 +678,7 @@ function renderScanPanel(item: ScannedItem | null, priceCheck: PriceCheck | null
             <span>${escapeHtml(item.rarity)} ${escapeHtml(itemClass)}</span>
             <span>${item.family === "currency" ? "Exchange Mode" : item.hazards.length ? "Hazards detected" : "Modifiable"}</span>
           </div>
-          <div class="match-toggle-row" aria-label="Search profile">
-            <label><input type="radio" name="match-profile" checked /> Exact Match</label>
-            <label><input type="radio" name="match-profile" /> Broad (-10%)</label>
-          </div>
+          ${renderPriceProfileControls()}
         </div>
         ${hazardMarkup}
       </div>
@@ -677,6 +699,31 @@ function renderValueLines(entries: ValueLineEntry[]) {
       ${entries.map((entry) => renderValueEntry(entry)).join("")}
     </div>
   `;
+}
+
+function renderPriceProfileControls() {
+  return `
+    <div class="match-toggle-row" aria-label="Search profile">
+      ${PRICE_PROFILES.map(
+        (profile) => `
+          <label title="${escapeAttribute(profile.title)}">
+            <input
+              type="radio"
+              name="match-profile"
+              value="${escapeAttribute(profile.id)}"
+              data-price-profile="${escapeAttribute(profile.id)}"
+              ${selectedPriceProfile === profile.id ? "checked" : ""}
+            />
+            ${escapeHtml(profile.label)}
+          </label>
+        `,
+      ).join("")}
+    </div>
+  `;
+}
+
+function priceProfileLabel(profileId: PriceProfileId) {
+  return PRICE_PROFILES.find((profile) => profile.id === profileId)?.label ?? profileId;
 }
 
 function renderValueLine(spec: ItemSpec) {
@@ -1911,6 +1958,151 @@ function addNumericSpec(
   });
 }
 
+function applyProfileSelection(item: ScannedItem, profile: PriceProfileId = selectedPriceProfile) {
+  selectedSpecKeys = profileSpecKeySet(item, profile);
+}
+
+function profileSpecKeySet(item: ScannedItem, profile: PriceProfileId) {
+  const specs = itemSpecs(item);
+  const keys = new Set<string>();
+
+  profileSpecs(item, profile, specs).forEach((spec) => {
+    keys.add(spec.key);
+  });
+
+  return keys;
+}
+
+function profileSpecs(item: ScannedItem, profile: PriceProfileId, specs = itemSpecs(item)) {
+  const searchable = searchableProfileSpecs(specs);
+
+  switch (profile) {
+    case "exact":
+      return searchable;
+    case "broad":
+      return searchable;
+    case "base":
+      return searchable.filter((spec) => isBaseProfileSpec(spec));
+    case "quick":
+    default:
+      return quickPriceSpecs(searchable);
+  }
+}
+
+function searchableProfileSpecs(specs: ItemSpec[]) {
+  return specs.filter((spec) => {
+    if (spec.kind === "sockets" || spec.kind === "spirit" || spec.kind === "required_level") {
+      return false;
+    }
+
+    if (spec.kind !== "explicit") {
+      return spec.value !== null;
+    }
+
+    if (isItemValueModifier(spec.label)) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function quickPriceSpecs(specs: ItemSpec[]) {
+  return specs
+    .filter((spec) => spec.kind === "explicit" && isQuickPriceCandidate(spec))
+    .map((spec) => ({ spec, score: priceImpactScore(spec) }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || left.spec.label.localeCompare(right.spec.label))
+    .slice(0, 3)
+    .map((entry) => entry.spec);
+}
+
+function isQuickPriceCandidate(spec: ItemSpec) {
+  const label = spec.label.toLowerCase();
+  return !(
+    label.includes("(implicit)") ||
+    label.includes("(rune)") ||
+    label.includes("(desecrated)") ||
+    label.includes("(corrupted)") ||
+    label.includes("(enchant)") ||
+    label.includes("(fractured)")
+  );
+}
+
+function isBaseProfileSpec(spec: ItemSpec) {
+  if (spec.kind === "item_level") {
+    return true;
+  }
+
+  if (spec.kind !== "explicit") {
+    return false;
+  }
+
+  const label = spec.label.toLowerCase();
+  return (
+    label.includes("(implicit)") ||
+    label.includes("(fractured)") ||
+    label.includes("(desecrated)") ||
+    label.includes("(corrupted)")
+  );
+}
+
+function priceImpactScore(spec: ItemSpec) {
+  const label = spec.label.toLowerCase();
+  const value = Math.abs(spec.value ?? 0);
+  let score = Math.min(value, 120);
+
+  if (/level of all|level of .* skills|gem level/.test(label)) {
+    score += 320;
+  }
+  if (/movement speed|attack speed|cast speed|projectile speed/.test(label)) {
+    score += 260;
+  }
+  if (/gain .* as extra|power charge|frenzy charge|endurance charge|maximum power charges|maximum rage/.test(label)) {
+    score += 250;
+  }
+  if (/physical damage|elemental damage|spell damage|attack damage|damage with/.test(label)) {
+    score += 220;
+  }
+  if (/maximum life|maximum mana|spirit|strength|dexterity|intelligence|all attributes/.test(label)) {
+    score += 180;
+  }
+  if (/resistance|chaos resistance|rarity of items/.test(label)) {
+    score += 150;
+  }
+  if (/stun threshold|accuracy|light radius|life regeneration/.test(label)) {
+    score += 70;
+  }
+
+  return score;
+}
+
+function activePriceFiltersForCurrentSelection() {
+  if (!state.scanned_item) {
+    return [];
+  }
+
+  const specs = itemSpecs(state.scanned_item).filter((spec) => selectedSpecKeys.has(spec.key));
+  return specs.map((spec) => ({
+    kind: spec.kind,
+    label: spec.label,
+    value: valueForProfileFilter(spec),
+    template: spec.template,
+  }));
+}
+
+function valueForProfileFilter(spec: ItemSpec) {
+  if (selectedPriceProfile !== "broad" || spec.value === null) {
+    return spec.value;
+  }
+
+  if (spec.kind === "item_level" || spec.kind === "required_level") {
+    return spec.value;
+  }
+
+  return Math.floor(spec.value * 0.9 * 10) / 10;
+}
+
 function isSpecApplied(
   spec: ItemSpec,
   item = state.scanned_item,
@@ -1948,6 +2140,10 @@ function activeFilterMatchesSpec(filter: ActivePriceFilter, spec: ItemSpec) {
 
   if (filter.kind === "explicit") {
     return templatesCompatible(filter.template, spec.template);
+  }
+
+  if (filter.label === spec.label) {
+    return true;
   }
 
   if (filter.value === null || spec.value === null) {
@@ -2034,6 +2230,7 @@ function cleanTradeMarkup(value: string) {
 function specTemplate(value: string) {
   return cleanTradeMarkup(value)
     .toLowerCase()
+    .replace(/\b(rune|implicit|desecrated|corrupted|fractured|enchant|augmented)\b/g, " ")
     .replace(/\d+(?:\.\d+)?/g, "#")
     .replace(/[^a-z#%]+/g, " ")
     .replace(/\s+/g, " ")
@@ -2119,14 +2316,8 @@ async function pushActivePriceFilters() {
     return;
   }
 
-  const specs = itemSpecs(state.scanned_item).filter((spec) => selectedSpecKeys.has(spec.key));
   await invoke("set_active_price_filters", {
-    filters: specs.map((spec) => ({
-      kind: spec.kind,
-      label: spec.label,
-      value: spec.value,
-      template: spec.template,
-    })),
+    filters: activePriceFiltersForCurrentSelection(),
   }).catch((error) => pushStatus("price", String(error)));
 }
 
@@ -2706,8 +2897,23 @@ if (!isListingPreviewWindow && leagueElement) {
 
   root.addEventListener("change", async (event) => {
     const target = event.target as HTMLElement;
+    const priceProfileInput = target.closest<HTMLInputElement>("[data-price-profile]");
     const priceOptionSelect = target.closest<HTMLSelectElement>("[data-price-option]");
     const currencySelect = target.closest<HTMLSelectElement>("[data-price-currency]");
+
+    if (priceProfileInput?.dataset.priceProfile) {
+      selectedPriceProfile = priceProfileInput.dataset.priceProfile as PriceProfileId;
+      if (state.scanned_item) {
+        applyProfileSelection(state.scanned_item);
+      }
+      if (state.price_check) {
+        state.price_check.status = `Applying ${priceProfileLabel(selectedPriceProfile)} profile...`;
+      }
+      loadingMoreMarketplaceResults = false;
+      render();
+      void pushActivePriceFilters();
+      return;
+    }
 
     if (priceOptionSelect) {
       state.price_option = priceOptionSelect.value;
@@ -2848,9 +3054,9 @@ if (!isListingPreviewWindow && leagueElement) {
     loadingMoreMarketplaceResults = false;
     void hideListingPreview();
     state.scanned_item = event.payload;
-    selectedSpecKeys.clear();
+    applyProfileSelection(event.payload);
     state.price_check = {
-      status: "Checking matched listings...",
+      status: `Applying ${priceProfileLabel(selectedPriceProfile)} profile...`,
       matched: 0,
       source_url: event.payload.trade_url,
       selected_currency: state.price_currency,
@@ -2868,6 +3074,7 @@ if (!isListingPreviewWindow && leagueElement) {
       activeTab = "trade";
     } else {
       activeTab = "scan";
+      void pushActivePriceFilters();
     }
     render();
   });

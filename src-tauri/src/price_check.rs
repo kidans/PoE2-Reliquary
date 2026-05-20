@@ -1016,19 +1016,62 @@ fn matching_trade_stat<'a>(
     filter: &ActivePriceFilter,
     stats: &'a [TradeStatEntry],
 ) -> Option<&'a TradeStatEntry> {
-    let stat = stats.iter().find(|stat| {
-        templates_compatible(&stat.template, &filter.template) && stat.id.starts_with("explicit.")
-    });
-    stat.or_else(|| {
-        stats.iter().find(|stat| {
-            templates_compatible(&stat.template, &filter.template) && stat.id.starts_with("pseudo.")
+    for prefix in preferred_stat_prefixes(&filter.label) {
+        if let Some(stat) = stats.iter().find(|stat| {
+            templates_compatible(&stat.template, &filter.template) && stat.id.starts_with(prefix)
+        }) {
+            return Some(stat);
+        }
+    }
+
+    None
+}
+
+fn preferred_stat_prefixes(label: &str) -> &'static [&'static str] {
+    let label = label.to_ascii_lowercase();
+
+    if label.contains("(rune)") {
+        return &["rune.", "explicit.", "pseudo."];
+    }
+
+    if label.contains("(implicit)") {
+        return &["implicit.", "pseudo."];
+    }
+
+    if label.contains("(desecrated)") {
+        return &["desecrated.", "explicit.", "pseudo."];
+    }
+
+    if label.contains("(fractured)") {
+        return &["fractured.", "explicit.", "pseudo."];
+    }
+
+    if label.contains("(enchant)") {
+        return &["enchant.", "explicit.", "pseudo."];
+    }
+
+    &["explicit.", "pseudo."]
+}
+
+fn stat_template_for_match(template: &str) -> String {
+    template
+        .split_whitespace()
+        .filter(|part| {
+            !matches!(
+                *part,
+                "rune" | "implicit" | "desecrated" | "corrupted" | "fractured" | "enchant"
+                    | "augmented"
+            )
         })
-    })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 
 fn templates_compatible(left: &str, right: &str) -> bool {
-    left == right || left.contains(right) || right.contains(left)
+    let left = stat_template_for_match(left);
+    let right = stat_template_for_match(right);
+    left == right || left.contains(&right) || right.contains(&left)
 }
 
 fn listing_from_fetch_result(
@@ -1039,9 +1082,7 @@ fn listing_from_fetch_result(
 ) -> Option<PriceListing> {
     let explicit_mods = result
         .item
-        .explicit_mods
-        .clone()
-        .unwrap_or_default()
+        .all_searchable_mods()
         .into_iter()
         .map(clean_trade_text)
         .collect();
@@ -1100,7 +1141,7 @@ fn listing_from_fetch_result(
         preview_item_class: result.item.item_class.clone(),
         preview_icon_url: result.item.icon.clone(),
         preview_property_lines: preview_property_lines(&result.item),
-        preview_description: result.item.description.clone().map(clean_trade_text),
+        preview_description: result.item.description.map(clean_trade_text),
     })
 }
 
@@ -1653,8 +1694,18 @@ struct FetchItem {
     properties: Vec<FetchItemProperty>,
     #[serde(default)]
     requirements: Vec<FetchItemProperty>,
-    #[serde(rename = "explicitMods")]
+    #[serde(rename = "explicitMods", default)]
     explicit_mods: Option<Vec<String>>,
+    #[serde(rename = "implicitMods", default)]
+    implicit_mods: Option<Vec<String>>,
+    #[serde(rename = "runeMods", default)]
+    rune_mods: Option<Vec<String>>,
+    #[serde(rename = "desecratedMods", default)]
+    desecrated_mods: Option<Vec<String>>,
+    #[serde(rename = "fracturedMods", default)]
+    fractured_mods: Option<Vec<String>>,
+    #[serde(rename = "craftedMods", default)]
+    crafted_mods: Option<Vec<String>>,
 }
 
 impl FetchItem {
@@ -1672,6 +1723,30 @@ impl FetchItem {
             .find(|property| clean_trade_text(property.name.clone()).eq_ignore_ascii_case(name))
             .and_then(FetchItemProperty::first_numeric_value)
     }
+
+    fn all_searchable_mods(&self) -> Vec<String> {
+        let mut mods = Vec::new();
+        mods.extend(self.explicit_mods.clone().unwrap_or_default());
+        mods.extend(suffixed_mods(self.implicit_mods.as_ref(), "implicit"));
+        mods.extend(suffixed_mods(self.rune_mods.as_ref(), "rune"));
+        mods.extend(suffixed_mods(self.desecrated_mods.as_ref(), "desecrated"));
+        mods.extend(suffixed_mods(self.fractured_mods.as_ref(), "fractured"));
+        mods.extend(suffixed_mods(self.crafted_mods.as_ref(), "crafted"));
+        mods
+    }
+}
+
+fn suffixed_mods(mods: Option<&Vec<String>>, suffix: &str) -> Vec<String> {
+    mods.into_iter()
+        .flatten()
+        .map(|modifier| {
+            if modifier.to_ascii_lowercase().contains(&format!("({suffix})")) {
+                modifier.clone()
+            } else {
+                format!("{modifier} ({suffix})")
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug, Deserialize)]
@@ -1930,6 +2005,11 @@ mod tests {
                     }],
                     requirements: Vec::new(),
                     explicit_mods: Some(vec!["Adds 1 to 2 Physical Damage".to_string()]),
+                    implicit_mods: None,
+                    rune_mods: None,
+                    desecrated_mods: None,
+                    fractured_mods: None,
+                    crafted_mods: None,
                 },
                 listing: FetchListing {
                     indexed: Some("2026-05-20T12:00:00Z".to_string()),
