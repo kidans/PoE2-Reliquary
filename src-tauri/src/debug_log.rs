@@ -8,17 +8,17 @@ use std::{
 
 use serde_json::json;
 
-const DEFAULT_LOG_DIR_NAME: &str = "Kalandra";
-const DEFAULT_LOG_FILE_NAME: &str = "lumen-scan-debug.log";
+const DEFAULT_LOG_DIR_NAME: &str = "Reliquary";
+const DEFAULT_LOG_FILE_NAME: &str = "reliquary-debug.log";
 
 pub fn append(event: &str, data: serde_json::Value) {
     if let Err(error) = append_inner(event, data) {
-        eprintln!("failed to write Lumen-Scan debug log: {error}");
+        eprintln!("failed to write Reliquary debug log: {error}");
     }
 }
 
 pub fn path() -> PathBuf {
-    if let Ok(path) = env::var("LUMEN_DEBUG_LOG") {
+    if let Ok(path) = env::var("RELIQUARY_DEBUG_LOG") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
             return PathBuf::from(trimmed);

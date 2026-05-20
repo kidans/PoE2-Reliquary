@@ -1,10 +1,10 @@
 # Marketplace Implementation Research
 
-This note captures the marketplace transport decision for Lumen-Scan so future work does not drift into hidden official trade API calls without an explicit product decision.
+This note captures the marketplace transport decision for Reliquary so future work does not drift into hidden official trade API calls without an explicit product decision.
 
 ## Decision
 
-Lumen-Scan now uses a pragmatic split: browser handoff remains available, while the Ctrl+C price checker uses an isolated community-style trade transport for real-time matched listings. The transport should stay narrow and swappable so it can become a separate CLI process without changing the overlay contract.
+Reliquary now uses a pragmatic split: browser handoff remains available, while the Ctrl+C price checker uses an isolated community-style trade transport for real-time matched listings. The transport should stay narrow and swappable so it can become a separate CLI process without changing the overlay contract.
 
 - The app may parse copied item text locally and prepare a search payload or clipboard summary.
 - The app may open the official PoE2 trade website for the configured league with a `?q=<JSON>` browser query.
@@ -34,7 +34,7 @@ What to borrow conceptually:
 - Rate-limit state display ideas if we ever expose diagnostic status.
 - Browser URL handoff pattern.
 
-What not to copy broadly into Lumen-Scan runtime:
+What not to copy broadly into Reliquary runtime:
 
 - In-app proxying of official trade API requests.
 - Hidden fetch loops outside the dedicated price-check transport.

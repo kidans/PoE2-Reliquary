@@ -1,6 +1,6 @@
-# Technical Blueprint & Production Specification: PoE2 "Lumen-Scan" Overlay Engine (Tauri v2 Architecture)
+# Technical Blueprint & Production Specification: PoE2 "Reliquary" Overlay Engine (Tauri v2 Architecture)
 
-This document defines the production architecture, multi-threaded backend pipeline, and rapid-development implementation schedule for **Lumen-Scan**.
+This document defines the production architecture, multi-threaded backend pipeline, and rapid-development implementation schedule for **Reliquary**.
 
 By pivoting from a terminal interface to **Tauri v2**, this utility operates as a lightweight, hardware-accelerated desktop overlay. It pairs a high-performance **Rust engine** with a minimalist, high-contrast **TypeScript/Tailwind HTML frontend**. It runs on native operating system webviews (Webview2 on Windows, WebKit on Linux), staying immune to official GGG Trade API rate limits while keeping idle memory consumption under 40MB.
 
@@ -8,7 +8,7 @@ By pivoting from a terminal interface to **Tauri v2**, this utility operates as 
 
 ## I. Architectural Topology
 
-Lumen-Scan leverages a decoupled, asynchronous concurrent worker pool managed by the `tokio` runtime, bridged to the user interface layer via Tauri v2's low-latency Inter-Process Communication (IPC) protocol.
+Reliquary leverages a decoupled, asynchronous concurrent worker pool managed by the `tokio` runtime, bridged to the user interface layer via Tauri v2's low-latency Inter-Process Communication (IPC) protocol.
 
 ```
                              ┌───────────────────────┐
@@ -17,7 +17,7 @@ Lumen-Scan leverages a decoupled, asynchronous concurrent worker pool managed by
               Ctrl+C / Hotkeys     │           │ Client.txt Appends
                                    ▼           ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                     LUMEN-SCAN RUST BACKEND ENGINE                      │
+│                     RELIQUARY RUST BACKEND ENGINE                       │
 │                                                                         │
 │  ┌────────────────────────┐             ┌────────────────────────────┐  │
 │  │  Global OS Input Loop  │             │ Client.txt Log Streamer    │  │

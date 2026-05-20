@@ -427,6 +427,7 @@ pub fn price_check_from_tab_state(tab: &ExchangeTabState) -> PriceCheck {
         rate_limit: None,
         currencies,
         filters: Vec::new(),
+        requested_filters: Vec::new(),
         applied_filters: Vec::new(),
         listings: Vec::new(),
         error: tab.error.clone(),
@@ -522,7 +523,7 @@ async fn fetch_exchange_overview(
         .ok_or_else(|| format!("{} is not backed by a live feed yet.", category.label))?;
 
     let client = reqwest::Client::builder()
-        .user_agent("Kalandra/0.1 poe-ninja-exchange")
+        .user_agent("Reliquary/0.1 poe-ninja-exchange")
         .build()
         .map_err(|error| error.to_string())?;
     let response = fetch_poe_ninja_overview(&client, league, &overview_type).await?;

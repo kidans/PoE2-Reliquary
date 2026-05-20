@@ -44,6 +44,8 @@ const DEFAULT_WINDOW_WIDTH: f64 = 472.0;
 const DEFAULT_WINDOW_HEIGHT: f64 = 760.0;
 const SCAN_WINDOW_WIDTH: f64 = 540.0;
 const SCAN_WINDOW_HEIGHT: f64 = 980.0;
+const SETTINGS_WINDOW_WIDTH: f64 = 740.0;
+const SETTINGS_WINDOW_HEIGHT: f64 = 620.0;
 const TRADE_WINDOW_WIDTH: f64 = 1000.0;
 const TRADE_WINDOW_HEIGHT: f64 = 760.0;
 const LISTING_PREVIEW_WINDOW_LABEL: &str = "listing-preview";
@@ -120,6 +122,7 @@ pub struct PriceCheck {
     pub rate_limit: Option<TradeRateLimit>,
     pub currencies: Vec<CurrencyMeta>,
     pub filters: Vec<PriceFilter>,
+    pub requested_filters: Vec<ActivePriceFilter>,
     pub applied_filters: Vec<ActivePriceFilter>,
     pub listings: Vec<PriceListing>,
     pub error: Option<String>,
@@ -214,7 +217,7 @@ pub struct ListingPreviewRequest {
     pub family: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActivePriceFilter {
     pub kind: String,
     pub label: String,
@@ -332,6 +335,7 @@ fn set_window_layout(window: tauri::Window, layout: String) -> Result<(), String
     let (width, height) = match layout.as_str() {
         "scan" => (SCAN_WINDOW_WIDTH, SCAN_WINDOW_HEIGHT),
         "trade" => (TRADE_WINDOW_WIDTH, TRADE_WINDOW_HEIGHT),
+        "settings" => (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT),
         "idle" => (IDLE_WINDOW_WIDTH, IDLE_WINDOW_HEIGHT),
         "default" => (DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT),
         "compact" => (COMPACT_WINDOW_WIDTH, COMPACT_WINDOW_HEIGHT),
@@ -365,7 +369,11 @@ fn show_listing_preview(
     position_listing_preview(&window, &preview_window, anchor_top)?;
     preview_window.show().map_err(|error| error.to_string())?;
     app_handle
-        .emit_to(LISTING_PREVIEW_WINDOW_LABEL, "preview://listing-updated", preview)
+        .emit_to(
+            LISTING_PREVIEW_WINDOW_LABEL,
+            "preview://listing-updated",
+            preview,
+        )
         .map_err(|error| error.to_string())?;
 
     let app_handle_clone = app_handle.clone();
@@ -401,7 +409,11 @@ fn hide_listing_preview(
     }
 
     if let Some(preview_window) = app_handle.get_webview_window(LISTING_PREVIEW_WINDOW_LABEL) {
-        let _ = app_handle.emit_to(LISTING_PREVIEW_WINDOW_LABEL, "preview://listing-cleared", ());
+        let _ = app_handle.emit_to(
+            LISTING_PREVIEW_WINDOW_LABEL,
+            "preview://listing-cleared",
+            (),
+        );
         preview_window.hide().map_err(|error| error.to_string())?;
     }
 
@@ -824,7 +836,7 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("failed to run Lumen-Scan Tauri application");
+        .expect("failed to run Reliquary Tauri application");
 }
 
 fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState) {
@@ -1118,6 +1130,11 @@ fn spawn_price_check_worker(
     active_filters: Vec<ActivePriceFilter>,
 ) {
     tauri::async_runtime::spawn(async move {
+        let request_item_raw_text = item.raw_text.clone();
+        let request_league = league.clone();
+        let request_currency = selected_currency.clone();
+        let request_price_option = selected_price_option.clone();
+        let request_filters = active_filters.clone();
         let outcome = price_check::check_item_price(
             &item,
             Some(&league),
@@ -1126,13 +1143,39 @@ fn spawn_price_check_worker(
             &active_filters,
         )
         .await;
-        {
+        let should_emit = {
             let mut locked_state = state.lock().await;
-            locked_state.price_check = Some(outcome.price_check.clone());
-            locked_state.price_check_continuation = outcome.continuation.clone();
-            locked_state.price_check_fetch_in_flight = false;
+            let is_current_request = locked_state
+                .scanned_item
+                .as_ref()
+                .map(|current_item| current_item.raw_text == request_item_raw_text)
+                .unwrap_or(false)
+                && locked_state.trade_league == request_league
+                && locked_state.price_currency == request_currency
+                && locked_state.price_option == request_price_option
+                && locked_state.active_price_filters == request_filters;
+
+            if !is_current_request {
+                debug_log::append(
+                    "price_check.stale_response_ignored",
+                    serde_json::json!({
+                        "league": request_league,
+                        "selected_currency": request_currency,
+                        "selected_price_option": request_price_option,
+                        "requested_filters": request_filters,
+                    }),
+                );
+                false
+            } else {
+                locked_state.price_check = Some(outcome.price_check.clone());
+                locked_state.price_check_continuation = outcome.continuation.clone();
+                locked_state.price_check_fetch_in_flight = false;
+                true
+            }
+        };
+        if should_emit {
+            let _ = app_handle.emit("scan://price-check-updated", outcome.price_check);
         }
-        let _ = app_handle.emit("scan://price-check-updated", outcome.price_check);
     });
 }
 
@@ -1206,7 +1249,7 @@ fn spawn_exchange_category_worker(
 }
 
 fn configured_trade_league() -> Option<String> {
-    env::var("LUMEN_POE2_LEAGUE")
+    env::var("RELIQUARY_POE2_LEAGUE")
         .ok()
         .map(|league| league.trim().to_string())
         .filter(|league| !league.is_empty())
@@ -1214,7 +1257,7 @@ fn configured_trade_league() -> Option<String> {
 
 fn start_rdev_listener(input_tx: mpsc::UnboundedSender<InputAction>) -> Result<(), String> {
     thread::Builder::new()
-        .name("lumen-scan-global-input".to_string())
+        .name("reliquary-global-input".to_string())
         .spawn(move || {
             let ctrl_down = Arc::new(AtomicBool::new(false));
             let alt_down = Arc::new(AtomicBool::new(false));
@@ -1287,7 +1330,7 @@ fn is_poe_window_title(title: &str) -> bool {
 
 fn is_overlay_window_title(title: &str) -> bool {
     let normalized = title.to_ascii_lowercase();
-    normalized.contains("lumen-scan") || normalized.contains("kalandra")
+    normalized.contains("reliquary")
 }
 
 #[cfg(target_os = "windows")]
@@ -1434,7 +1477,7 @@ fn is_waystone_like(item: &Item) -> bool {
 }
 
 fn hazard_catalog_path() -> PathBuf {
-    env::var("LUMEN_BANNED_MODS")
+    env::var("RELIQUARY_BANNED_MODS")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("src-tauri").join("banned_mods.json"))
 }
@@ -1474,7 +1517,7 @@ fn create_listing_preview_window<R: tauri::Runtime>(
         LISTING_PREVIEW_WINDOW_LABEL,
         WebviewUrl::App("index.html?preview=listing".into()),
     )
-    .title("Kalandra Listing Preview")
+    .title("Reliquary Listing Preview")
     .inner_size(LISTING_PREVIEW_WIDTH, LISTING_PREVIEW_HEIGHT)
     .resizable(false)
     .decorations(false)
@@ -1495,9 +1538,15 @@ fn position_listing_preview(
     preview_window: &tauri::WebviewWindow,
     anchor_top: f64,
 ) -> Result<(), String> {
-    let main_position = main_window.outer_position().map_err(|error| error.to_string())?;
-    let main_size = main_window.outer_size().map_err(|error| error.to_string())?;
-    let monitor = main_window.current_monitor().map_err(|error| error.to_string())?;
+    let main_position = main_window
+        .outer_position()
+        .map_err(|error| error.to_string())?;
+    let main_size = main_window
+        .outer_size()
+        .map_err(|error| error.to_string())?;
+    let monitor = main_window
+        .current_monitor()
+        .map_err(|error| error.to_string())?;
 
     let mut x = main_position.x as f64 + main_size.width as f64 + LISTING_PREVIEW_GAP;
     let mut y = main_position.y as f64 + anchor_top;

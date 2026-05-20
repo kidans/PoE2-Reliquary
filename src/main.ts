@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./styles.css";
 
-type TabId = "scan" | "trade" | "data";
+type TabId = "scan" | "trade" | "data" | "settings";
 type PriceProfileId = "quick" | "exact" | "broad" | "base";
 
 type AppState = {
@@ -46,6 +46,7 @@ type PriceCheck = {
   rate_limit: TradeRateLimit | null;
   currencies: CurrencyMeta[];
   filters: PriceFilter[];
+  requested_filters: ActivePriceFilter[];
   applied_filters: ActivePriceFilter[];
   listings: PriceListing[];
   error: string | null;
@@ -171,6 +172,11 @@ type WorkerStatus = {
   message: string;
 };
 
+type AppSettings = {
+  accentHue: number;
+  panelAlpha: number;
+};
+
 type TradeLeague = {
   id: string;
   text: string;
@@ -255,7 +261,7 @@ const root = document.querySelector<HTMLDivElement>("#root");
 const isListingPreviewWindow = new URLSearchParams(window.location.search).get("preview") === "listing";
 
 if (!root) {
-  throw new Error("Lumen-Scan root element was not found.");
+  throw new Error("Reliquary root element was not found.");
 }
 
 const state: AppState = {
@@ -278,13 +284,23 @@ let workerMessages: WorkerStatus[] = [];
 let compactMode = false;
 let selectedSpecKeys = new Set<string>();
 let selectedPriceProfile: PriceProfileId = "quick";
-let appliedWindowLayout: "scan" | "trade" | "idle" | "default" | "compact" | null = null;
+let appliedWindowLayout: "scan" | "trade" | "settings" | "idle" | "default" | "compact" | null = null;
 let evaluateLayoutFrame = 0;
 let tradeSearchQuery = "";
 let loadingMoreMarketplaceResults = false;
 let hoveredListingPreview: ListingPreviewRequest | null = null;
 let pinnedListingPreviewIndex: number | null = null;
 let previewPollHandle = 0;
+let latestRequestedFilterSignature: string | null = null;
+let activeFilterPushTimer = 0;
+
+const SETTINGS_STORAGE_KEY = "reliquary.ui.settings";
+const DEFAULT_APP_SETTINGS: AppSettings = {
+  accentHue: 355,
+  panelAlpha: 0.98,
+};
+let appSettings = readAppSettings();
+applyAppSettings(appSettings);
 
 const LOCAL_CURRENCY_ICONS: Record<string, string> = {
   exalted: "/currency/exalted.webp",
@@ -341,7 +357,7 @@ root.innerHTML = isListingPreviewWindow
       <section class="hud-card interactive" data-interactive>
         <header class="hud-header" data-drag-handle>
           <div class="brand-lockup">
-            <h1 class="brand-title">kalandra</h1>
+            <h1 class="brand-title">reliquary</h1>
           </div>
           <div class="window-controls">
             <div class="zone-pill" data-zone>Zone: Unknown</div>
@@ -358,7 +374,7 @@ root.innerHTML = isListingPreviewWindow
 
         <div class="compact-strip" data-drag-handle>
           <div>
-            <span data-compact-title>Kalandra ready</span>
+            <span data-compact-title>Reliquary ready</span>
             <strong data-compact-meta>Ctrl+C scan | Alt+D trade</strong>
           </div>
           <button class="chrome-button" data-toggle-compact type="button">Open</button>
@@ -373,6 +389,12 @@ root.innerHTML = isListingPreviewWindow
           </button>
           <button class="tab-button" data-tab="data" type="button" title="Data">
             <span class="tab-label">Data</span>
+          </button>
+          <button class="tab-button tab-button-icon" data-tab="settings" type="button" title="Settings" aria-label="Settings">
+            <svg class="tab-cog" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 8.2a3.8 3.8 0 1 1 0 7.6 3.8 3.8 0 0 1 0-7.6Z" />
+              <path d="M18.6 13.4c.1-.5.1-.9.1-1.4s0-.9-.1-1.4l2-1.5-1.9-3.3-2.4 1a8.2 8.2 0 0 0-2.3-1.3L13.7 3h-3.8l-.4 2.5a8.2 8.2 0 0 0-2.3 1.3l-2.3-1L3 9.1l2 1.5c-.1.5-.1.9-.1 1.4s0 .9.1 1.4l-2 1.5 1.9 3.3 2.3-1a8.2 8.2 0 0 0 2.3 1.3l.4 2.5h3.8l.4-2.5a8.2 8.2 0 0 0 2.3-1.3l2.4 1 1.9-3.3-2.1-1.5Z" />
+            </svg>
           </button>
         </nav>
 
@@ -392,7 +414,7 @@ const tabButtons = isListingPreviewWindow
   : Array.from(root.querySelectorAll<HTMLButtonElement>("[data-tab]"));
 
 if (!panelElement || (!isListingPreviewWindow && (!zoneElement || !leagueElement || !hudElement || !compactTitleElement || !compactMetaElement))) {
-  throw new Error("Lumen-Scan UI shell failed to initialize.");
+  throw new Error("Reliquary UI shell failed to initialize.");
 }
 
 function render() {
@@ -431,6 +453,12 @@ function render() {
 
   if (activeTab === "data") {
     panelElement!.innerHTML = renderDataPanel();
+    hoveredListingPreview = null;
+    void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+  }
+
+  if (activeTab === "settings") {
+    panelElement!.innerHTML = renderSettingsPanel();
     hoveredListingPreview = null;
     void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
   }
@@ -533,7 +561,7 @@ function renderListingPreviewWindow(preview: ListingPreviewRequest | null) {
 
 function compactTitleText(item: ScannedItem | null) {
   if (!item) {
-    return "Kalandra | waiting for item";
+    return "Reliquary | waiting for item";
   }
 
   const hazardPrefix = item.hazards.length ? "WARNING | " : "";
@@ -624,7 +652,7 @@ function renderScanPanel(item: ScannedItem | null, priceCheck: PriceCheck | null
 
   const profile = itemProfile(item);
   const specs = itemSpecs(item, profile);
-  const activeSpecCount = specs.filter((spec) => isSpecApplied(spec, item, priceCheck)).length;
+  const activeSpecCount = specs.filter((spec) => selectedSpecKeys.has(spec.key)).length;
   const hazardMarkup = item.hazards.length
     ? `
       <div class="hazard-box">
@@ -727,12 +755,13 @@ function priceProfileLabel(profileId: PriceProfileId) {
 }
 
 function renderValueLine(spec: ItemSpec) {
-  const active = isSpecApplied(spec);
+  const selected = isSpecSelected(spec);
+  const applied = isSpecApplied(spec);
   const [label, value] = splitSpecLabel(spec.label);
 
   return `
     <button
-      class="defense-spec value-line ${active ? "is-active" : ""}"
+      class="defense-spec value-line ${selected ? "is-active" : ""} ${applied ? "is-applied" : selected ? "is-pending" : ""}"
       data-spec-key="${escapeAttribute(spec.key)}"
       type="button"
       title="Rebuild trade search with this item value"
@@ -936,10 +965,11 @@ function renderModifierGroup(
 }
 
 function renderSpecButton(spec: ItemSpec, className: string) {
-  const active = isSpecApplied(spec);
+  const selected = isSpecSelected(spec);
+  const applied = isSpecApplied(spec);
   return `
     <button
-      class="${className} spec-chip ${active ? "is-active" : ""}"
+      class="${className} spec-chip ${selected ? "is-active" : ""} ${applied ? "is-applied" : selected ? "is-pending" : ""}"
       data-spec-key="${escapeAttribute(spec.key)}"
       type="button"
       title="Rebuild trade search with this specification"
@@ -1861,6 +1891,73 @@ function renderDataPanel() {
   `;
 }
 
+function renderSettingsPanel() {
+  const transparencyPercent = Math.round((1 - appSettings.panelAlpha) * 100);
+
+  return `
+    <section class="settings-panel">
+      <div class="settings-hero">
+        <p class="section-label">Settings</p>
+        <h2>Overlay feel</h2>
+        <p>Visual controls apply instantly and stay local to this machine. Shortcut rebinding is next because it needs the Rust input listener to read the saved chord map safely.</p>
+      </div>
+
+      <div class="settings-grid">
+        <label class="settings-field">
+          <span>
+            <strong>Accent Hue</strong>
+            <small>Defaults to Reliquary red. Warnings stay red even when the accent changes.</small>
+          </span>
+          <input
+            data-setting="accentHue"
+            type="range"
+            min="0"
+            max="359"
+            step="1"
+            value="${escapeAttribute(String(Math.round(appSettings.accentHue)))}"
+          />
+          <output data-setting-output="accentHue">${escapeHtml(String(Math.round(appSettings.accentHue)))} deg</output>
+        </label>
+
+        <label class="settings-field">
+          <span>
+            <strong>Panel Transparency</strong>
+            <small>Changes only the OLED shell behind the readable cards. At 100%, the shell can disappear completely.</small>
+          </span>
+          <input
+            data-setting="panelAlpha"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value="${escapeAttribute(String(transparencyPercent))}"
+          />
+          <output data-setting-output="panelAlpha">${escapeHtml(String(transparencyPercent))}%</output>
+        </label>
+
+        <div class="settings-field settings-field-static">
+          <span>
+            <strong>Shortcut Chords</strong>
+            <small>Single-key shortcuts stay disabled so search fields cannot accidentally collapse or trigger the overlay.</small>
+          </span>
+          <div class="shortcut-chips" aria-label="Current shortcuts">
+            <span>Ctrl + C <small>Scan copied item</small></span>
+            <span>Alt + D <small>Open latest trade</small></span>
+          </div>
+        </div>
+
+        <div class="settings-field settings-field-static">
+          <span>
+            <strong>Next Wiring Pass</strong>
+            <small>Persist editable chords, feed them into Rust, and keep the PoE 2-only window gate intact.</small>
+          </span>
+          <button class="action-button" data-reset-visual-settings type="button">Reset visuals</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function renderLeagueCatalogRow(league: LeagueCatalogEntry) {
   const flags = [
     league.trade_enabled ? "trade" : null,
@@ -2091,6 +2188,24 @@ function activePriceFiltersForCurrentSelection() {
   }));
 }
 
+function activeFilterSignature(filters: ActivePriceFilter[]) {
+  return filters
+    .map((filter) =>
+      [
+        filter.kind,
+        filter.template,
+        filter.label,
+        filter.value === null ? "" : Number(filter.value).toFixed(3),
+      ].join("|"),
+    )
+    .sort()
+    .join(";");
+}
+
+function currentRequestedFilterSignature() {
+  return activeFilterSignature(activePriceFiltersForCurrentSelection());
+}
+
 function valueForProfileFilter(spec: ItemSpec) {
   if (selectedPriceProfile !== "broad" || spec.value === null) {
     return spec.value;
@@ -2113,6 +2228,10 @@ function isSpecApplied(
   }
 
   return appliedSpecKeySet(item, priceCheck).has(spec.key);
+}
+
+function isSpecSelected(spec: ItemSpec) {
+  return selectedSpecKeys.has(spec.key);
 }
 
 function appliedSpecKeySet(item: ScannedItem, priceCheck: PriceCheck) {
@@ -2157,21 +2276,9 @@ function templatesCompatible(left: string, right: string) {
   return left === right || left.includes(right) || right.includes(left);
 }
 
-function syncSelectedSpecKeysToAppliedFilters() {
-  selectedSpecKeys.clear();
-  if (!state.scanned_item || !state.price_check) {
-    return;
-  }
-
-  appliedSpecKeySet(state.scanned_item, state.price_check).forEach((key) => {
-    selectedSpecKeys.add(key);
-  });
-}
-
 function filteredListings(priceCheck: PriceCheck, item?: ScannedItem) {
   const specs = item ? itemSpecs(item) : [];
-  const appliedKeys = item ? appliedSpecKeySet(item, priceCheck) : new Set<string>();
-  const selectedSpecs = specs.filter((spec) => appliedKeys.has(spec.key));
+  const selectedSpecs = specs.filter((spec) => selectedSpecKeys.has(spec.key));
 
   return priceCheck.listings.filter((listing) => {
     if (!listingMatchesSelectedPriceOption(priceCheck, listing)) {
@@ -2304,7 +2411,7 @@ function emptyListingMessage(priceCheck: PriceCheck, currency: CurrencyMeta) {
     return `No fetched listings are priced in ${priceOptionLabel(priceCheck)}.`;
   }
 
-  if (state.scanned_item && appliedSpecKeySet(state.scanned_item, priceCheck).size) {
+  if (state.scanned_item && selectedSpecKeys.size) {
     return "No fetched listings match the selected item specifications.";
   }
 
@@ -2316,9 +2423,24 @@ async function pushActivePriceFilters() {
     return;
   }
 
+  const filters = activePriceFiltersForCurrentSelection();
+  latestRequestedFilterSignature = activeFilterSignature(filters);
+  if (state.price_check) {
+    state.price_check.status = filters.length
+      ? `Refreshing trade search for ${filters.length} selected filter${filters.length === 1 ? "" : "s"}...`
+      : "Refreshing trade search without selected filters...";
+  }
+
   await invoke("set_active_price_filters", {
-    filters: activePriceFiltersForCurrentSelection(),
+    filters,
   }).catch((error) => pushStatus("price", String(error)));
+}
+
+function scheduleActivePriceFilterPush() {
+  window.clearTimeout(activeFilterPushTimer);
+  activeFilterPushTimer = window.setTimeout(() => {
+    void pushActivePriceFilters();
+  }, 180);
 }
 
 function parseRawNumber(rawText: string, regex: RegExp) {
@@ -2450,6 +2572,61 @@ function escapeAttribute(value: string) {
   return escapeHtml(value).replace(/`/g, "&#096;");
 }
 
+function clampNumber(value: number, min: number, max: number, fallback: number) {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, value));
+}
+
+function readAppSettings(): AppSettings {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) ?? "{}") as Partial<AppSettings>;
+
+    return {
+      accentHue: clampNumber(Number(parsed.accentHue), 0, 359, DEFAULT_APP_SETTINGS.accentHue),
+      panelAlpha: clampNumber(Number(parsed.panelAlpha), 0, 1, DEFAULT_APP_SETTINGS.panelAlpha),
+    };
+  } catch {
+    return { ...DEFAULT_APP_SETTINGS };
+  }
+}
+
+function saveAppSettings() {
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(appSettings));
+  } catch {
+    pushStatus("settings", "Unable to save local visual settings.");
+  }
+}
+
+function applyAppSettings(settings: AppSettings) {
+  const hue = clampNumber(settings.accentHue, 0, 359, DEFAULT_APP_SETTINGS.accentHue);
+  const rootStyle = document.documentElement.style;
+
+  rootStyle.setProperty("--gold", `hsl(${hue} 62% 36%)`);
+  rootStyle.setProperty("--gold-bright", `hsl(${hue} 70% 58%)`);
+  rootStyle.setProperty("--gold-deep", `hsl(${hue} 61% 16%)`);
+  rootStyle.setProperty("--accent-hue", String(hue));
+  rootStyle.setProperty("--line", `hsl(${hue} 70% 58% / 0.26)`);
+  rootStyle.setProperty("--line-strong", `hsl(${hue} 70% 58% / 0.56)`);
+  rootStyle.setProperty("--surface-alpha", settings.panelAlpha.toFixed(2));
+  rootStyle.setProperty("--surface-glow-alpha", (settings.panelAlpha * 0.16).toFixed(3));
+}
+
+function updateSettingOutput(settingName: keyof AppSettings) {
+  const output = document.querySelector<HTMLOutputElement>(`[data-setting-output="${settingName}"]`);
+  if (!output) {
+    return;
+  }
+
+  output.textContent =
+    settingName === "panelAlpha"
+      ? `${Math.round((1 - appSettings.panelAlpha) * 100)}%`
+      : `${Math.round(appSettings.accentHue)} deg`;
+}
+
 function fallbackCurrencies(): CurrencyMeta[] {
   return [
     { id: "exalted", name: "Exalted Orb", icon_url: resolveCurrencyIcon("exalted", null) },
@@ -2574,6 +2751,7 @@ function normalizePriceCheck(priceCheck: PriceCheck | null): PriceCheck | null {
   return {
     ...priceCheck,
     selected_price_option: priceCheck.selected_price_option || "equivalent",
+    requested_filters: priceCheck.requested_filters ?? [],
     applied_filters: priceCheck.applied_filters ?? [],
     currencies: priceCheck.currencies.map((currency) => ({
       ...currency,
@@ -2644,13 +2822,17 @@ function isExchangeClipboardItem(item: ScannedItem | null) {
   ].some((needle) => haystack.includes(needle));
 }
 
-function desiredWindowLayout(): "scan" | "trade" | "idle" | "default" | "compact" {
+function desiredWindowLayout(): "scan" | "trade" | "settings" | "idle" | "default" | "compact" {
   if (compactMode) {
     return "compact";
   }
 
   if (activeTab === "trade") {
     return "trade";
+  }
+
+  if (activeTab === "settings") {
+    return "settings";
   }
 
   if (activeTab !== "scan") {
@@ -2797,6 +2979,15 @@ if (!isListingPreviewWindow && leagueElement) {
     const exchangeRefreshButton = target.closest<HTMLButtonElement>("[data-refresh-exchange]");
     const exchangeCopyButton = target.closest<HTMLButtonElement>("[data-copy-exchange]");
     const exchangeQuoteButton = target.closest<HTMLButtonElement>("[data-exchange-quote]");
+    const resetVisualSettingsButton = target.closest<HTMLButtonElement>("[data-reset-visual-settings]");
+
+    if (resetVisualSettingsButton) {
+      appSettings = { ...DEFAULT_APP_SETTINGS };
+      applyAppSettings(appSettings);
+      saveAppSettings();
+      render();
+      return;
+    }
 
     if (exchangeQuoteButton?.dataset.exchangeQuote) {
       state.exchange_tab.selected_quote_currency_id = exchangeQuoteButton.dataset.exchangeQuote;
@@ -2844,7 +3035,7 @@ if (!isListingPreviewWindow && leagueElement) {
       }
       loadingMoreMarketplaceResults = false;
       render();
-      void pushActivePriceFilters();
+      scheduleActivePriceFilterPush();
       return;
     }
 
@@ -2855,7 +3046,7 @@ if (!isListingPreviewWindow && leagueElement) {
       }
       loadingMoreMarketplaceResults = false;
       render();
-      void pushActivePriceFilters();
+      scheduleActivePriceFilterPush();
       return;
     }
 
@@ -2911,7 +3102,7 @@ if (!isListingPreviewWindow && leagueElement) {
       }
       loadingMoreMarketplaceResults = false;
       render();
-      void pushActivePriceFilters();
+      scheduleActivePriceFilterPush();
       return;
     }
 
@@ -2950,6 +3141,23 @@ if (!isListingPreviewWindow && leagueElement) {
   root.addEventListener("input", (event) => {
     const target = event.target as HTMLElement;
     const tradeSearch = target.closest<HTMLInputElement>("[data-trade-search]");
+    const settingInput = target.closest<HTMLInputElement>("[data-setting]");
+
+    if (settingInput?.dataset.setting) {
+      if (settingInput.dataset.setting === "accentHue") {
+        appSettings.accentHue = clampNumber(Number(settingInput.value), 0, 359, DEFAULT_APP_SETTINGS.accentHue);
+        updateSettingOutput("accentHue");
+      }
+
+      if (settingInput.dataset.setting === "panelAlpha") {
+        appSettings.panelAlpha = clampNumber(1 - Number(settingInput.value) / 100, 0, 1, DEFAULT_APP_SETTINGS.panelAlpha);
+        updateSettingOutput("panelAlpha");
+      }
+
+      applyAppSettings(appSettings);
+      saveAppSettings();
+      return;
+    }
 
     if (!tradeSearch) {
       return;
@@ -3055,6 +3263,9 @@ if (!isListingPreviewWindow && leagueElement) {
     void hideListingPreview();
     state.scanned_item = event.payload;
     applyProfileSelection(event.payload);
+    latestRequestedFilterSignature = isExchangeClipboardItem(event.payload)
+      ? null
+      : currentRequestedFilterSignature();
     state.price_check = {
       status: `Applying ${priceProfileLabel(selectedPriceProfile)} profile...`,
       matched: 0,
@@ -3065,6 +3276,7 @@ if (!isListingPreviewWindow && leagueElement) {
       rate_limit: null,
       currencies: fallbackCurrencies(),
       filters: [],
+      requested_filters: [],
       applied_filters: [],
       listings: [],
       error: null,
@@ -3081,10 +3293,23 @@ if (!isListingPreviewWindow && leagueElement) {
 
   void listen<PriceCheck>("scan://price-check-updated", (event) => {
     loadingMoreMarketplaceResults = false;
-    state.price_check = normalizePriceCheck(event.payload);
-    state.price_currency = event.payload.selected_currency;
-    state.price_option = event.payload.selected_price_option;
-    syncSelectedSpecKeysToAppliedFilters();
+    const nextPriceCheck = normalizePriceCheck(event.payload);
+    if (!nextPriceCheck) {
+      return;
+    }
+
+    if (
+      state.scanned_item &&
+      !isExchangeClipboardItem(state.scanned_item) &&
+      latestRequestedFilterSignature !== null &&
+      activeFilterSignature(nextPriceCheck.requested_filters ?? []) !== latestRequestedFilterSignature
+    ) {
+      return;
+    }
+
+    state.price_check = nextPriceCheck;
+    state.price_currency = nextPriceCheck.selected_currency;
+    state.price_option = nextPriceCheck.selected_price_option;
     activeTab = isExchangeClipboardItem(state.scanned_item) ? "trade" : "scan";
     render();
   });
@@ -3148,7 +3373,10 @@ if (!isListingPreviewWindow && leagueElement) {
       state.exchange_tab = normalizeExchangeTab(initialState.exchange_tab);
       state.price_currency = initialState.price_currency || state.price_currency;
       state.price_option = initialState.price_option || state.price_option;
-      syncSelectedSpecKeysToAppliedFilters();
+      if (state.scanned_item && !isExchangeClipboardItem(state.scanned_item)) {
+        applyProfileSelection(state.scanned_item);
+        latestRequestedFilterSignature = currentRequestedFilterSignature();
+      }
       render();
     })
     .catch((error) => pushStatus("state", String(error)));

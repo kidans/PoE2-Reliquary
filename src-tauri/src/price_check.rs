@@ -89,7 +89,7 @@ pub(crate) struct PriceCheckContinuation {
 
 pub async fn fetch_trade_leagues() -> Result<Vec<TradeLeague>, String> {
     let client = reqwest::Client::builder()
-        .user_agent("Lumen-Scan/0.1 league-loader")
+        .user_agent("Reliquary/0.1 league-loader")
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -127,6 +127,7 @@ pub fn loading(item: &Item) -> PriceCheck {
             rate_limit: None,
             currencies: default_currency_meta(),
             filters: Vec::new(),
+            requested_filters: Vec::new(),
             applied_filters: Vec::new(),
             listings: Vec::new(),
             error: None,
@@ -143,6 +144,7 @@ pub fn loading(item: &Item) -> PriceCheck {
         rate_limit: None,
         currencies: default_currency_meta(),
         filters: filters_for_item(item),
+        requested_filters: Vec::new(),
         applied_filters: Vec::new(),
         listings: Vec::new(),
         error: None,
@@ -174,6 +176,7 @@ pub async fn check_item_price(
                 rate_limit: None,
                 currencies: default_currency_meta(),
                 filters: Vec::new(),
+                requested_filters: Vec::new(),
                 applied_filters: Vec::new(),
                 listings: Vec::new(),
                 error: None,
@@ -207,6 +210,7 @@ pub async fn check_item_price(
                 rate_limit: error.rate_limit,
                 currencies: default_currency_meta(),
                 filters,
+                requested_filters: active_filters.to_vec(),
                 applied_filters: Vec::new(),
                 listings: Vec::new(),
                 error: Some(error.message),
@@ -264,7 +268,7 @@ async fn request_price_check(
     }
 
     let client = reqwest::Client::builder()
-        .user_agent("Lumen-Scan/0.1 price-check")
+        .user_agent("Reliquary/0.1 price-check")
         .build()
         .map_err(|error| TradeApiError {
             message: error.to_string(),
@@ -350,6 +354,7 @@ async fn request_price_check(
             rate_limit,
             currencies,
             filters,
+            requested_filters: active_filters.to_vec(),
             applied_filters: applied_filters.clone(),
             listings: Vec::new(),
             error: None,
@@ -398,6 +403,7 @@ async fn request_price_check(
         rate_limit,
         currencies: currencies.clone(),
         filters,
+        requested_filters: active_filters.to_vec(),
         applied_filters: applied_filters.clone(),
         listings,
         error: None,
@@ -508,6 +514,7 @@ pub async fn load_more_price_check_results(
                 rate_limit: None,
                 currencies: continuation.currencies.clone(),
                 filters: Vec::new(),
+                requested_filters: Vec::new(),
                 applied_filters: Vec::new(),
                 listings: Vec::new(),
                 error: None,
@@ -517,7 +524,7 @@ pub async fn load_more_price_check_results(
     }
 
     let client = reqwest::Client::builder()
-        .user_agent("Lumen-Scan/0.1 price-check")
+        .user_agent("Reliquary/0.1 price-check")
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -567,6 +574,7 @@ pub async fn load_more_price_check_results(
             rate_limit,
             currencies: continuation.currencies.clone(),
             filters: Vec::new(),
+            requested_filters: Vec::new(),
             applied_filters: Vec::new(),
             listings,
             error: None,
@@ -1059,14 +1067,18 @@ fn stat_template_for_match(template: &str) -> String {
         .filter(|part| {
             !matches!(
                 *part,
-                "rune" | "implicit" | "desecrated" | "corrupted" | "fractured" | "enchant"
+                "rune"
+                    | "implicit"
+                    | "desecrated"
+                    | "corrupted"
+                    | "fractured"
+                    | "enchant"
                     | "augmented"
             )
         })
         .collect::<Vec<_>>()
         .join(" ")
 }
-
 
 fn templates_compatible(left: &str, right: &str) -> bool {
     let left = stat_template_for_match(left);
@@ -1136,7 +1148,11 @@ fn listing_from_fetch_result(
         energy_shield: result.item.property_value("Energy Shield"),
         explicit_mods,
         preview_name: preview_item_name(&result.item),
-        preview_base_type: result.item.base_type.clone().or_else(|| result.item.type_line.clone()),
+        preview_base_type: result
+            .item
+            .base_type
+            .clone()
+            .or_else(|| result.item.type_line.clone()),
         preview_rarity: preview_item_rarity(result.item.frame_type),
         preview_item_class: result.item.item_class.clone(),
         preview_icon_url: result.item.icon.clone(),
@@ -1166,7 +1182,11 @@ fn preview_item_name(item: &FetchItem) -> Option<String> {
         .as_ref()
         .map(|value| clean_trade_text(value.clone()))
         .filter(|value| !value.is_empty())
-        .or_else(|| item.type_line.as_ref().map(|value| clean_trade_text(value.clone())))
+        .or_else(|| {
+            item.type_line
+                .as_ref()
+                .map(|value| clean_trade_text(value.clone()))
+        })
 }
 
 fn preview_item_rarity(frame_type: Option<u8>) -> Option<String> {
@@ -1210,9 +1230,7 @@ fn fetch_property_line(property: &FetchItemProperty) -> Option<String> {
         return value;
     }
 
-    value
-        .map(|value| format!("{name}: {value}"))
-        .or(Some(name))
+    value.map(|value| format!("{name}: {value}")).or(Some(name))
 }
 
 fn trade_price_option_for_request(price_option: &str) -> Option<&str> {
@@ -1225,7 +1243,7 @@ fn trade_price_option_for_request(price_option: &str) -> Option<&str> {
 
 async fn fetch_currency_meta() -> Result<Vec<CurrencyMeta>, String> {
     let client = reqwest::Client::builder()
-        .user_agent("Lumen-Scan/0.1 poe2db-currency-icons")
+        .user_agent("Reliquary/0.1 poe2db-currency-icons")
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -1277,7 +1295,7 @@ async fn fetch_trade_stats() -> Result<Vec<TradeStatEntry>, String> {
     }
 
     let client = reqwest::Client::builder()
-        .user_agent("Lumen-Scan/0.1 trade-stat-loader")
+        .user_agent("Reliquary/0.1 trade-stat-loader")
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -1311,7 +1329,7 @@ async fn fetch_exchange_rates(
     selected_currency: &str,
 ) -> Result<CurrencyRates, String> {
     let client = reqwest::Client::builder()
-        .user_agent("Lumen-Scan/0.1 currency-exchange")
+        .user_agent("Reliquary/0.1 currency-exchange")
         .build()
         .map_err(|error| error.to_string())?;
     let have = COMMON_CURRENCIES
@@ -1740,7 +1758,10 @@ fn suffixed_mods(mods: Option<&Vec<String>>, suffix: &str) -> Vec<String> {
     mods.into_iter()
         .flatten()
         .map(|modifier| {
-            if modifier.to_ascii_lowercase().contains(&format!("({suffix})")) {
+            if modifier
+                .to_ascii_lowercase()
+                .contains(&format!("({suffix})"))
+            {
                 modifier.clone()
             } else {
                 format!("{modifier} ({suffix})")

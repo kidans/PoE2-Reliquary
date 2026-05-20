@@ -1,17 +1,17 @@
-# Lumen-Scan Live Testing Checklist
+# Reliquary Live Testing Checklist
 
 Use this checklist for the first real PoE2 validation pass.
 
 ## Preflight
 
 1. Build the app with `npm run tauri:build`.
-2. Launch `src-tauri/target/release/kalandra-lumen-scan.exe`.
+2. Launch `src-tauri/target/release/reliquary.exe`.
 3. Confirm the parchment/gold overlay appears and stays above other windows.
 4. Confirm the only visible surface is the compact HUD/card area, not a full-screen dark rectangle.
 5. Confirm the league selector loads the official PoE2 trade leagues and defaults to the current softcore challenge league.
 6. Open the Data tab and confirm PoE2DB data leagues render separately from official trade leagues.
 7. Confirm idle memory is reasonable. A local no-game smoke sample was about 29.5 MB working set.
-8. If price checking fails, run `src-tauri\target\release\kalandra-lumen-scan.exe debug-log --tail 40` and inspect the latest `price_check.search.response` or `price_check.fetch.response` entry.
+8. If price checking fails, run `src-tauri\target\release\reliquary.exe debug-log --tail 40` and inspect the latest `price_check.search.response` or `price_check.fetch.response` entry.
 9. Change the price currency selector in the Scan tab and confirm listing rows refresh with PoE2DB currency icons and normalized values.
 
 ## PoE2 Session Test
@@ -34,7 +34,7 @@ Use this checklist for the first real PoE2 validation pass.
 - Marketplace handoff opens the official marketplace page with a browser query and prepares local clipboard search context.
 - Price checking currently uses an isolated community-style trade transport for real-time listing rows. Before release, grep runtime code for `api/trade2/search` and `api/trade2/fetch`; matches should stay confined to the dedicated price-check transport.
 - League selection matters for every price check. Current official trade leagues are challenge softcore, challenge hardcore, `Standard`, and `Hardcore`; SSF is intentionally absent because it has no trade economy.
-- Set `LUMEN_POE2_LEAGUE` before launch only when you need to force a specific startup league for testing.
+- Set `RELIQUARY_POE2_LEAGUE` before launch only when you need to force a specific startup league for testing.
 - The league listener refreshes every 15 minutes. PoE2DB may show a future league before official trade supports it; those rows are data signals, not selectable trade targets until the official trade endpoint exposes them.
 - Debug logs include copied item text and trade request JSON. Use them for local troubleshooting, but do not paste them publicly if the copied item text is sensitive.
 - Currency normalization uses live official trade2 exchange offers first. If those calls fail, listing rows still show raw prices and the log records `currency.exchange.error`.

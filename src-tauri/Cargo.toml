@@ -1,13 +1,13 @@
 [package]
-name = "kalandra-lumen-scan"
+name = "reliquary"
 version = "0.1.0"
 description = "A lightweight Path of Exile 2 overlay built with Rust and Tauri."
-authors = ["Kalandra Contributors"]
+authors = ["Reliquary Contributors"]
 edition = "2021"
 rust-version = "1.77"
 
 [lib]
-name = "kalandra_lumen_scan"
+name = "reliquary_core"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -31,4 +31,4 @@ urlencoding = "2"
 webbrowser = "1"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_UI_WindowsAndMessaging"] }

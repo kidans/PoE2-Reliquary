@@ -1,16 +1,22 @@
-# Kalandra
+# Reliquary
 
-Kalandra is a Path of Exile 2 desktop overlay built with Rust and Tauri v2 for maximum efficiency all in the aim of making things extremely light while maintaining a core functionality of all things helpful without needing to alt-tab out of the game. 
+Reliquary is a Path of Exile 2 desktop overlay built for the moments that actually matter while you are playing: checking an item quickly, seeing whether it is worth anything, comparing it against live listings, and keeping an eye on market context without tabbing all over the place.
 
-## What Kalandra Does Today
+The project is still evolving, but the core idea is already in place: make item evaluation and trade awareness feel fast, readable, and grounded in the same data the community actually uses.
+
+## Disclaimer
+
+Reliquary is an unofficial fan-made tool. It is not affiliated with, endorsed by, sponsored by, or approved by Grinding Gear Games. Path of Exile, Path of Exile 2, and related game content are property of Grinding Gear Games.
+
+## What Reliquary Does Today
 
 ### Scan
 
-Copy an item from PoE 2 with `Ctrl+C` and Kalandra opens an in-game style evaluation panel. It parses the clipboard, classifies the item, separates properties from modifiers, applies rarity-aware presentation, and shows comparable marketplace results.
+Copy an item from PoE 2 with `Ctrl+C` and Reliquary opens an in-game style evaluation panel. It parses the clipboard, classifies the item, separates properties from modifiers, applies rarity-aware presentation, and shows comparable marketplace results.
 
 ### Marketplace Results
 
-For normal item checks, Kalandra uses official Path of Exile `trade2` searches and listing fetches.
+For normal item checks, Reliquary uses official Path of Exile `trade2` searches and listing fetches.
 
 It also does a few things to keep that experience practical:
 
@@ -27,7 +33,7 @@ It is backed by cached PoE.ninja snapshots, then shaped into a league-aware dash
 
 ### Data Tab
 
-The Data tab is where Kalandra keeps its “source of truth” thinking visible. It is used for league discovery, catalog wiring, and the groundwork that helps the overlay stay resilient when a new league or new item family shows up.
+The Data tab is where Reliquary keeps its “source of truth” thinking visible. It is used for league discovery, catalog wiring, and the groundwork that helps the overlay stay resilient when a new league or new item family shows up.
 
 ## Why It Is Built This Way
 
@@ -37,7 +43,7 @@ Path of Exile 2 tooling has an annoying tension:
 - PoE.ninja is great for broader market snapshots, but it is not truly real-time
 - PoE2DB often exposes item structure and league changes early, but it is not a live pricing source
 
-Kalandra leans into that reality instead of pretending one source can do everything.
+Reliquary leans into that reality instead of pretending one source can do everything.
 
 - `trade2` is used where live marketplace accuracy matters
 - `PoE.ninja` is used where cached market overviews make more sense
@@ -55,7 +61,7 @@ Single-key shortcuts that were easy to hit by accident while typing were intenti
 
 ## Current Direction
 
-Kalandra is moving toward a few clear goals:
+Reliquary is moving toward a few clear goals:
 
 - item parsing that is family-aware and easier to update when PoE 2 changes
 - a trade workflow that stays fast without abusing official APIs
@@ -92,26 +98,26 @@ npm run build
 npm run tauri:dev
 cargo check --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml
-src-tauri/target/release/kalandra-lumen-scan.exe sources --json
-src-tauri/target/release/kalandra-lumen-scan.exe leagues --json
-src-tauri/target/release/kalandra-lumen-scan.exe debug-log --tail 40
+src-tauri/target/release/reliquary.exe sources --json
+src-tauri/target/release/reliquary.exe leagues --json
+src-tauri/target/release/reliquary.exe debug-log --tail 40
 ```
 
 ### Environment Notes
 
 - `POE2_CLIENT_LOG` points the backend at a specific PoE 2 `Client.txt` while testing log watching
-- `LUMEN_BANNED_MODS` points to a custom hazard catalog JSON file
-- `LUMEN_POE2_LEAGUE` overrides the startup marketplace league
-- `LUMEN_DEBUG_LOG` overrides the default debug log path
+- `RELIQUARY_BANNED_MODS` points to a custom hazard catalog JSON file
+- `RELIQUARY_POE2_LEAGUE` overrides the startup marketplace league
+- `RELIQUARY_DEBUG_LOG` overrides the default debug log path
 
 By default, debug logs are written to:
 
-`%LOCALAPPDATA%\Kalandra\lumen-scan-debug.log`
+`%LOCALAPPDATA%\Reliquary\reliquary-debug.log`
 
 ## Release Outputs
 
 After `npm run tauri:build`, the Windows outputs are:
 
-- `src-tauri/target/release/kalandra-lumen-scan.exe`
-- `src-tauri/target/release/bundle/nsis/Lumen-Scan_0.1.0_x64-setup.exe`
-- `src-tauri/target/release/bundle/msi/Lumen-Scan_0.1.0_x64_en-US.msi`
+- `src-tauri/target/release/reliquary.exe`
+- `src-tauri/target/release/bundle/nsis/Reliquary_0.1.0_x64-setup.exe`
+- `src-tauri/target/release/bundle/msi/Reliquary_0.1.0_x64_en-US.msi`
