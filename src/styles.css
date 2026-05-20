@@ -1310,14 +1310,31 @@ kbd {
 }
 
 .inspect-eye {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 23px;
   height: 19px;
   border: 1px solid rgba(217, 76, 86, 0.28);
   border-radius: 4px;
+  background: rgba(16, 15, 17, 0.98);
   color: #958a75;
   line-height: 17px;
   font-size: 8px;
   text-align: center;
+  cursor: default;
+}
+
+.inspect-eye:hover {
+  border-color: rgba(217, 76, 86, 0.52);
+  color: #f3d6da;
+  background: rgba(47, 18, 22, 0.98);
+}
+
+.inspect-eye.is-active {
+  border-color: rgba(217, 76, 86, 0.66);
+  color: #fff1f2;
+  background: rgba(73, 20, 27, 0.98);
 }
 
 .seller-name {
@@ -1347,6 +1364,112 @@ kbd {
   height: 100%;
   padding: 8px 12px 10px 8px;
   overflow: hidden;
+}
+
+.preview-overlay-root {
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+}
+
+.listing-preview-shell {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+}
+
+.listing-preview-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  border-radius: 18px;
+  border: 1px solid rgba(217, 76, 86, 0.22);
+  background:
+    linear-gradient(180deg, rgba(9, 9, 11, 0.98), rgba(5, 5, 6, 0.96)),
+    rgba(5, 5, 6, 0.96);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.54);
+}
+
+.listing-preview-card.empty-preview {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 18px;
+  color: #dcc8cb;
+  text-align: center;
+}
+
+.listing-preview-card.empty-preview p {
+  max-width: 270px;
+  margin-inline: auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.listing-preview-body {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 10px 10px;
+  border-radius: 14px;
+  background: rgba(10, 10, 12, 0.96);
+  border: 1px solid rgba(217, 76, 86, 0.1);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(143, 32, 40, 0.66) rgba(15, 11, 7, 0.82);
+}
+
+.preview-icon-wrap {
+  display: flex;
+  justify-content: center;
+}
+
+.preview-item-icon {
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.45));
+}
+
+.preview-pill,
+.preview-value-lines .defense-spec,
+.preview-mod-chip {
+  pointer-events: none;
+}
+
+.preview-description {
+  margin: 0;
+  color: #9f9194;
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.preview-listing-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(217, 76, 86, 0.1);
+}
+
+.preview-listing-meta span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: #c7b7ba;
+  font-size: 11px;
+  text-align: center;
+}
+
+.preview-listing-meta strong {
+  color: #f1d6d8;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .trade-market {

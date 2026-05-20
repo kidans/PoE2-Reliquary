@@ -13,7 +13,10 @@ use arboard::Clipboard;
 use linemux::MuxedLines;
 use rdev::{listen, Event, EventType, Key};
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, LogicalSize, Manager, Size};
+use tauri::{
+    Emitter, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl,
+    WebviewWindowBuilder,
+};
 use thiserror::Error;
 use tokio::sync::{mpsc, Mutex};
 #[cfg(target_os = "windows")]
@@ -43,6 +46,10 @@ const SCAN_WINDOW_WIDTH: f64 = 540.0;
 const SCAN_WINDOW_HEIGHT: f64 = 980.0;
 const TRADE_WINDOW_WIDTH: f64 = 1000.0;
 const TRADE_WINDOW_HEIGHT: f64 = 760.0;
+const LISTING_PREVIEW_WINDOW_LABEL: &str = "listing-preview";
+const LISTING_PREVIEW_WIDTH: f64 = 360.0;
+const LISTING_PREVIEW_HEIGHT: f64 = 560.0;
+const LISTING_PREVIEW_GAP: f64 = 12.0;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppState {
@@ -56,6 +63,7 @@ pub struct AppState {
     pub price_check: Option<PriceCheck>,
     pub exchange_tab: ExchangeTabState,
     pub price_currency: String,
+    pub price_option: String,
     pub active_price_filters: Vec<ActivePriceFilter>,
     #[serde(skip)]
     pub trade_league_locked: bool,
@@ -63,6 +71,8 @@ pub struct AppState {
     price_check_continuation: Option<price_check::PriceCheckContinuation>,
     #[serde(skip)]
     price_check_fetch_in_flight: bool,
+    #[serde(skip)]
+    current_listing_preview: Option<ListingPreviewRequest>,
 }
 
 impl AppState {
@@ -75,6 +85,7 @@ impl AppState {
             league_catalog: Vec::new(),
             exchange_tab: exchange::default_tab_state().into(),
             price_currency: "exalted".to_string(),
+            price_option: "equivalent".to_string(),
             trade_league_locked: configured_league.is_some(),
             ..Self::default()
         }
@@ -104,10 +115,12 @@ pub struct PriceCheck {
     pub matched: usize,
     pub source_url: Option<String>,
     pub selected_currency: String,
+    pub selected_price_option: String,
     pub rate_source: Option<String>,
     pub rate_limit: Option<TradeRateLimit>,
     pub currencies: Vec<CurrencyMeta>,
     pub filters: Vec<PriceFilter>,
+    pub applied_filters: Vec<ActivePriceFilter>,
     pub listings: Vec<PriceListing>,
     pub error: Option<String>,
 }
@@ -186,6 +199,19 @@ pub struct PriceListing {
     pub evasion: Option<f64>,
     pub energy_shield: Option<f64>,
     pub explicit_mods: Vec<String>,
+    pub preview_name: Option<String>,
+    pub preview_base_type: Option<String>,
+    pub preview_rarity: Option<String>,
+    pub preview_item_class: Option<String>,
+    pub preview_icon_url: Option<String>,
+    pub preview_property_lines: Vec<String>,
+    pub preview_description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListingPreviewRequest {
+    pub listing: PriceListing,
+    pub family: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -320,6 +346,76 @@ fn set_window_layout(window: tauri::Window, layout: String) -> Result<(), String
 }
 
 #[tauri::command]
+fn show_listing_preview(
+    app_handle: tauri::AppHandle,
+    window: tauri::Window,
+    state: tauri::State<'_, SharedAppState>,
+    preview: ListingPreviewRequest,
+    anchor_top: f64,
+) -> Result<(), String> {
+    {
+        let mut locked_state = state.blocking_lock();
+        locked_state.current_listing_preview = Some(preview.clone());
+    }
+
+    let preview_window = app_handle
+        .get_webview_window(LISTING_PREVIEW_WINDOW_LABEL)
+        .ok_or_else(|| "listing preview window is unavailable".to_string())?;
+
+    position_listing_preview(&window, &preview_window, anchor_top)?;
+    preview_window.show().map_err(|error| error.to_string())?;
+    app_handle
+        .emit_to(LISTING_PREVIEW_WINDOW_LABEL, "preview://listing-updated", preview)
+        .map_err(|error| error.to_string())?;
+
+    let app_handle_clone = app_handle.clone();
+    let state_clone = state.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        for delay_ms in [120_u64, 320_u64] {
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            let preview = {
+                let locked_state = state_clone.lock().await;
+                locked_state.current_listing_preview.clone()
+            };
+            if let Some(preview) = preview {
+                let _ = app_handle_clone.emit_to(
+                    LISTING_PREVIEW_WINDOW_LABEL,
+                    "preview://listing-updated",
+                    preview,
+                );
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+fn hide_listing_preview(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, SharedAppState>,
+) -> Result<(), String> {
+    {
+        let mut locked_state = state.blocking_lock();
+        locked_state.current_listing_preview = None;
+    }
+
+    if let Some(preview_window) = app_handle.get_webview_window(LISTING_PREVIEW_WINDOW_LABEL) {
+        let _ = app_handle.emit_to(LISTING_PREVIEW_WINDOW_LABEL, "preview://listing-cleared", ());
+        preview_window.hide().map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_listing_preview(
+    state: tauri::State<'_, SharedAppState>,
+) -> Result<Option<ListingPreviewRequest>, String> {
+    Ok(state.lock().await.current_listing_preview.clone())
+}
+
+#[tauri::command]
 async fn get_app_state(state: tauri::State<'_, SharedAppState>) -> Result<AppState, String> {
     Ok(state.lock().await.clone())
 }
@@ -335,7 +431,7 @@ async fn set_trade_league(
         return Err("league cannot be empty".to_string());
     }
 
-    let (scanned_item, category_id, selected_currency, active_filters) = {
+    let (scanned_item, category_id, selected_currency, selected_price_option, active_filters) = {
         let mut locked_state = state.lock().await;
         locked_state.trade_league = normalized.to_string();
         locked_state.trade_league_locked = true;
@@ -350,6 +446,7 @@ async fn set_trade_league(
             updated_item,
             locked_state.exchange_tab.selected_category_id.clone(),
             locked_state.price_currency.clone(),
+            locked_state.price_option.clone(),
             locked_state.active_price_filters.clone(),
         )
     };
@@ -369,6 +466,7 @@ async fn set_trade_league(
                 item,
                 normalized.to_string(),
                 selected_currency,
+                selected_price_option,
                 active_filters,
             );
         }
@@ -396,7 +494,7 @@ async fn set_price_currency(
         return Err("price currency cannot be empty".to_string());
     }
 
-    let (item, league, selected_currency, active_filters) = {
+    let (item, league, selected_currency, selected_price_option, active_filters) = {
         let mut locked_state = state.lock().await;
         locked_state.price_currency = normalized.to_string();
         locked_state.price_check_continuation = None;
@@ -405,6 +503,7 @@ async fn set_price_currency(
             locked_state.scanned_item.clone(),
             locked_state.trade_league.clone(),
             locked_state.price_currency.clone(),
+            locked_state.price_option.clone(),
             locked_state.active_price_filters.clone(),
         )
     };
@@ -419,6 +518,51 @@ async fn set_price_currency(
                 item,
                 league,
                 selected_currency,
+                selected_price_option,
+                active_filters,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_price_option(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, SharedAppState>,
+    price_option: String,
+) -> Result<(), String> {
+    let normalized = price_option.trim();
+    if normalized.is_empty() {
+        return Err("price option cannot be empty".to_string());
+    }
+
+    let (item, league, selected_currency, selected_price_option, active_filters) = {
+        let mut locked_state = state.lock().await;
+        locked_state.price_option = normalized.to_string();
+        locked_state.price_check_continuation = None;
+        locked_state.price_check_fetch_in_flight = false;
+        (
+            locked_state.scanned_item.clone(),
+            locked_state.trade_league.clone(),
+            locked_state.price_currency.clone(),
+            locked_state.price_option.clone(),
+            locked_state.active_price_filters.clone(),
+        )
+    };
+
+    if let Some(item) = item {
+        if exchange::is_exchange_item(&item) {
+            spawn_exchange_item_worker(app_handle, state.inner().clone(), item, league);
+        } else {
+            spawn_price_check_worker(
+                app_handle,
+                state.inner().clone(),
+                item,
+                league,
+                selected_currency,
+                selected_price_option,
                 active_filters,
             );
         }
@@ -433,7 +577,7 @@ async fn set_active_price_filters(
     state: tauri::State<'_, SharedAppState>,
     filters: Vec<ActivePriceFilter>,
 ) -> Result<(), String> {
-    let (item, league, selected_currency, active_filters) = {
+    let (item, league, selected_currency, selected_price_option, active_filters) = {
         let mut locked_state = state.lock().await;
         locked_state.active_price_filters = filters;
         locked_state.price_check_continuation = None;
@@ -442,6 +586,7 @@ async fn set_active_price_filters(
             locked_state.scanned_item.clone(),
             locked_state.trade_league.clone(),
             locked_state.price_currency.clone(),
+            locked_state.price_option.clone(),
             locked_state.active_price_filters.clone(),
         )
     };
@@ -453,6 +598,7 @@ async fn set_active_price_filters(
             item,
             league,
             selected_currency,
+            selected_price_option,
             active_filters,
         );
     }
@@ -521,8 +667,10 @@ async fn load_more_price_check_results(
                 Err(error) => {
                     if let Some(current_price_check) = locked_state.price_check.clone() {
                         let mut updated = current_price_check;
-                        updated.status = "Price check failed".to_string();
-                        updated.error = Some(error.clone());
+                        updated.status = error.clone();
+                        if updated.listings.is_empty() {
+                            updated.error = Some(error.clone());
+                        }
                         locked_state.price_check = Some(updated.clone());
                         drop(locked_state);
                         let _ = app_handle.emit("scan://price-check-updated", updated);
@@ -636,7 +784,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             invite_buyer,
             get_app_state,
+            get_listing_preview,
             debug_log_path,
+            hide_listing_preview,
             kick_buyer,
             load_more_price_check_results,
             minimize_window,
@@ -644,12 +794,14 @@ pub fn run() {
             open_external_url,
             refresh_exchange_category,
             set_price_currency,
+            set_price_option,
             set_active_price_filters,
             set_exchange_category,
             set_trade_league,
             set_compact_mode,
             set_window_layout,
             set_click_passthrough,
+            show_listing_preview,
             start_drag_window,
             trade_with_buyer,
         ])
@@ -659,6 +811,7 @@ pub fn run() {
             })?;
             window.set_always_on_top(true)?;
             window.set_ignore_cursor_events(false)?;
+            create_listing_preview_window(app)?;
 
             let state = app.state::<SharedAppState>().inner().clone();
             let app_handle = app.handle().clone();
@@ -714,9 +867,12 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
                         let locked_state = state.lock().await;
                         locked_state.trade_league.clone()
                     };
-                    let selected_currency = {
+                    let (selected_currency, selected_price_option) = {
                         let locked_state = state.lock().await;
-                        locked_state.price_currency.clone()
+                        (
+                            locked_state.price_currency.clone(),
+                            locked_state.price_option.clone(),
+                        )
                     };
                     let active_filters = {
                         let mut locked_state = state.lock().await;
@@ -762,6 +918,7 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
                                 item,
                                 league,
                                 selected_currency,
+                                selected_price_option,
                                 active_filters,
                             );
                         }
@@ -978,6 +1135,7 @@ fn spawn_price_check_worker(
     item: Item,
     league: String,
     selected_currency: String,
+    selected_price_option: String,
     active_filters: Vec<ActivePriceFilter>,
 ) {
     tauri::async_runtime::spawn(async move {
@@ -985,6 +1143,7 @@ fn spawn_price_check_worker(
             &item,
             Some(&league),
             Some(&selected_currency),
+            Some(&selected_price_option),
             &active_filters,
         )
         .await;
@@ -1319,4 +1478,76 @@ fn emit_worker_error(app_handle: &tauri::AppHandle, error: WorkerError) {
             message: error.to_string(),
         },
     );
+}
+
+fn create_listing_preview_window<R: tauri::Runtime>(
+    app: &mut tauri::App<R>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if app
+        .get_webview_window(LISTING_PREVIEW_WINDOW_LABEL)
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    let preview_window = WebviewWindowBuilder::new(
+        app.handle(),
+        LISTING_PREVIEW_WINDOW_LABEL,
+        WebviewUrl::App("index.html?preview=listing".into()),
+    )
+    .title("Kalandra Listing Preview")
+    .inner_size(LISTING_PREVIEW_WIDTH, LISTING_PREVIEW_HEIGHT)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .focusable(false)
+    .shadow(false)
+    .visible(false)
+    .build()?;
+
+    preview_window.set_ignore_cursor_events(true)?;
+    Ok(())
+}
+
+fn position_listing_preview(
+    main_window: &tauri::Window,
+    preview_window: &tauri::WebviewWindow,
+    anchor_top: f64,
+) -> Result<(), String> {
+    let main_position = main_window.outer_position().map_err(|error| error.to_string())?;
+    let main_size = main_window.outer_size().map_err(|error| error.to_string())?;
+    let monitor = main_window.current_monitor().map_err(|error| error.to_string())?;
+
+    let mut x = main_position.x as f64 + main_size.width as f64 + LISTING_PREVIEW_GAP;
+    let mut y = main_position.y as f64 + anchor_top;
+
+    if let Some(monitor) = monitor {
+        let monitor_position = monitor.position();
+        let monitor_size = monitor.size();
+        let monitor_right = monitor_position.x + monitor_size.width as i32;
+        let monitor_bottom = monitor_position.y + monitor_size.height as i32;
+
+        if x + LISTING_PREVIEW_WIDTH > monitor_right as f64 - LISTING_PREVIEW_GAP {
+            x = main_position.x as f64 - LISTING_PREVIEW_WIDTH - LISTING_PREVIEW_GAP;
+        }
+
+        x = x.clamp(
+            monitor_position.x as f64 + LISTING_PREVIEW_GAP,
+            monitor_right as f64 - LISTING_PREVIEW_WIDTH - LISTING_PREVIEW_GAP,
+        );
+
+        y = y.clamp(
+            monitor_position.y as f64 + LISTING_PREVIEW_GAP,
+            monitor_bottom as f64 - LISTING_PREVIEW_HEIGHT - LISTING_PREVIEW_GAP,
+        );
+    }
+
+    preview_window
+        .set_position(Position::Physical(PhysicalPosition::new(
+            x.round() as i32,
+            y.round() as i32,
+        )))
+        .map_err(|error| error.to_string())
 }

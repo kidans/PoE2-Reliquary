@@ -419,6 +419,7 @@ pub fn price_check_from_tab_state(tab: &ExchangeTabState) -> PriceCheck {
             .and_then(|overview| overview.primary_currency.as_ref())
             .map(|currency| currency.id.clone())
             .unwrap_or_else(|| "divine".to_string()),
+        selected_price_option: "equivalent".to_string(),
         rate_source: tab
             .overview
             .as_ref()
@@ -426,6 +427,7 @@ pub fn price_check_from_tab_state(tab: &ExchangeTabState) -> PriceCheck {
         rate_limit: None,
         currencies,
         filters: Vec::new(),
+        applied_filters: Vec::new(),
         listings: Vec::new(),
         error: tab.error.clone(),
     }

@@ -13,6 +13,9 @@ use crate::{
 
 const DEFAULT_LEAGUE: &str = "Standard";
 const DEFAULT_PRICE_CURRENCY: &str = "exalted";
+const DEFAULT_PRICE_OPTION: &str = "equivalent";
+const PRICE_OPTION_EQUIVALENT: &str = "equivalent";
+const PRICE_OPTION_EXALTED_DIVINE: &str = "exalted_divine";
 const TRADE_WEB_BASE: &str = "https://www.pathofexile.com/trade2/search/poe2";
 const TRADE_API_BASE: &str = "https://www.pathofexile.com/api/trade2";
 const POE2DB_CURRENCY_URL: &str = "https://poe2db.tw/us/Currency";
@@ -44,10 +47,13 @@ static COMMON_CURRENCIES: &[(&str, &str, &str)] = &[
     ("annul", "Orb of Annulment", "Orb_of_Annulment"),
     ("chance", "Orb of Chance", "Orb_of_Chance"),
     ("augment", "Orb of Augmentation", "Orb_of_Augmentation"),
+    ("mirror", "Mirror of Kalandra", "Mirror_of_Kalandra"),
 ];
 
 static PRICE_CHECK_CACHE: Lazy<Mutex<HashMap<String, CachedPriceCheck>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+static TRADE_STATS_CACHE: Lazy<Mutex<Option<Vec<TradeStatEntry>>>> = Lazy::new(|| Mutex::new(None));
+const PRICE_CHECK_CACHE_SCHEMA_VERSION: u8 = 2;
 
 #[derive(Debug, Clone)]
 struct CachedPriceCheck {
@@ -76,6 +82,7 @@ pub(crate) struct PriceCheckContinuation {
     pub(crate) source_url: String,
     pub(crate) remaining_result_ids: Vec<String>,
     pub(crate) selected_currency: String,
+    pub(crate) selected_price_option: String,
     pub(crate) currencies: Vec<CurrencyMeta>,
     pub(crate) rates: CurrencyRates,
 }
@@ -115,10 +122,12 @@ pub fn loading(item: &Item) -> PriceCheck {
             matched: 0,
             source_url: item.trade_url.clone(),
             selected_currency: DEFAULT_PRICE_CURRENCY.to_string(),
+            selected_price_option: DEFAULT_PRICE_OPTION.to_string(),
             rate_source: None,
             rate_limit: None,
             currencies: default_currency_meta(),
             filters: Vec::new(),
+            applied_filters: Vec::new(),
             listings: Vec::new(),
             error: None,
         };
@@ -129,10 +138,12 @@ pub fn loading(item: &Item) -> PriceCheck {
         matched: 0,
         source_url: item.trade_url.clone(),
         selected_currency: DEFAULT_PRICE_CURRENCY.to_string(),
+        selected_price_option: DEFAULT_PRICE_OPTION.to_string(),
         rate_source: None,
         rate_limit: None,
         currencies: default_currency_meta(),
         filters: filters_for_item(item),
+        applied_filters: Vec::new(),
         listings: Vec::new(),
         error: None,
     }
@@ -142,10 +153,12 @@ pub async fn check_item_price(
     item: &Item,
     league: Option<&str>,
     selected_currency: Option<&str>,
+    selected_price_option: Option<&str>,
     active_filters: &[ActivePriceFilter],
 ) -> PriceCheckOutcome {
     let league = normalized_league(league);
     let selected_currency = normalized_price_currency(selected_currency);
+    let selected_price_option = normalized_price_option(selected_price_option);
     let filters = filters_for_item(item);
 
     if uses_exchange_mode(item) {
@@ -156,10 +169,12 @@ pub async fn check_item_price(
                 matched: 0,
                 source_url: item.trade_url.clone(),
                 selected_currency: selected_currency.to_string(),
+                selected_price_option: selected_price_option.to_string(),
                 rate_source: None,
                 rate_limit: None,
                 currencies: default_currency_meta(),
                 filters: Vec::new(),
+                applied_filters: Vec::new(),
                 listings: Vec::new(),
                 error: None,
             },
@@ -171,6 +186,7 @@ pub async fn check_item_price(
         item,
         league,
         selected_currency,
+        selected_price_option,
         active_filters,
         filters.clone(),
     )
@@ -186,10 +202,12 @@ pub async fn check_item_price(
                 matched: 0,
                 source_url: item.trade_url.clone(),
                 selected_currency: selected_currency.to_string(),
+                selected_price_option: selected_price_option.to_string(),
                 rate_source: None,
                 rate_limit: error.rate_limit,
                 currencies: default_currency_meta(),
                 filters,
+                applied_filters: Vec::new(),
                 listings: Vec::new(),
                 error: Some(error.message),
             },
@@ -206,20 +224,38 @@ async fn request_price_check(
     item: &Item,
     league: &str,
     selected_currency: &str,
+    selected_price_option: &str,
     active_filters: &[ActivePriceFilter],
     filters: Vec<PriceFilter>,
 ) -> Result<PriceCheckOutcome, TradeApiError> {
-    let cache_key = price_check_cache_key(item, league, selected_currency, active_filters)
-        .map_err(|message| TradeApiError {
-            message,
-            rate_limit: None,
-        })?;
+    let stats = fetch_trade_stats().await.unwrap_or_else(|error| {
+        debug_log::append(
+            "price_check.stats.error",
+            json!({
+                "error": error,
+            }),
+        );
+        Vec::new()
+    });
+    let applied_filters = applied_price_filters(active_filters, &stats);
+    let cache_key = price_check_cache_key(
+        item,
+        league,
+        selected_currency,
+        selected_price_option,
+        &applied_filters,
+    )
+    .map_err(|message| TradeApiError {
+        message,
+        rate_limit: None,
+    })?;
     if let Some(cached) = cached_price_check(&cache_key).await {
         debug_log::append(
             "price_check.cache.hit",
             json!({
                 "league": league,
                 "selected_currency": selected_currency,
+                "selected_price_option": selected_price_option,
                 "cache_key": cache_key,
                 "matched": cached.price_check.matched,
             }),
@@ -234,16 +270,7 @@ async fn request_price_check(
             message: error.to_string(),
             rate_limit: None,
         })?;
-    let stats = fetch_trade_stats().await.unwrap_or_else(|error| {
-        debug_log::append(
-            "price_check.stats.error",
-            json!({
-                "error": error,
-            }),
-        );
-        Vec::new()
-    });
-    let request = build_trade_request(item, active_filters, &stats);
+    let request = build_trade_request(item, selected_price_option, &applied_filters, &stats);
     let currencies = fetch_currency_meta().await.unwrap_or_else(|error| {
         debug_log::append(
             "currency.meta.error",
@@ -261,6 +288,7 @@ async fn request_price_check(
                 json!({
                     "league": league,
                     "selected_currency": selected_currency,
+                    "selected_price_option": selected_price_option,
                     "error": error,
                 }),
             );
@@ -277,7 +305,10 @@ async fn request_price_check(
             "league": league,
             "url": search_url,
             "item": item_debug_payload(item),
+            "selected_currency": selected_currency,
+            "selected_price_option": selected_price_option,
             "active_filters": active_filters,
+            "applied_filters": &applied_filters,
             "request": request,
         }),
     );
@@ -314,10 +345,12 @@ async fn request_price_check(
             matched: search.total.unwrap_or(0),
             source_url: Some(source_url),
             selected_currency: selected_currency.to_string(),
+            selected_price_option: selected_price_option.to_string(),
             rate_source: Some(rates.source.clone()),
             rate_limit,
             currencies,
             filters,
+            applied_filters: applied_filters.clone(),
             listings: Vec::new(),
             error: None,
         };
@@ -360,10 +393,12 @@ async fn request_price_check(
         matched: search.total.unwrap_or(listings.len()),
         source_url: Some(source_url.clone()),
         selected_currency: selected_currency.to_string(),
+        selected_price_option: selected_price_option.to_string(),
         rate_source: Some(rates.source.clone()),
         rate_limit,
         currencies: currencies.clone(),
         filters,
+        applied_filters: applied_filters.clone(),
         listings,
         error: None,
     };
@@ -374,6 +409,7 @@ async fn request_price_check(
         source_url: source_url.clone(),
         remaining_result_ids,
         selected_currency: selected_currency.to_string(),
+        selected_price_option: selected_price_option.to_string(),
         currencies: currencies.clone(),
         rates: rates.clone(),
     });
@@ -467,10 +503,12 @@ pub async fn load_more_price_check_results(
                 matched: 0,
                 source_url: Some(continuation.source_url.clone()),
                 selected_currency: continuation.selected_currency.clone(),
+                selected_price_option: continuation.selected_price_option.clone(),
                 rate_source: Some(continuation.rates.source.clone()),
                 rate_limit: None,
                 currencies: continuation.currencies.clone(),
                 filters: Vec::new(),
+                applied_filters: Vec::new(),
                 listings: Vec::new(),
                 error: None,
             },
@@ -524,10 +562,12 @@ pub async fn load_more_price_check_results(
             matched: 0,
             source_url: Some(continuation.source_url.clone()),
             selected_currency: continuation.selected_currency.clone(),
+            selected_price_option: continuation.selected_price_option.clone(),
             rate_source: Some(continuation.rates.source.clone()),
             rate_limit,
             currencies: continuation.currencies.clone(),
             filters: Vec::new(),
+            applied_filters: Vec::new(),
             listings,
             error: None,
         },
@@ -561,12 +601,7 @@ async fn parse_json_response<T: serde::de::DeserializeOwned>(
 
     if !status.is_success() {
         return Err(TradeApiError {
-            message: format!(
-                "trade2 {} failed with HTTP {}: {}",
-                endpoint_label(&url),
-                status.as_u16(),
-                concise_body(&body)
-            ),
+            message: trade_http_error_message(endpoint_label(&url), status, &body),
             rate_limit,
         });
     }
@@ -633,6 +668,41 @@ fn concise_body(body: &str) -> String {
     } else {
         format!("{}...", &one_line[..MAX_BODY_LENGTH])
     }
+}
+
+fn trade_http_error_message(endpoint: &str, status: reqwest::StatusCode, body: &str) -> String {
+    let reason = status
+        .canonical_reason()
+        .map(|reason| format!(" {reason}"))
+        .unwrap_or_default();
+
+    if status.as_u16() == 429 {
+        return format!(
+            "trade2 {endpoint} is rate limited (HTTP {}{reason}). Keeping the last fetched listings; wait for the usage bar to cool down before retrying.",
+            status.as_u16()
+        );
+    }
+
+    if looks_like_html(body) {
+        return format!(
+            "trade2 {endpoint} was rejected by the official trade edge (HTTP {}{reason}). Keeping the last fetched listings; try fewer modifiers or refresh in a moment.",
+            status.as_u16()
+        );
+    }
+
+    format!(
+        "trade2 {endpoint} failed with HTTP {}{reason}: {}",
+        status.as_u16(),
+        concise_body(body)
+    )
+}
+
+fn looks_like_html(body: &str) -> bool {
+    let trimmed = body.trim_start().to_ascii_lowercase();
+    trimmed.starts_with("<!doctype html")
+        || trimmed.starts_with("<html")
+        || trimmed.contains("<body")
+        || trimmed.contains("<script")
 }
 
 fn parse_trade_rate_limit(headers: &reqwest::header::HeaderMap) -> Option<TradeRateLimit> {
@@ -801,6 +871,7 @@ fn price_check_cache_key(
     item: &Item,
     league: &str,
     selected_currency: &str,
+    selected_price_option: &str,
     active_filters: &[ActivePriceFilter],
 ) -> Result<String, String> {
     let mut canonical_filters = active_filters.to_vec();
@@ -817,8 +888,10 @@ fn price_check_cache_key(
     });
 
     serde_json::to_string(&json!({
+        "version": PRICE_CHECK_CACHE_SCHEMA_VERSION,
         "league": league.to_ascii_lowercase(),
         "selected_currency": selected_currency.to_ascii_lowercase(),
+        "selected_price_option": selected_price_option.to_ascii_lowercase(),
         "item": item.raw_text.trim(),
         "filters": canonical_filters,
     }))
@@ -827,6 +900,7 @@ fn price_check_cache_key(
 
 fn build_trade_request(
     item: &Item,
+    selected_price_option: &str,
     active_filters: &[ActivePriceFilter],
     stats: &[TradeStatEntry],
 ) -> serde_json::Value {
@@ -844,7 +918,7 @@ fn build_trade_request(
         query["name"] = json!(item.name);
     }
 
-    query["filters"] = build_trade_filters(active_filters);
+    query["filters"] = build_trade_filters(selected_price_option, active_filters);
     query["stats"][0]["filters"] = json!(build_stat_filters(active_filters, stats));
 
     json!({
@@ -853,8 +927,15 @@ fn build_trade_request(
     })
 }
 
-fn build_trade_filters(active_filters: &[ActivePriceFilter]) -> serde_json::Value {
+fn build_trade_filters(
+    selected_price_option: &str,
+    active_filters: &[ActivePriceFilter],
+) -> serde_json::Value {
     let mut filters = json!({});
+
+    if let Some(price_option) = trade_price_option_for_request(selected_price_option) {
+        filters["trade_filters"]["filters"]["price"]["option"] = json!(price_option);
+    }
 
     for filter in active_filters {
         let Some(value) = filter.value else {
@@ -887,6 +968,27 @@ fn build_trade_filters(active_filters: &[ActivePriceFilter]) -> serde_json::Valu
     filters
 }
 
+fn applied_price_filters(
+    active_filters: &[ActivePriceFilter],
+    stats: &[TradeStatEntry],
+) -> Vec<ActivePriceFilter> {
+    active_filters
+        .iter()
+        .filter(|filter| filter_is_searchable(filter, stats))
+        .cloned()
+        .collect()
+}
+
+fn filter_is_searchable(filter: &ActivePriceFilter, stats: &[TradeStatEntry]) -> bool {
+    match filter.kind.as_str() {
+        "item_level" | "quality" | "required_level" | "armour" | "evasion" | "energy_shield" => {
+            filter.value.is_some()
+        }
+        "explicit" => matching_trade_stat(filter, stats).is_some(),
+        _ => false,
+    }
+}
+
 fn build_stat_filters(
     active_filters: &[ActivePriceFilter],
     stats: &[TradeStatEntry],
@@ -895,16 +997,7 @@ fn build_stat_filters(
         .iter()
         .filter(|filter| filter.kind == "explicit")
         .filter_map(|filter| {
-            let stat = stats.iter().find(|stat| {
-                templates_compatible(&stat.template, &filter.template)
-                    && stat.id.starts_with("explicit.")
-            });
-            let stat = stat.or_else(|| {
-                stats.iter().find(|stat| {
-                    templates_compatible(&stat.template, &filter.template)
-                        && stat.id.starts_with("pseudo.")
-                })
-            })?;
+            let stat = matching_trade_stat(filter, stats)?;
 
             let mut stat_filter = json!({
                 "id": stat.id,
@@ -919,6 +1012,21 @@ fn build_stat_filters(
         .collect()
 }
 
+fn matching_trade_stat<'a>(
+    filter: &ActivePriceFilter,
+    stats: &'a [TradeStatEntry],
+) -> Option<&'a TradeStatEntry> {
+    let stat = stats.iter().find(|stat| {
+        templates_compatible(&stat.template, &filter.template) && stat.id.starts_with("explicit.")
+    });
+    stat.or_else(|| {
+        stats.iter().find(|stat| {
+            templates_compatible(&stat.template, &filter.template) && stat.id.starts_with("pseudo.")
+        })
+    })
+}
+
+
 fn templates_compatible(left: &str, right: &str) -> bool {
     left == right || left.contains(right) || right.contains(left)
 }
@@ -929,6 +1037,22 @@ fn listing_from_fetch_result(
     currencies: &[CurrencyMeta],
     rates: &CurrencyRates,
 ) -> Option<PriceListing> {
+    let explicit_mods = result
+        .item
+        .explicit_mods
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(clean_trade_text)
+        .collect();
+    let direct_source_url = trade_listing_url(
+        source_url,
+        result
+            .id
+            .as_deref()
+            .or(result.item.id.as_deref())
+            .unwrap_or_default(),
+    );
     let account = result.listing.account;
     let price_data = result.listing.price;
     let amount = price_data.as_ref().map(|price| price.amount);
@@ -961,7 +1085,7 @@ fn listing_from_fetch_result(
             .listing
             .indexed
             .unwrap_or_else(|| "unknown".to_string()),
-        source_url: source_url.to_string(),
+        source_url: direct_source_url,
         seller: account.as_ref().map(|account| account.name.clone()),
         online: account.and_then(|account| account.online).is_some(),
         required_level: result.item.required_level(),
@@ -969,14 +1093,23 @@ fn listing_from_fetch_result(
         armour: result.item.property_value("Armour"),
         evasion: result.item.property_value("Evasion Rating"),
         energy_shield: result.item.property_value("Energy Shield"),
-        explicit_mods: result
-            .item
-            .explicit_mods
-            .unwrap_or_default()
-            .into_iter()
-            .map(clean_trade_text)
-            .collect(),
+        explicit_mods,
+        preview_name: preview_item_name(&result.item),
+        preview_base_type: result.item.base_type.clone().or_else(|| result.item.type_line.clone()),
+        preview_rarity: preview_item_rarity(result.item.frame_type),
+        preview_item_class: result.item.item_class.clone(),
+        preview_icon_url: result.item.icon.clone(),
+        preview_property_lines: preview_property_lines(&result.item),
+        preview_description: result.item.description.clone().map(clean_trade_text),
     })
+}
+
+fn trade_listing_url(source_url: &str, result_id: &str) -> String {
+    if result_id.is_empty() {
+        return source_url.to_string();
+    }
+
+    format!("{source_url}#{result_id}")
 }
 
 fn format_price(amount: f64, currency: &str) -> String {
@@ -984,6 +1117,68 @@ fn format_price(amount: f64, currency: &str) -> String {
         format!("{} {}", amount as u64, currency.to_uppercase())
     } else {
         format!("{amount:.1} {}", currency.to_uppercase())
+    }
+}
+
+fn preview_item_name(item: &FetchItem) -> Option<String> {
+    item.name
+        .as_ref()
+        .map(|value| clean_trade_text(value.clone()))
+        .filter(|value| !value.is_empty())
+        .or_else(|| item.type_line.as_ref().map(|value| clean_trade_text(value.clone())))
+}
+
+fn preview_item_rarity(frame_type: Option<u8>) -> Option<String> {
+    Some(
+        match frame_type.unwrap_or(2) {
+            0 => "Common",
+            1 => "Magic",
+            2 => "Rare",
+            3 => "Unique",
+            5 => "Currency",
+            _ => "Rare",
+        }
+        .to_string(),
+    )
+}
+
+fn preview_property_lines(item: &FetchItem) -> Vec<String> {
+    let mut lines = item
+        .properties
+        .iter()
+        .filter_map(fetch_property_line)
+        .collect::<Vec<_>>();
+
+    lines.extend(item.requirements.iter().filter_map(|property| {
+        let line = fetch_property_line(property)?;
+        Some(format!("Requires {line}"))
+    }));
+
+    lines
+}
+
+fn fetch_property_line(property: &FetchItemProperty) -> Option<String> {
+    let value = property
+        .values
+        .first()
+        .map(|(value, _)| clean_trade_text(value.clone()))
+        .filter(|value| !value.is_empty());
+    let name = clean_trade_text(property.name.clone());
+
+    if name.is_empty() {
+        return value;
+    }
+
+    value
+        .map(|value| format!("{name}: {value}"))
+        .or(Some(name))
+}
+
+fn trade_price_option_for_request(price_option: &str) -> Option<&str> {
+    match price_option {
+        PRICE_OPTION_EQUIVALENT => None,
+        PRICE_OPTION_EXALTED_DIVINE => Some(PRICE_OPTION_EXALTED_DIVINE),
+        direct_currency => Some(direct_currency),
     }
 }
 
@@ -1036,6 +1231,10 @@ async fn fetch_currency_meta() -> Result<Vec<CurrencyMeta>, String> {
 }
 
 async fn fetch_trade_stats() -> Result<Vec<TradeStatEntry>, String> {
+    if let Some(cached) = TRADE_STATS_CACHE.lock().await.clone() {
+        return Ok(cached);
+    }
+
     let client = reqwest::Client::builder()
         .user_agent("Lumen-Scan/0.1 trade-stat-loader")
         .build()
@@ -1052,7 +1251,7 @@ async fn fetch_trade_stats() -> Result<Vec<TradeStatEntry>, String> {
         .await
         .map_err(|error| error.to_string())?;
 
-    Ok(response
+    let stats = response
         .result
         .into_iter()
         .flat_map(|group| group.entries)
@@ -1060,7 +1259,10 @@ async fn fetch_trade_stats() -> Result<Vec<TradeStatEntry>, String> {
             template: spec_template(&entry.text),
             id: entry.id,
         })
-        .collect())
+        .collect::<Vec<_>>();
+
+    *TRADE_STATS_CACHE.lock().await = Some(stats.clone());
+    Ok(stats)
 }
 
 async fn fetch_exchange_rates(
@@ -1127,16 +1329,25 @@ fn normalize_amount(amount: f64, currency: &str, rates: &CurrencyRates) -> Optio
 }
 
 fn currency_icon_url(currencies: &[CurrencyMeta], currency: &str) -> Option<String> {
+    let canonical = canonical_currency_id(currency);
     currencies
         .iter()
-        .find(|meta| meta.id == currency)
+        .find(|meta| meta.id == canonical)
         .and_then(|meta| meta.icon_url.clone())
         .or_else(|| {
             COMMON_CURRENCIES
                 .iter()
-                .find(|(id, _, _)| *id == currency)
+                .find(|(id, _, _)| *id == canonical)
                 .map(|(_, _, slug)| format!("https://cdn.poe2db.tw/image/poe2/{slug}.webp"))
         })
+}
+
+fn canonical_currency_id(currency: &str) -> &str {
+    match currency {
+        "aug" => "augment",
+        "alch" => "alchemy",
+        other => other,
+    }
 }
 
 fn default_currency_meta() -> Vec<CurrencyMeta> {
@@ -1280,6 +1491,13 @@ fn normalized_price_currency(currency: Option<&str>) -> &str {
         .unwrap_or(DEFAULT_PRICE_CURRENCY)
 }
 
+fn normalized_price_option(price_option: Option<&str>) -> &str {
+    price_option
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_PRICE_OPTION)
+}
+
 #[derive(Debug, Deserialize)]
 struct TradeSearchResponse {
     id: String,
@@ -1406,12 +1624,30 @@ impl CurrencyRates {
 
 #[derive(Debug, Deserialize)]
 struct FetchResult {
+    #[serde(default)]
+    id: Option<String>,
     item: FetchItem,
     listing: FetchListing,
 }
 
 #[derive(Debug, Deserialize)]
 struct FetchItem {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(rename = "typeLine", default)]
+    type_line: Option<String>,
+    #[serde(rename = "baseType", default)]
+    base_type: Option<String>,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(rename = "frameType", default)]
+    frame_type: Option<u8>,
+    #[serde(rename = "itemClass", default)]
+    item_class: Option<String>,
+    #[serde(rename = "descrText", default)]
+    description: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
     ilvl: Option<u16>,
     #[serde(default)]
     properties: Vec<FetchItemProperty>,
@@ -1477,8 +1713,12 @@ struct FetchAccount {
 mod tests {
     use crate::Item;
 
+    use std::collections::HashMap;
+
     use super::{
-        build_trade_request, filters_for_item, price_check_cache_key, spec_template, TradeStatEntry,
+        build_trade_request, filters_for_item, listing_from_fetch_result, price_check_cache_key,
+        spec_template, CurrencyRates, FetchAccount, FetchItem, FetchItemProperty, FetchListing,
+        FetchPrice, FetchResult, TradeStatEntry,
     };
 
     #[test]
@@ -1501,6 +1741,7 @@ mod tests {
 
         let request = build_trade_request(
             &item,
+            "equivalent",
             &[crate::ActivePriceFilter {
                 kind: "item_level".to_string(),
                 label: "Item Level: 83".to_string(),
@@ -1572,7 +1813,7 @@ mod tests {
             template: spec_template("#% increased Armour"),
         }];
 
-        let request = build_trade_request(&item, &[filter], &stats);
+        let request = build_trade_request(&item, "equivalent", &[filter], &stats);
 
         assert_eq!(
             request["query"]["stats"][0]["filters"][0]["id"],
@@ -1652,12 +1893,69 @@ mod tests {
             &item,
             "Standard",
             "divine",
+            "equivalent",
             &[filter_a.clone(), filter_b.clone()],
         )
         .expect("first cache key");
-        let second = price_check_cache_key(&item, "Standard", "divine", &[filter_b, filter_a])
-            .expect("second cache key");
+        let second = price_check_cache_key(
+            &item,
+            "Standard",
+            "divine",
+            "equivalent",
+            &[filter_b, filter_a],
+        )
+        .expect("second cache key");
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn listing_rows_use_direct_trade_listing_url() {
+        let listing = listing_from_fetch_result(
+            FetchResult {
+                id: Some("deadbeef".to_string()),
+                item: FetchItem {
+                    name: Some("Test Item".to_string()),
+                    type_line: Some("Test Base".to_string()),
+                    base_type: Some("Test Base".to_string()),
+                    icon: None,
+                    frame_type: Some(2),
+                    item_class: Some("Weapons".to_string()),
+                    description: None,
+                    id: None,
+                    ilvl: Some(82),
+                    properties: vec![FetchItemProperty {
+                        name: "Quality".to_string(),
+                        values: vec![("20%".to_string(), 0)],
+                    }],
+                    requirements: Vec::new(),
+                    explicit_mods: Some(vec!["Adds 1 to 2 Physical Damage".to_string()]),
+                },
+                listing: FetchListing {
+                    indexed: Some("2026-05-20T12:00:00Z".to_string()),
+                    price: Some(FetchPrice {
+                        amount: 1.0,
+                        currency: "divine".to_string(),
+                    }),
+                    account: Some(FetchAccount {
+                        name: "seller#1234".to_string(),
+                        online: None,
+                    }),
+                },
+            },
+            "https://www.pathofexile.com/trade2/search/poe2/Standard/query123",
+            &[],
+            &CurrencyRates {
+                selected_currency: "divine".to_string(),
+                per_selected: HashMap::new(),
+                source: "test".to_string(),
+            },
+        )
+        .expect("listing");
+
+        assert_eq!(
+            listing.source_url,
+            "https://www.pathofexile.com/trade2/search/poe2/Standard/query123#deadbeef"
+        );
     }
 }

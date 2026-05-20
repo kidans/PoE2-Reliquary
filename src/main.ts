@@ -15,6 +15,7 @@ type AppState = {
   price_check: PriceCheck | null;
   exchange_tab: ExchangeTabState;
   price_currency: string;
+  price_option: string;
   debug_log_path: string | null;
 };
 
@@ -39,10 +40,12 @@ type PriceCheck = {
   matched: number;
   source_url: string | null;
   selected_currency: string;
+  selected_price_option: string;
   rate_source: string | null;
   rate_limit: TradeRateLimit | null;
   currencies: CurrencyMeta[];
   filters: PriceFilter[];
+  applied_filters: ActivePriceFilter[];
   listings: PriceListing[];
   error: string | null;
 };
@@ -74,6 +77,13 @@ type PriceFilter = {
   tier: string | null;
 };
 
+type ActivePriceFilter = {
+  kind: ItemSpec["kind"];
+  label: string;
+  value: number | null;
+  template: string;
+};
+
 type PriceListing = {
   price: string;
   amount: number | null;
@@ -94,6 +104,18 @@ type PriceListing = {
   evasion: number | null;
   energy_shield: number | null;
   explicit_mods: string[];
+  preview_name: string | null;
+  preview_base_type: string | null;
+  preview_rarity: string | null;
+  preview_item_class: string | null;
+  preview_icon_url: string | null;
+  preview_property_lines: string[];
+  preview_description: string | null;
+};
+
+type ListingPreviewRequest = {
+  listing: PriceListing;
+  family: string | null;
 };
 
 type ItemProfile = {
@@ -229,6 +251,7 @@ type ExchangeTabState = {
 };
 
 const root = document.querySelector<HTMLDivElement>("#root");
+const isListingPreviewWindow = new URLSearchParams(window.location.search).get("preview") === "listing";
 
 if (!root) {
   throw new Error("Lumen-Scan root element was not found.");
@@ -245,6 +268,7 @@ const state: AppState = {
   price_check: null,
   exchange_tab: fallbackExchangeTab(),
   price_currency: "exalted",
+  price_option: "equivalent",
   debug_log_path: null,
 };
 
@@ -256,6 +280,9 @@ let appliedWindowLayout: "scan" | "trade" | "idle" | "default" | "compact" | nul
 let evaluateLayoutFrame = 0;
 let tradeSearchQuery = "";
 let loadingMoreMarketplaceResults = false;
+let hoveredListingPreview: ListingPreviewRequest | null = null;
+let pinnedListingPreviewIndex: number | null = null;
+let previewPollHandle = 0;
 
 const LOCAL_CURRENCY_ICONS: Record<string, string> = {
   exalted: "/currency/exalted.webp",
@@ -265,81 +292,95 @@ const LOCAL_CURRENCY_ICONS: Record<string, string> = {
   chaos: "/currency/chaos.webp",
   vaal: "/currency/vaal.webp",
   alchemy: "/currency/alchemy.webp",
+  alch: "/currency/alchemy.webp",
   annul: "/currency/annul.webp",
   chance: "/currency/chance.webp",
   augment: "/currency/augment.webp",
+  aug: "/currency/augment.webp",
+  mirror: "/currency/mirror.png",
 };
 
-root.innerHTML = `
-  <main class="overlay-root">
-    <section class="hud-card interactive" data-interactive>
-      <header class="hud-header" data-drag-handle>
-        <div class="brand-lockup">
-          <h1 class="brand-title">kalandra</h1>
+const CURRENCY_ICON_ALIASES: Record<string, string> = {
+  alch: "alchemy",
+  aug: "augment",
+};
+
+root.innerHTML = isListingPreviewWindow
+  ? `
+    <main class="preview-overlay-root">
+      <section class="listing-preview-shell" data-preview-panel></section>
+    </main>
+  `
+  : `
+    <main class="overlay-root">
+      <section class="hud-card interactive" data-interactive>
+        <header class="hud-header" data-drag-handle>
+          <div class="brand-lockup">
+            <h1 class="brand-title">kalandra</h1>
+          </div>
+          <div class="window-controls">
+            <div class="zone-pill" data-zone>Zone: Unknown</div>
+            <select class="league-select" data-league aria-label="Trade league">
+              <option>Fate of the Vaal</option>
+              <option>HC Fate of the Vaal</option>
+              <option>Standard</option>
+              <option>Hardcore</option>
+            </select>
+            <button class="chrome-button" data-toggle-compact type="button" title="Toggle compact mode">Line</button>
+            <button class="chrome-button chrome-button-minimize" data-minimize type="button" title="Minimize" aria-label="Minimize">-</button>
+          </div>
+        </header>
+
+        <div class="compact-strip" data-drag-handle>
+          <div>
+            <span data-compact-title>Kalandra ready</span>
+            <strong data-compact-meta>Ctrl+C scan | Alt+D trade</strong>
+          </div>
+          <button class="chrome-button" data-toggle-compact type="button">Open</button>
         </div>
-        <div class="window-controls">
-          <div class="zone-pill" data-zone>Zone: Unknown</div>
-          <select class="league-select" data-league aria-label="Trade league">
-            <option>Fate of the Vaal</option>
-            <option>HC Fate of the Vaal</option>
-            <option>Standard</option>
-            <option>Hardcore</option>
-          </select>
-          <button class="chrome-button" data-toggle-compact type="button" title="Toggle compact mode">Line</button>
-          <button class="chrome-button chrome-button-minimize" data-minimize type="button" title="Minimize" aria-label="Minimize">-</button>
-        </div>
-      </header>
 
-      <div class="compact-strip" data-drag-handle>
-        <div>
-          <span data-compact-title>Kalandra ready</span>
-          <strong data-compact-meta>Ctrl+C scan | Alt+D trade</strong>
-        </div>
-        <button class="chrome-button" data-toggle-compact type="button">Open</button>
-      </div>
+        <nav class="tab-row" aria-label="Overlay panels">
+          <button class="tab-button" data-tab="scan" type="button" title="Scan">
+            <span class="tab-label">Scan</span>
+          </button>
+          <button class="tab-button" data-tab="trade" type="button" title="Trade">
+            <span class="tab-label">Trade</span>
+          </button>
+          <button class="tab-button" data-tab="data" type="button" title="Data">
+            <span class="tab-label">Data</span>
+          </button>
+        </nav>
 
-      <nav class="tab-row" aria-label="Overlay panels">
-        <button class="tab-button" data-tab="scan" type="button" title="Scan">
-          <span class="tab-label">Scan</span>
-        </button>
-        <button class="tab-button" data-tab="trade" type="button" title="Trade">
-          <span class="tab-label">Trade</span>
-        </button>
-        <button class="tab-button" data-tab="data" type="button" title="Data">
-          <span class="tab-label">Data</span>
-        </button>
-      </nav>
+        <div class="panel" data-panel></div>
+      </section>
+    </main>
+  `;
 
-      <div class="panel" data-panel></div>
-    </section>
-  </main>
-`;
+const panelElement = root.querySelector<HTMLElement>(isListingPreviewWindow ? "[data-preview-panel]" : "[data-panel]");
+const zoneElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-zone]");
+const leagueElement = isListingPreviewWindow ? null : root.querySelector<HTMLSelectElement>("[data-league]");
+const hudElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>(".hud-card");
+const compactTitleElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-title]");
+const compactMetaElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-meta]");
+const tabButtons = isListingPreviewWindow
+  ? []
+  : Array.from(root.querySelectorAll<HTMLButtonElement>("[data-tab]"));
 
-const panel = root.querySelector<HTMLElement>("[data-panel]");
-const zone = root.querySelector<HTMLElement>("[data-zone]");
-const leagueSelect = root.querySelector<HTMLSelectElement>("[data-league]");
-const hudCard = root.querySelector<HTMLElement>(".hud-card");
-const compactTitle = root.querySelector<HTMLElement>("[data-compact-title]");
-const compactMeta = root.querySelector<HTMLElement>("[data-compact-meta]");
-const tabButtons = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-tab]"));
-
-if (!panel || !zone || !leagueSelect || !hudCard || !compactTitle || !compactMeta) {
+if (!panelElement || (!isListingPreviewWindow && (!zoneElement || !leagueElement || !hudElement || !compactTitleElement || !compactMetaElement))) {
   throw new Error("Lumen-Scan UI shell failed to initialize.");
 }
 
-const panelElement = panel;
-const zoneElement = zone;
-const leagueElement = leagueSelect;
-const hudElement = hudCard;
-const compactTitleElement = compactTitle;
-const compactMetaElement = compactMeta;
-
 function render() {
-  zoneElement.textContent = `Zone: ${state.current_zone || "Unknown"}`;
+  if (isListingPreviewWindow) {
+    panelElement!.innerHTML = renderListingPreviewWindow(hoveredListingPreview);
+    return;
+  }
+
+  zoneElement!.textContent = `Zone: ${state.current_zone || "Unknown"}`;
   renderLeagueOptions();
-  hudElement.classList.toggle("is-compact", compactMode);
-  hudElement.dataset.tab = activeTab;
-  panelElement.dataset.tab = activeTab;
+  hudElement!.classList.toggle("is-compact", compactMode);
+  hudElement!.dataset.tab = activeTab;
+  panelElement!.dataset.tab = activeTab;
 
   tabButtons.forEach((button) => {
     button.classList.toggle("is-active", button.dataset.tab === activeTab);
@@ -349,26 +390,34 @@ function render() {
     workerMessages.slice(-1)[0]?.message ??
     "Ctrl+C scans items. Alt+D opens the latest trade search.";
 
-  compactTitleElement.textContent = compactTitleText(state.scanned_item);
-  compactMetaElement.textContent = compactMetaText(lastStatus);
+  compactTitleElement!.textContent = compactTitleText(state.scanned_item);
+  compactMetaElement!.textContent = compactMetaText(lastStatus);
 
   if (activeTab === "scan") {
-    panelElement.innerHTML = renderScanPanel(state.scanned_item, state.price_check);
+    panelElement!.innerHTML = renderScanPanel(state.scanned_item, state.price_check);
     queueEvaluateLayoutSync();
   }
 
   if (activeTab === "trade") {
-    panelElement.innerHTML = renderTradePanel(state.exchange_tab);
+    panelElement!.innerHTML = renderTradePanel(state.exchange_tab);
+    hoveredListingPreview = null;
+    void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
   }
 
   if (activeTab === "data") {
-    panelElement.innerHTML = renderDataPanel();
+    panelElement!.innerHTML = renderDataPanel();
+    hoveredListingPreview = null;
+    void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
   }
 
   syncWindowLayout();
 }
 
 function renderLeagueOptions() {
+  if (isListingPreviewWindow || !leagueElement) {
+    return;
+  }
+
   const leagues = state.league_catalog.length
     ? state.league_catalog
         .filter((league) => league.trade_enabled || league.exchange_enabled)
@@ -402,6 +451,61 @@ function renderLeagueOptions() {
   leagueElement.value = state.trade_league;
 }
 
+function renderListingPreviewWindow(preview: ListingPreviewRequest | null) {
+  if (!preview) {
+    return `
+      <section class="listing-preview-card empty-preview">
+        <p class="section-label">Listing Preview</p>
+        <p>Click the <strong>View</strong> button on a marketplace row to inspect that fetched listing.</p>
+      </section>
+    `;
+  }
+
+  const { listing, family } = preview;
+  const rarity = listing.preview_rarity ?? "Rare";
+  const rarityClass = rarityClassName(rarity);
+  const itemClass = listing.preview_item_class ?? family ?? "Listing";
+  const baseType = listing.preview_base_type ?? listing.preview_name ?? "Unknown item";
+  const bannerTitle = rarity.toLowerCase() === "unique" ? listing.preview_name ?? baseType : baseType;
+  const valueEntries = previewValueEntries(listing, family);
+  const modifierGroups = previewModifierGroups(listing.explicit_mods);
+  const previewDescription = listing.preview_description
+    ? `<p class="preview-description">${escapeHtml(listing.preview_description)}</p>`
+    : "";
+  const iconMarkup = listing.preview_icon_url
+    ? `<div class="preview-icon-wrap"><img class="preview-item-icon" src="${escapeAttribute(listing.preview_icon_url)}" alt="" /></div>`
+    : "";
+
+  return `
+    <section class="listing-preview-card evaluate-card ${rarityClass}">
+      <div class="poe-item-banner">
+        <div class="banner-corner banner-corner-left" aria-hidden="true"></div>
+        <div class="banner-center">
+          <p class="banner-subtitle">${escapeHtml(rarity)} ${escapeHtml(itemClass)}</p>
+          <h2 class="banner-title">${escapeHtml(bannerTitle)}</h2>
+        </div>
+        <div class="banner-corner banner-corner-right" aria-hidden="true"></div>
+      </div>
+      <div class="listing-preview-body">
+        ${iconMarkup}
+        <div class="profile-pills">
+          ${renderPreviewPills(listing)}
+        </div>
+        ${renderPreviewValueLines(valueEntries)}
+        <div class="mod-chip-stack">
+          ${renderPreviewModifierSections(modifierGroups)}
+        </div>
+        ${previewDescription}
+        <div class="preview-listing-meta">
+          <span><strong>Seller</strong>${escapeHtml(listing.seller ?? "Unknown")}</span>
+          <span><strong>Price</strong>${escapeHtml(listing.price)}</span>
+          <span><strong>Listed</strong>${escapeHtml(formatListed(listing.listed))}</span>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function compactTitleText(item: ScannedItem | null) {
   if (!item) {
     return "Kalandra | waiting for item";
@@ -419,6 +523,70 @@ function compactMetaText(status: string) {
   return status;
 }
 
+function clearListingPreviewHideTimer() {
+  return;
+}
+
+function startListingPreviewPolling() {
+  if (!isListingPreviewWindow || previewPollHandle) {
+    return;
+  }
+
+  const poll = () => {
+    void invoke<ListingPreviewRequest | null>("get_listing_preview")
+      .then((preview) => {
+        const nextSerialized = JSON.stringify(preview);
+        const currentSerialized = JSON.stringify(hoveredListingPreview);
+        if (nextSerialized !== currentSerialized) {
+          hoveredListingPreview = preview;
+          render();
+        }
+      })
+      .catch((error) => {
+        console.error("failed to poll listing preview", error);
+      });
+  };
+
+  poll();
+  previewPollHandle = window.setInterval(poll, 250);
+}
+
+function stopListingPreviewPolling() {
+  if (!previewPollHandle) {
+    return;
+  }
+
+  window.clearInterval(previewPollHandle);
+  previewPollHandle = 0;
+}
+
+async function hideListingPreview() {
+  hoveredListingPreview = null;
+  pinnedListingPreviewIndex = null;
+  if (!isListingPreviewWindow) {
+    await invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+  }
+  render();
+}
+
+async function showListingPreviewForIndex(index: number, anchorTop: number) {
+  const listing = state.price_check?.listings[index];
+  if (!listing) {
+    return;
+  }
+
+  pinnedListingPreviewIndex = index;
+  hoveredListingPreview = {
+    listing,
+    family: state.scanned_item?.family ?? null,
+  };
+
+  await invoke("show_listing_preview", {
+    preview: hoveredListingPreview,
+    anchorTop,
+  }).catch((error) => pushStatus("preview", String(error)));
+}
+
 function renderScanPanel(item: ScannedItem | null, priceCheck: PriceCheck | null) {
   if (!item) {
     return `
@@ -431,7 +599,7 @@ function renderScanPanel(item: ScannedItem | null, priceCheck: PriceCheck | null
 
   const profile = itemProfile(item);
   const specs = itemSpecs(item, profile);
-  const activeSpecCount = specs.filter((spec) => selectedSpecKeys.has(spec.key)).length;
+  const activeSpecCount = specs.filter((spec) => isSpecApplied(spec, item, priceCheck)).length;
   const hazardMarkup = item.hazards.length
     ? `
       <div class="hazard-box">
@@ -512,7 +680,7 @@ function renderValueLines(entries: ValueLineEntry[]) {
 }
 
 function renderValueLine(spec: ItemSpec) {
-  const active = selectedSpecKeys.has(spec.key);
+  const active = isSpecApplied(spec);
   const [label, value] = splitSpecLabel(spec.label);
 
   return `
@@ -539,6 +707,149 @@ function renderStaticValueLine(label: string, value: string) {
 
 function renderValueEntry(entry: ValueLineEntry) {
   return entry.spec ? renderValueLine(entry.spec) : renderStaticValueLine(entry.label, entry.value);
+}
+
+function renderPreviewPills(listing: PriceListing) {
+  const pills = [
+    listing.item_level ? `Item Level: ${listing.item_level}` : null,
+    listing.required_level ? `Requires Level: ${listing.required_level}` : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return pills.map((value) => `<div class="profile-pill preview-pill">${escapeHtml(value)}</div>`).join("");
+}
+
+function renderPreviewValueLines(entries: Array<{ label: string; value: string }>) {
+  if (!entries.length) {
+    return "";
+  }
+
+  return `
+    <div class="defense-lines preview-value-lines">
+      ${entries.map((entry) => renderStaticValueLine(entry.label, entry.value)).join("")}
+    </div>
+  `;
+}
+
+function previewValueEntries(listing: PriceListing, family: string | null) {
+  const entries: Array<{ label: string; value: string }> = [];
+  const seen = new Set<string>();
+
+  const addEntry = (label: string, value: string | null | undefined) => {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const normalized = normalizeDisplayLabel(label);
+    if (seen.has(normalized)) {
+      return;
+    }
+
+    seen.add(normalized);
+    entries.push({ label, value: trimmed });
+  };
+
+  if (listing.quality !== null) {
+    addEntry("Quality", `${listing.quality}%`);
+  }
+  if (listing.armour !== null) {
+    addEntry("Armour", `${listing.armour}`);
+  }
+  if (listing.evasion !== null) {
+    addEntry("Evasion Rating", `${listing.evasion}`);
+  }
+  if (listing.energy_shield !== null) {
+    addEntry("Energy Shield", `${listing.energy_shield}`);
+  }
+
+  (listing.preview_property_lines ?? []).forEach((line) => {
+    const property = parseDisplayPropertyLine(cleanTradeMarkup(line));
+    if (!property) {
+      return;
+    }
+    if (family && !shouldRenderPropertyValue(family, property.label)) {
+      return;
+    }
+    addEntry(property.label, property.value);
+  });
+
+  return entries;
+}
+
+type PreviewModifierGroups = {
+  rune: string[];
+  explicit: string[];
+  implicit: string[];
+  special: string[];
+};
+
+function previewModifierGroups(modifiers: string[]): PreviewModifierGroups {
+  const groups: PreviewModifierGroups = {
+    rune: [],
+    explicit: [],
+    implicit: [],
+    special: [],
+  };
+
+  modifiers.forEach((modifier) => {
+    const normalized = modifier.toLowerCase();
+
+    if (normalized.includes("(rune)")) {
+      groups.rune.push(modifier);
+      return;
+    }
+
+    if (normalized.includes("(implicit)")) {
+      groups.implicit.push(modifier);
+      return;
+    }
+
+    if (
+      normalized.includes("(desec") ||
+      normalized.includes("(corrupt") ||
+      normalized.includes("(enchant") ||
+      normalized.includes("(fractured)")
+    ) {
+      groups.special.push(modifier);
+      return;
+    }
+
+    groups.explicit.push(modifier);
+  });
+
+  return groups;
+}
+
+function renderPreviewModifierSections(groups: PreviewModifierGroups) {
+  const sections = [
+    renderPreviewModifierGroup("Rune Mods", groups.rune, "rune"),
+    renderPreviewModifierGroup("Item Mods", groups.explicit, "explicit"),
+    renderPreviewModifierGroup("Implicit", groups.implicit, "implicit"),
+    renderPreviewModifierGroup("Special", groups.special, "special"),
+  ].filter(Boolean);
+
+  return sections.length
+    ? sections.join("")
+    : `<div class="mod-chip muted">No explicit modifiers fetched for this listing.</div>`;
+}
+
+function renderPreviewModifierGroup(
+  label: string,
+  modifiers: string[],
+  tone: "rune" | "explicit" | "implicit" | "special",
+) {
+  if (!modifiers.length) {
+    return "";
+  }
+
+  return `
+    <section class="modifier-group modifier-group-${tone}">
+      <p class="modifier-group-label">${escapeHtml(label)}</p>
+      <div class="modifier-group-body">
+        ${modifiers.map((modifier) => `<span class="mod-chip is-${tone} preview-mod-chip">${escapeHtml(modifier)}</span>`).join("")}
+      </div>
+    </section>
+  `;
 }
 
 function renderItemSpec(spec: ItemSpec, tone = "explicit") {
@@ -578,7 +889,7 @@ function renderModifierGroup(
 }
 
 function renderSpecButton(spec: ItemSpec, className: string) {
-  const active = selectedSpecKeys.has(spec.key);
+  const active = isSpecApplied(spec);
   return `
     <button
       class="${className} spec-chip ${active ? "is-active" : ""}"
@@ -849,7 +1160,7 @@ function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedIt
         .join("")
     : `<div class="price-filter muted">No editable filters parsed yet.</div>`;
   const listings = visibleListings.length
-    ? visibleListings.map((listing) => renderListingRow(listing, item)).join("")
+    ? visibleListings.map((listing, index) => renderListingRow(listing, item, index)).join("")
     : `<button class="listing-row empty-listing" type="button">${escapeHtml(emptyListingMessage(priceCheck, selectedCurrency))}</button>`;
 
   return `
@@ -880,16 +1191,15 @@ function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedIt
 
         <div class="trade-control-row">
           <label>
-            <span>Currency</span>
-            <select data-price-currency aria-label="Show listings priced in currency">
-              ${renderCurrencyOptions(priceCheck)}
+            <span>Buyout Price</span>
+            <select data-price-option aria-label="Filter listings by buyout price mode">
+              ${renderPriceOptions(priceCheck)}
             </select>
           </label>
           <label>
-            <span>Buy Type</span>
-            <select aria-label="Buy type">
-              <option>Instant Buy...</option>
-              <option>Any Listing</option>
+            <span>Display In</span>
+            <select data-price-currency aria-label="Normalize listing prices into currency">
+              ${renderCurrencyOptions(priceCheck)}
             </select>
           </label>
           <label>
@@ -995,7 +1305,7 @@ function renderPriceCheck(priceCheck: PriceCheck | null, item?: ScannedItem) {
     : `<div class="price-filter muted">No editable filters parsed yet.</div>`;
 
   const listings = priceCheck.listings.length
-    ? priceCheck.listings.map((listing) => renderListingRow(listing, item)).join("")
+    ? priceCheck.listings.map((listing, index) => renderListingRow(listing, item, index)).join("")
     : `<button class="listing-row empty-listing" type="button">${escapeHtml(priceCheck.error ?? priceCheck.status)}</button>`;
 
   return `
@@ -1023,20 +1333,19 @@ function renderPriceCheck(priceCheck: PriceCheck | null, item?: ScannedItem) {
         <button class="refresh-mark" data-open-trade type="button" title="Open latest search">↻</button>
       </div>
 
-      <div class="trade-control-row">
-        <label>
-          <span>Currency</span>
-          <select data-price-currency aria-label="Normalize listing prices into currency">
-            ${renderCurrencyOptions(priceCheck)}
-          </select>
-        </label>
-        <label>
-          <span>Buy Type</span>
-          <select aria-label="Buy type">
-            <option>Instant Buy...</option>
-            <option>Any Listing</option>
-          </select>
-        </label>
+        <div class="trade-control-row">
+          <label>
+            <span>Buyout Price</span>
+            <select data-price-option aria-label="Filter listings by buyout price mode">
+              ${renderPriceOptions(priceCheck)}
+            </select>
+          </label>
+          <label>
+            <span>Display In</span>
+            <select data-price-currency aria-label="Normalize listing prices into currency">
+              ${renderCurrencyOptions(priceCheck)}
+            </select>
+          </label>
         <label>
           <span>Listed</span>
           <select aria-label="Listed time">
@@ -1073,6 +1382,27 @@ function renderCurrencyOptions(priceCheck: PriceCheck) {
     .map(
       (currency) =>
         `<option value="${escapeAttribute(currency.id)}" ${currency.id === priceCheck.selected_currency ? "selected" : ""}>${escapeHtml(currency.name)}</option>`,
+    )
+    .join("");
+}
+
+function renderPriceOptions(priceCheck: PriceCheck) {
+  const directCurrencies = priceCheck.currencies.length
+    ? priceCheck.currencies
+    : fallbackCurrencies();
+  const options = [
+    { value: "equivalent", label: "Exalted Orb Equivalent" },
+    { value: "exalted_divine", label: "Exalted or Divine Orbs" },
+    ...directCurrencies.map((currency) => ({
+      value: currency.id,
+      label: currency.name,
+    })),
+  ];
+
+  return options
+    .map(
+      (option) =>
+        `<option value="${escapeAttribute(option.value)}" ${option.value === priceCheck.selected_price_option ? "selected" : ""}>${escapeHtml(option.label)}</option>`,
     )
     .join("");
 }
@@ -1125,24 +1455,33 @@ function renderTradeRateLimit(rateLimit: TradeRateLimit | null) {
   `;
 }
 
-function renderListingRow(listing: PriceListing, item?: ScannedItem) {
-  const priceIconUrl = resolveCurrencyIcon(listing.currency, listing.currency_icon_url);
+function renderListingRow(listing: PriceListing, item: ScannedItem | undefined, index: number) {
+  const priceCheck = state.price_check;
+  const useEquivalentDisplay = !!priceCheck && priceCheck.selected_price_option === "equivalent";
+  const showNormalizedDisplay = useEquivalentDisplay && !!listing.normalized_price;
+  const priceText = showNormalizedDisplay ? listing.normalized_price! : listing.price;
+  const priceCurrencyId = showNormalizedDisplay ? listing.normalized_currency : listing.currency;
+  const priceIconUrl = resolveCurrencyIcon(
+    priceCurrencyId,
+    showNormalizedDisplay ? listing.normalized_currency_icon_url : listing.currency_icon_url,
+  );
   const priceIcon = priceIconUrl
     ? `<img class="currency-icon" src="${escapeAttribute(priceIconUrl)}" alt="" />`
     : "";
   const seller = listing.seller ?? "Unknown";
   const quality = listing.quality ?? (item ? itemProfile(item).quality ?? 0 : 0);
   const itemLevel = listing.item_level ?? item?.item_level ?? 0;
+  const title = showNormalizedDisplay && listing.price !== priceText ? ` title="${escapeAttribute(`Listed as ${listing.price}`)}"` : "";
 
   return `
-    <button class="listing-row" data-source-url="${escapeAttribute(listing.source_url)}" type="button">
-      <span class="inspect-eye">View</span>
-      <span class="listing-price">${priceIcon}${escapeHtml(listing.price)}${listing.online ? '<i class="online-dot"></i>' : ""}</span>
+    <div class="listing-row"${title}>
+      <button class="inspect-eye ${pinnedListingPreviewIndex === index ? "is-active" : ""}" data-preview-listing="${index}" type="button" title="Click to inspect this exact listing">View</button>
+      <span class="listing-price">${priceIcon}${escapeHtml(priceText)}${listing.online ? '<i class="online-dot"></i>' : ""}</span>
       <span>${itemLevel}</span>
       <span>${quality}%</span>
       <span class="seller-name">${escapeHtml(shortSeller(seller))}</span>
       <span>${escapeHtml(formatListed(listing.listed))}</span>
-    </button>
+    </div>
   `;
 }
 
@@ -1572,17 +1911,90 @@ function addNumericSpec(
   });
 }
 
+function isSpecApplied(
+  spec: ItemSpec,
+  item = state.scanned_item,
+  priceCheck = state.price_check,
+) {
+  if (!item || !priceCheck) {
+    return false;
+  }
+
+  return appliedSpecKeySet(item, priceCheck).has(spec.key);
+}
+
+function appliedSpecKeySet(item: ScannedItem, priceCheck: PriceCheck) {
+  const applied = new Set<string>();
+  const filters = priceCheck.applied_filters ?? [];
+  if (!filters.length) {
+    return applied;
+  }
+
+  const specs = itemSpecs(item);
+  filters.forEach((filter) => {
+    const spec = specs.find((candidate) => activeFilterMatchesSpec(filter, candidate));
+    if (spec) {
+      applied.add(spec.key);
+    }
+  });
+
+  return applied;
+}
+
+function activeFilterMatchesSpec(filter: ActivePriceFilter, spec: ItemSpec) {
+  if (filter.kind !== spec.kind) {
+    return false;
+  }
+
+  if (filter.kind === "explicit") {
+    return templatesCompatible(filter.template, spec.template);
+  }
+
+  if (filter.value === null || spec.value === null) {
+    return filter.label === spec.label;
+  }
+
+  return Math.round(filter.value * 1000) === Math.round(spec.value * 1000);
+}
+
+function templatesCompatible(left: string, right: string) {
+  return left === right || left.includes(right) || right.includes(left);
+}
+
+function syncSelectedSpecKeysToAppliedFilters() {
+  selectedSpecKeys.clear();
+  if (!state.scanned_item || !state.price_check) {
+    return;
+  }
+
+  appliedSpecKeySet(state.scanned_item, state.price_check).forEach((key) => {
+    selectedSpecKeys.add(key);
+  });
+}
+
 function filteredListings(priceCheck: PriceCheck, item?: ScannedItem) {
   const specs = item ? itemSpecs(item) : [];
-  const selectedSpecs = specs.filter((spec) => selectedSpecKeys.has(spec.key));
+  const appliedKeys = item ? appliedSpecKeySet(item, priceCheck) : new Set<string>();
+  const selectedSpecs = specs.filter((spec) => appliedKeys.has(spec.key));
 
   return priceCheck.listings.filter((listing) => {
-    if (listing.currency !== priceCheck.selected_currency) {
+    if (!listingMatchesSelectedPriceOption(priceCheck, listing)) {
       return false;
     }
 
     return selectedSpecs.every((spec) => listingMatchesSpec(listing, spec));
   });
+}
+
+function listingMatchesSelectedPriceOption(priceCheck: PriceCheck, listing: PriceListing) {
+  switch (priceCheck.selected_price_option) {
+    case "equivalent":
+      return listing.amount !== null && !!listing.currency;
+    case "exalted_divine":
+      return listing.currency === "exalted" || listing.currency === "divine";
+    default:
+      return listing.currency === priceCheck.selected_price_option;
+  }
 }
 
 function listingMatchesSpec(listing: PriceListing, spec: ItemSpec) {
@@ -1636,7 +2048,7 @@ function firstNumber(value: string) {
 function estimatePriceFromListings(priceCheck: PriceCheck, listings: PriceListing[]): PriceEstimate {
   const currency = currencyById(priceCheck, priceCheck.selected_currency);
   const values = listings
-    .map((listing) => listing.amount)
+    .map((listing) => listing.normalized_amount ?? normalizedFallbackAmount(listing, priceCheck.selected_currency))
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)
     .sort((left, right) => left - right);
 
@@ -1683,11 +2095,19 @@ function emptyListingMessage(priceCheck: PriceCheck, currency: CurrencyMeta) {
     return priceCheck.error;
   }
 
-  if (!priceCheck.listings.some((listing) => listing.currency === priceCheck.selected_currency)) {
-    return `No fetched listings are priced in ${currency.name}.`;
+  if (!priceCheck.listings.some((listing) => listingMatchesSelectedPriceOption(priceCheck, listing))) {
+    if (priceCheck.selected_price_option === "equivalent") {
+      return "No fetched listings have a listed buyout price.";
+    }
+
+    if (priceCheck.selected_price_option === "exalted_divine") {
+      return "No fetched listings are priced in Exalted or Divine Orbs.";
+    }
+
+    return `No fetched listings are priced in ${priceOptionLabel(priceCheck)}.`;
   }
 
-  if (selectedSpecKeys.size) {
+  if (state.scanned_item && appliedSpecKeySet(state.scanned_item, priceCheck).size) {
     return "No fetched listings match the selected item specifications.";
   }
 
@@ -1765,6 +2185,17 @@ function estimatePrice(priceCheck: PriceCheck): PriceEstimate {
   };
 }
 
+function priceOptionLabel(priceCheck: PriceCheck) {
+  switch (priceCheck.selected_price_option) {
+    case "equivalent":
+      return "Exalted Orb Equivalent";
+    case "exalted_divine":
+      return "Exalted or Divine Orbs";
+    default:
+      return currencyById(priceCheck, priceCheck.selected_price_option).name;
+  }
+}
+
 function currencyById(priceCheck: PriceCheck, currencyId: string): CurrencyMeta {
   return (
     priceCheck.currencies.find((currency) => currency.id === currencyId) ??
@@ -1839,6 +2270,7 @@ function fallbackCurrencies(): CurrencyMeta[] {
     { id: "chance", name: "Orb of Chance", icon_url: resolveCurrencyIcon("chance", null) },
     { id: "augment", name: "Orb of Augmentation", icon_url: resolveCurrencyIcon("augment", null) },
     { id: "annul", name: "Orb of Annulment", icon_url: resolveCurrencyIcon("annul", null) },
+    { id: "mirror", name: "Mirror of Kalandra", icon_url: resolveCurrencyIcon("mirror", null) },
     { id: "vaal", name: "Vaal Orb", icon_url: resolveCurrencyIcon("vaal", null) },
   ];
 }
@@ -1881,7 +2313,8 @@ function localCurrencyIconUrl(currencyId: string | null | undefined) {
     return null;
   }
 
-  return LOCAL_CURRENCY_ICONS[currencyId.toLowerCase()] ?? null;
+  const normalizedCurrencyId = CURRENCY_ICON_ALIASES[currencyId.toLowerCase()] ?? currencyId.toLowerCase();
+  return LOCAL_CURRENCY_ICONS[normalizedCurrencyId] ?? null;
 }
 
 function resolveCurrencyIcon(currencyId: string | null | undefined, remoteUrl: string | null) {
@@ -1949,6 +2382,8 @@ function normalizePriceCheck(priceCheck: PriceCheck | null): PriceCheck | null {
 
   return {
     ...priceCheck,
+    selected_price_option: priceCheck.selected_price_option || "equivalent",
+    applied_filters: priceCheck.applied_filters ?? [],
     currencies: priceCheck.currencies.map((currency) => ({
       ...currency,
       icon_url: resolveCurrencyIcon(currency.id, currency.icon_url),
@@ -2063,7 +2498,7 @@ function syncEvaluateLayout() {
     return;
   }
 
-  const evaluate = panelElement.querySelector<HTMLElement>(".evaluate-card");
+  const evaluate = panelElement!.querySelector<HTMLElement>(".evaluate-card");
   const itemSection = evaluate?.querySelector<HTMLElement>("[data-item-section]");
   const itemProfile = evaluate?.querySelector<HTMLElement>("[data-item-profile]");
   const modStack = evaluate?.querySelector<HTMLElement>("[data-mod-stack]");
@@ -2077,7 +2512,7 @@ function syncEvaluateLayout() {
     return;
   }
 
-  const panelHeight = panelElement.clientHeight;
+  const panelHeight = panelElement!.clientHeight;
   if (!panelHeight) {
     return;
   }
@@ -2147,321 +2582,402 @@ tabButtons.forEach((button) => {
   });
 });
 
-leagueElement.addEventListener("change", async () => {
-  state.trade_league = leagueElement.value;
-  state.price_check = null;
-  loadingMoreMarketplaceResults = false;
-  await invoke("set_trade_league", { league: state.trade_league }).catch((error) =>
-    pushStatus("league", String(error)),
-  );
-  pushStatus("league", `Trade league set to ${state.trade_league}`);
-});
-
-root.addEventListener("click", async (event) => {
-  const target = event.target as HTMLElement;
-  const openTrade = target.closest<HTMLButtonElement>("[data-open-trade]");
-  const macroButton = target.closest<HTMLButtonElement>("[data-macro]");
-  const compactButton = target.closest<HTMLButtonElement>("[data-toggle-compact]");
-  const minimizeButton = target.closest<HTMLButtonElement>("[data-minimize]");
-  const sourceButton = target.closest<HTMLButtonElement>("[data-source-url]");
-  const specButton = target.closest<HTMLButtonElement>("[data-spec-key]");
-  const clearSpecsButton = target.closest<HTMLButtonElement>("[data-clear-specs]");
-  const exchangeCategoryButton = target.closest<HTMLButtonElement>("[data-exchange-category]");
-  const exchangeRefreshButton = target.closest<HTMLButtonElement>("[data-refresh-exchange]");
-  const exchangeCopyButton = target.closest<HTMLButtonElement>("[data-copy-exchange]");
-  const exchangeQuoteButton = target.closest<HTMLButtonElement>("[data-exchange-quote]");
-
-  if (exchangeQuoteButton?.dataset.exchangeQuote) {
-    state.exchange_tab.selected_quote_currency_id = exchangeQuoteButton.dataset.exchangeQuote;
-    render();
-    return;
-  }
-
-  if (exchangeCategoryButton?.dataset.exchangeCategory) {
-    state.exchange_tab.selected_category_id = exchangeCategoryButton.dataset.exchangeCategory;
-    state.exchange_tab.status = `Loading ${exchangeCategoryButton.textContent?.trim() ?? "exchange"} overview...`;
-    activeTab = "trade";
-    render();
-    await invoke("set_exchange_category", {
-      categoryId: exchangeCategoryButton.dataset.exchangeCategory,
-    }).catch((error) => pushStatus("exchange", String(error)));
-    return;
-  }
-
-  if (exchangeRefreshButton) {
-    state.exchange_tab.status = "Refreshing exchange snapshot...";
-    render();
-    await invoke("refresh_exchange_category").catch((error) =>
-      pushStatus("exchange", String(error)),
-    );
-    return;
-  }
-
-  if (exchangeCopyButton?.dataset.copyExchange) {
-    void navigator.clipboard
-      .writeText(exchangeCopyButton.dataset.copyExchange)
-      .then(() => pushStatus("exchange", `Copied ${exchangeCopyButton.dataset.copyExchange}`))
-      .catch((error) => pushStatus("exchange", String(error)));
-    return;
-  }
-
-  if (specButton?.dataset.specKey) {
-    const specKey = specButton.dataset.specKey;
-    if (selectedSpecKeys.has(specKey)) {
-      selectedSpecKeys.delete(specKey);
-    } else {
-      selectedSpecKeys.add(specKey);
-    }
-    if (state.price_check) {
-      state.price_check.status = "Rebuilding trade search with selected specs...";
-    }
+if (!isListingPreviewWindow && leagueElement) {
+  leagueElement.addEventListener("change", async () => {
+    state.trade_league = leagueElement.value;
+    state.price_check = null;
     loadingMoreMarketplaceResults = false;
-    render();
-    void pushActivePriceFilters();
-    return;
-  }
+    await invoke("set_trade_league", { league: state.trade_league }).catch((error) =>
+      pushStatus("league", String(error)),
+    );
+    pushStatus("league", `Trade league set to ${state.trade_league}`);
+  });
 
-  if (clearSpecsButton) {
-    selectedSpecKeys.clear();
-    if (state.price_check) {
-      state.price_check.status = "Clearing selected spec filters...";
+  root.addEventListener("click", async (event) => {
+    const target = event.target as HTMLElement;
+    const openTrade = target.closest<HTMLButtonElement>("[data-open-trade]");
+    const macroButton = target.closest<HTMLButtonElement>("[data-macro]");
+    const compactButton = target.closest<HTMLButtonElement>("[data-toggle-compact]");
+    const minimizeButton = target.closest<HTMLButtonElement>("[data-minimize]");
+    const sourceButton = target.closest<HTMLButtonElement>("[data-source-url]");
+    const specButton = target.closest<HTMLButtonElement>("[data-spec-key]");
+    const clearSpecsButton = target.closest<HTMLButtonElement>("[data-clear-specs]");
+    const exchangeCategoryButton = target.closest<HTMLButtonElement>("[data-exchange-category]");
+    const exchangeRefreshButton = target.closest<HTMLButtonElement>("[data-refresh-exchange]");
+    const exchangeCopyButton = target.closest<HTMLButtonElement>("[data-copy-exchange]");
+    const exchangeQuoteButton = target.closest<HTMLButtonElement>("[data-exchange-quote]");
+
+    if (exchangeQuoteButton?.dataset.exchangeQuote) {
+      state.exchange_tab.selected_quote_currency_id = exchangeQuoteButton.dataset.exchangeQuote;
+      render();
+      return;
     }
-    loadingMoreMarketplaceResults = false;
-    render();
-    void pushActivePriceFilters();
-    return;
-  }
 
-  if (compactButton) {
-    compactMode = !compactMode;
-    render();
-    return;
-  }
+    if (exchangeCategoryButton?.dataset.exchangeCategory) {
+      state.exchange_tab.selected_category_id = exchangeCategoryButton.dataset.exchangeCategory;
+      state.exchange_tab.status = `Loading ${exchangeCategoryButton.textContent?.trim() ?? "exchange"} overview...`;
+      activeTab = "trade";
+      render();
+      await invoke("set_exchange_category", {
+        categoryId: exchangeCategoryButton.dataset.exchangeCategory,
+      }).catch((error) => pushStatus("exchange", String(error)));
+      return;
+    }
 
-  if (minimizeButton) {
-    await invoke("minimize_window").catch((error) =>
-      pushStatus("window", String(error)),
-    );
-  }
+    if (exchangeRefreshButton) {
+      state.exchange_tab.status = "Refreshing exchange snapshot...";
+      render();
+      await invoke("refresh_exchange_category").catch((error) =>
+        pushStatus("exchange", String(error)),
+      );
+      return;
+    }
 
-  if (openTrade) {
-    await invoke("open_last_trade_search").catch((error) =>
-      pushStatus("trade", String(error)),
-    );
-  }
+    if (exchangeCopyButton?.dataset.copyExchange) {
+      void navigator.clipboard
+        .writeText(exchangeCopyButton.dataset.copyExchange)
+        .then(() => pushStatus("exchange", `Copied ${exchangeCopyButton.dataset.copyExchange}`))
+        .catch((error) => pushStatus("exchange", String(error)));
+      return;
+    }
 
-  if (sourceButton?.dataset.sourceUrl) {
-    await invoke("open_external_url", { url: sourceButton.dataset.sourceUrl }).catch((error) =>
-      pushStatus("trade", String(error)),
-    );
-  }
+    if (specButton?.dataset.specKey) {
+      const specKey = specButton.dataset.specKey;
+      if (selectedSpecKeys.has(specKey)) {
+        selectedSpecKeys.delete(specKey);
+      } else {
+        selectedSpecKeys.add(specKey);
+      }
+      if (state.price_check) {
+        state.price_check.status = "Rebuilding trade search with selected specs...";
+      }
+      loadingMoreMarketplaceResults = false;
+      render();
+      void pushActivePriceFilters();
+      return;
+    }
 
-  if (macroButton) {
-    const command = macroButton.dataset.macro;
-    const buyerName = macroButton.dataset.buyer;
+    if (clearSpecsButton) {
+      selectedSpecKeys.clear();
+      if (state.price_check) {
+        state.price_check.status = "Clearing selected spec filters...";
+      }
+      loadingMoreMarketplaceResults = false;
+      render();
+      void pushActivePriceFilters();
+      return;
+    }
 
-    if (command && buyerName) {
-      await invoke(command, { buyerName }).catch((error) =>
-        pushStatus("macro", String(error)),
+    if (compactButton) {
+      compactMode = !compactMode;
+      render();
+      return;
+    }
+
+    if (minimizeButton) {
+      await invoke("minimize_window").catch((error) =>
+        pushStatus("window", String(error)),
       );
     }
-  }
-});
 
-root.addEventListener("change", async (event) => {
-  const target = event.target as HTMLElement;
-  const currencySelect = target.closest<HTMLSelectElement>("[data-price-currency]");
+    if (openTrade) {
+      await invoke("open_last_trade_search").catch((error) =>
+        pushStatus("trade", String(error)),
+      );
+    }
 
-  if (!currencySelect) {
-    return;
-  }
+    if (sourceButton?.dataset.sourceUrl) {
+      await invoke("open_external_url", { url: sourceButton.dataset.sourceUrl }).catch((error) =>
+        pushStatus("trade", String(error)),
+      );
+    }
 
-  state.price_currency = currencySelect.value;
-  if (state.price_check) {
-    state.price_check.selected_currency = currencySelect.value;
-    state.price_check.status = "Refreshing currency-normalized listings...";
-    loadingMoreMarketplaceResults = false;
-    render();
-  }
+    if (macroButton) {
+      const command = macroButton.dataset.macro;
+      const buyerName = macroButton.dataset.buyer;
 
-  await invoke("set_price_currency", { currency: currencySelect.value }).catch((error) =>
-    pushStatus("currency", String(error)),
-  );
-});
+      if (command && buyerName) {
+        await invoke(command, { buyerName }).catch((error) =>
+          pushStatus("macro", String(error)),
+        );
+      }
+    }
+  });
 
-root.addEventListener("input", (event) => {
-  const target = event.target as HTMLElement;
-  const tradeSearch = target.closest<HTMLInputElement>("[data-trade-search]");
-
-  if (!tradeSearch) {
-    return;
-  }
-
-  tradeSearchQuery = tradeSearch.value;
-  render();
-});
-
-root.addEventListener(
-  "scroll",
-  (event) => {
+  root.addEventListener("change", async (event) => {
     const target = event.target as HTMLElement;
-    const listingScroll = target.closest<HTMLElement>("[data-load-more-marketplace='true']");
+    const priceOptionSelect = target.closest<HTMLSelectElement>("[data-price-option]");
+    const currencySelect = target.closest<HTMLSelectElement>("[data-price-currency]");
 
-    if (!listingScroll || loadingMoreMarketplaceResults || !canLoadMoreMarketplaceResults()) {
+    if (priceOptionSelect) {
+      state.price_option = priceOptionSelect.value;
+      if (state.price_check) {
+        state.price_check.selected_price_option = priceOptionSelect.value;
+        state.price_check.status = "Refreshing buyout price mode...";
+        loadingMoreMarketplaceResults = false;
+        render();
+      }
+
+      await invoke("set_price_option", { priceOption: priceOptionSelect.value }).catch((error) =>
+        pushStatus("price", String(error)),
+      );
       return;
     }
 
-    const remaining = listingScroll.scrollHeight - listingScroll.scrollTop - listingScroll.clientHeight;
-    if (remaining > 56) {
+    if (!currencySelect) {
       return;
     }
 
-    loadingMoreMarketplaceResults = true;
-    void invoke("load_more_price_check_results").catch((error) => {
+    state.price_currency = currencySelect.value;
+    if (state.price_check) {
+      state.price_check.selected_currency = currencySelect.value;
+      state.price_check.status = "Refreshing currency-normalized listings...";
       loadingMoreMarketplaceResults = false;
-      pushStatus("trade", String(error));
-    });
-  },
-  true,
-);
+      render();
+    }
 
-root.querySelectorAll<HTMLElement>("[data-drag-handle]").forEach((element) => {
-  element.addEventListener("mousedown", (event) => {
+    await invoke("set_price_currency", { currency: currencySelect.value }).catch((error) =>
+      pushStatus("currency", String(error)),
+    );
+  });
+
+  root.addEventListener("input", (event) => {
     const target = event.target as HTMLElement;
+    const tradeSearch = target.closest<HTMLInputElement>("[data-trade-search]");
 
+    if (!tradeSearch) {
+      return;
+    }
+
+    tradeSearchQuery = tradeSearch.value;
+    render();
+  });
+
+  root.addEventListener(
+    "scroll",
+    (event) => {
+      const target = event.target as HTMLElement;
+      const listingScroll = target.closest<HTMLElement>("[data-load-more-marketplace='true']");
+
+      if (!listingScroll || loadingMoreMarketplaceResults || !canLoadMoreMarketplaceResults()) {
+        return;
+      }
+
+      const remaining = listingScroll.scrollHeight - listingScroll.scrollTop - listingScroll.clientHeight;
+      if (remaining > 56) {
+        return;
+      }
+
+      loadingMoreMarketplaceResults = true;
+      void invoke("load_more_price_check_results").catch((error) => {
+        loadingMoreMarketplaceResults = false;
+        pushStatus("trade", String(error));
+      });
+    },
+    true,
+  );
+
+  root.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    const previewButton = target.closest<HTMLButtonElement>("[data-preview-listing]");
+
+    if (!previewButton?.dataset.previewListing) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const index = Number(previewButton.dataset.previewListing);
+    if (!Number.isFinite(index)) {
+      return;
+    }
+
+    if (pinnedListingPreviewIndex === index) {
+      void hideListingPreview();
+      return;
+    }
+
+    const itemSection =
+      root.querySelector<HTMLElement>("[data-item-section]") ??
+      root.querySelector<HTMLElement>("[data-item-profile]") ??
+      root.querySelector<HTMLElement>(".poe-item-banner");
+    const anchorTop =
+      itemSection?.getBoundingClientRect().top ??
+      previewButton.closest<HTMLElement>(".listing-row")?.getBoundingClientRect().top ??
+      previewButton.getBoundingClientRect().top;
+    void showListingPreviewForIndex(index, anchorTop);
+  });
+
+  root.querySelectorAll<HTMLElement>("[data-drag-handle]").forEach((element) => {
+    element.addEventListener("mousedown", (event) => {
+      const target = event.target as HTMLElement;
+
+      if (
+        target.closest("button") ||
+        target.closest("select") ||
+        target.closest("input") ||
+        target.closest("textarea") ||
+        target.closest("option") ||
+        target.closest("[role='listbox']") ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      void invoke("start_drag_window").catch((error) =>
+        pushStatus("window", String(error)),
+      );
+    });
+  });
+
+  window.addEventListener("keydown", (event) => {
     if (
-      target.closest("button") ||
-      target.closest("select") ||
-      target.closest("input") ||
-      target.closest("textarea") ||
-      target.closest("option") ||
-      target.closest("[role='listbox']") ||
-      target.isContentEditable
+      event.ctrlKey ||
+      event.altKey ||
+      event.metaKey ||
+      event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLTextAreaElement ||
+      event.target instanceof HTMLSelectElement ||
+      (event.target instanceof HTMLElement && event.target.isContentEditable)
     ) {
       return;
     }
-
-    void invoke("start_drag_window").catch((error) =>
-      pushStatus("window", String(error)),
-    );
   });
-});
 
-window.addEventListener("keydown", (event) => {
-  if (
-    event.ctrlKey ||
-    event.altKey ||
-    event.metaKey ||
-    event.target instanceof HTMLInputElement ||
-    event.target instanceof HTMLTextAreaElement ||
-    event.target instanceof HTMLSelectElement ||
-    (event.target instanceof HTMLElement && event.target.isContentEditable)
-  ) {
-    return;
-  }
-});
-
-void listen<ScannedItem>("scan://item-updated", (event) => {
-  loadingMoreMarketplaceResults = false;
-  state.scanned_item = event.payload;
-  selectedSpecKeys.clear();
-  state.price_check = {
-    status: "Checking matched listings...",
-    matched: 0,
-    source_url: event.payload.trade_url,
-    selected_currency: state.price_currency,
-    rate_source: null,
-    rate_limit: null,
-    currencies: fallbackCurrencies(),
-    filters: [],
-    listings: [],
-    error: null,
-  };
-  if (isExchangeClipboardItem(event.payload)) {
-    state.exchange_tab.status = `Loading cached exchange overview for ${event.payload.base_type ?? event.payload.name}...`;
-    activeTab = "trade";
-  } else {
-    activeTab = "scan";
-  }
-  render();
-});
-
-void listen<PriceCheck>("scan://price-check-updated", (event) => {
-  loadingMoreMarketplaceResults = false;
-  state.price_check = normalizePriceCheck(event.payload);
-  state.price_currency = event.payload.selected_currency;
-  activeTab = isExchangeClipboardItem(state.scanned_item) ? "trade" : "scan";
-  render();
-});
-
-void listen<ExchangeTabState>("scan://exchange-tab-updated", (event) => {
-  state.exchange_tab = normalizeExchangeTab(event.payload);
-  if (isExchangeClipboardItem(state.scanned_item)) {
-    activeTab = "trade";
-  }
-  render();
-});
-
-void listen<string>("scan://zone-updated", (event) => {
-  state.current_zone = event.payload;
-  render();
-});
-
-void listen<TradeWhisper>("scan://trade-whisper", (event) => {
-  state.trade_queue = [...state.trade_queue, event.payload];
-  render();
-});
-
-void listen<TradeLeague[]>("scan://trade-leagues-updated", (event) => {
-  state.trade_leagues = event.payload;
-  render();
-});
-
-void listen<LeagueCatalogEntry[]>("scan://league-catalog-updated", (event) => {
-  state.league_catalog = event.payload;
-  render();
-});
-
-void listen<DataLeague[]>("scan://data-leagues-updated", (event) => {
-  state.data_leagues = event.payload;
-  render();
-});
-
-void listen<string>("scan://trade-league-updated", (event) => {
-  state.trade_league = event.payload;
-  render();
-});
-
-void listen<WorkerStatus>("scan://worker-status", (event) => {
-  pushStatus(event.payload.worker, event.payload.message);
-});
-
-void listen<WorkerStatus>("scan://worker-error", (event) => {
-  pushStatus(event.payload.worker, event.payload.message);
-});
-
-invoke<AppState>("get_app_state")
-  .then((initialState) => {
-    state.scanned_item = initialState.scanned_item;
-    state.trade_queue = initialState.trade_queue;
-    state.current_zone = initialState.current_zone || "Unknown";
-    state.trade_league = initialState.trade_league || state.trade_league;
-    state.league_catalog = initialState.league_catalog || [];
-    state.trade_leagues = initialState.trade_leagues || [];
-    state.data_leagues = initialState.data_leagues || [];
-    state.price_check = normalizePriceCheck(initialState.price_check);
-    state.exchange_tab = normalizeExchangeTab(initialState.exchange_tab);
-    state.price_currency = initialState.price_currency || state.price_currency;
+  void listen<ScannedItem>("scan://item-updated", (event) => {
+    loadingMoreMarketplaceResults = false;
+    void hideListingPreview();
+    state.scanned_item = event.payload;
+    selectedSpecKeys.clear();
+    state.price_check = {
+      status: "Checking matched listings...",
+      matched: 0,
+      source_url: event.payload.trade_url,
+      selected_currency: state.price_currency,
+      selected_price_option: state.price_option,
+      rate_source: null,
+      rate_limit: null,
+      currencies: fallbackCurrencies(),
+      filters: [],
+      applied_filters: [],
+      listings: [],
+      error: null,
+    };
+    if (isExchangeClipboardItem(event.payload)) {
+      state.exchange_tab.status = `Loading cached exchange overview for ${event.payload.base_type ?? event.payload.name}...`;
+      activeTab = "trade";
+    } else {
+      activeTab = "scan";
+    }
     render();
-  })
-  .catch((error) => pushStatus("state", String(error)));
+  });
 
-invoke<string>("debug_log_path")
-  .then((path) => {
-    state.debug_log_path = path;
+  void listen<PriceCheck>("scan://price-check-updated", (event) => {
+    loadingMoreMarketplaceResults = false;
+    state.price_check = normalizePriceCheck(event.payload);
+    state.price_currency = event.payload.selected_currency;
+    state.price_option = event.payload.selected_price_option;
+    syncSelectedSpecKeysToAppliedFilters();
+    activeTab = isExchangeClipboardItem(state.scanned_item) ? "trade" : "scan";
     render();
-  })
-  .catch((error) => pushStatus("debug", String(error)));
+  });
+
+  void listen<ExchangeTabState>("scan://exchange-tab-updated", (event) => {
+    state.exchange_tab = normalizeExchangeTab(event.payload);
+    if (isExchangeClipboardItem(state.scanned_item)) {
+      activeTab = "trade";
+    }
+    render();
+  });
+
+  void listen<string>("scan://zone-updated", (event) => {
+    state.current_zone = event.payload;
+    render();
+  });
+
+  void listen<TradeWhisper>("scan://trade-whisper", (event) => {
+    state.trade_queue = [...state.trade_queue, event.payload];
+    render();
+  });
+
+  void listen<TradeLeague[]>("scan://trade-leagues-updated", (event) => {
+    state.trade_leagues = event.payload;
+    render();
+  });
+
+  void listen<LeagueCatalogEntry[]>("scan://league-catalog-updated", (event) => {
+    state.league_catalog = event.payload;
+    render();
+  });
+
+  void listen<DataLeague[]>("scan://data-leagues-updated", (event) => {
+    state.data_leagues = event.payload;
+    render();
+  });
+
+  void listen<string>("scan://trade-league-updated", (event) => {
+    state.trade_league = event.payload;
+    render();
+  });
+
+  void listen<WorkerStatus>("scan://worker-status", (event) => {
+    pushStatus(event.payload.worker, event.payload.message);
+  });
+
+  void listen<WorkerStatus>("scan://worker-error", (event) => {
+    pushStatus(event.payload.worker, event.payload.message);
+  });
+
+  invoke<AppState>("get_app_state")
+    .then((initialState) => {
+      state.scanned_item = initialState.scanned_item;
+      state.trade_queue = initialState.trade_queue;
+      state.current_zone = initialState.current_zone || "Unknown";
+      state.trade_league = initialState.trade_league || state.trade_league;
+      state.league_catalog = initialState.league_catalog || [];
+      state.trade_leagues = initialState.trade_leagues || [];
+      state.data_leagues = initialState.data_leagues || [];
+      state.price_check = normalizePriceCheck(initialState.price_check);
+      state.exchange_tab = normalizeExchangeTab(initialState.exchange_tab);
+      state.price_currency = initialState.price_currency || state.price_currency;
+      state.price_option = initialState.price_option || state.price_option;
+      syncSelectedSpecKeysToAppliedFilters();
+      render();
+    })
+    .catch((error) => pushStatus("state", String(error)));
+
+  invoke<string>("debug_log_path")
+    .then((path) => {
+      state.debug_log_path = path;
+      render();
+    })
+    .catch((error) => pushStatus("debug", String(error)));
+} else {
+  startListingPreviewPolling();
+
+  void listen<ListingPreviewRequest>("preview://listing-updated", (event) => {
+    hoveredListingPreview = event.payload;
+    render();
+  });
+
+  void listen("preview://listing-cleared", () => {
+    hoveredListingPreview = null;
+    render();
+  });
+
+  invoke<ListingPreviewRequest | null>("get_listing_preview")
+    .then((preview) => {
+      hoveredListingPreview = preview;
+      render();
+    })
+    .catch((error) => {
+      console.error("failed to load initial listing preview", error);
+    });
+
+  window.addEventListener("beforeunload", () => {
+    stopListingPreviewPolling();
+  });
+}
 
 render();
 
