@@ -1,8 +1,6 @@
 # Kalandra
 
-Kalandra is a Path of Exile 2 desktop overlay built for the moments that actually matter while you are playing: checking an item quickly, seeing whether it is worth anything, comparing it against live listings, and keeping an eye on market context without tabbing all over the place.
-
-The project is still evolving, but the core idea is already in place: make item evaluation and trade awareness feel fast, readable, and grounded in the same data the community actually uses.
+Kalandra is a Path of Exile 2 desktop overlay built with Rust and Tauri v2 for maximum efficiency all in the aim of making things extremely light while maintaining a core functionality of all things helpful without needing to alt-tab out of the game. 
 
 ## What Kalandra Does Today
 
