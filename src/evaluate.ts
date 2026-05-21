@@ -65,6 +65,20 @@ export type ActivePriceFilter = {
   source?: string | null;
 };
 
+export type FilterClass = "hard" | "score";
+
+export type ClassifiedFilter = ActivePriceFilter & {
+  classification: FilterClass;
+  reason: string;
+};
+
+export type ListingRank = {
+  listing: PriceListing;
+  score: number;
+  maxScore: number;
+  penalties: string[];
+};
+
 export type AffixKind = "prefix" | "suffix" | "unknown";
 
 export type RollBand = {
@@ -76,6 +90,7 @@ export type Poe2DbModTier = {
   id: string;
   tier: string;
   name: string;
+  source_kind: string;
   required_level: number;
   affix: AffixKind | null;
   text: string;
@@ -115,12 +130,13 @@ export type Poe2DbDataSnapshot = {
 };
 
 export type TierMatch = {
-  source: "poe2db";
+  source: "repoe" | "poe2db";
   page_slug: string;
   tier: string;
   tier_name: string;
   required_level: number;
   affix: AffixKind | null;
+  source_kind: string;
   min: number | null;
   max: number | null;
   template: string;
@@ -179,6 +195,15 @@ export type ItemProfile = {
   armour: number | null;
 };
 
+type ItemSpecsCache = {
+  item: ScannedItem;
+  sourceTruth: Poe2DbDataSnapshot | null;
+  profileKey: string;
+  specs: ItemSpec[];
+};
+
+let itemSpecsCache: ItemSpecsCache | null = null;
+
 export const PRICE_PROFILES: Array<{ id: PriceProfileId; label: string; title: string }> = [
   {
     id: "quick",
@@ -221,6 +246,23 @@ export function itemSpecs(
   profile = itemProfile(item),
   sourceTruth: Poe2DbDataSnapshot | null = null,
 ): ItemSpec[] {
+  const profileKey = [
+    profile.requiredLevel,
+    profile.quality,
+    profile.evasion,
+    profile.energyShield,
+    profile.armour,
+  ].join("|");
+
+  if (
+    itemSpecsCache &&
+    itemSpecsCache.item === item &&
+    itemSpecsCache.sourceTruth === sourceTruth &&
+    itemSpecsCache.profileKey === profileKey
+  ) {
+    return itemSpecsCache.specs;
+  }
+
   const specs: ItemSpec[] = [];
 
   addNumericSpec(specs, "item_level", "Item Level", item.item_level);
@@ -240,9 +282,16 @@ export function itemSpecs(
       kind: "explicit",
       value: firstNumber(label),
       template: specTemplate(label),
-      tier_match: resolveTierMatch(label, sourceTruth),
+      tier_match: resolveTierMatch(label, sourceTruth, item),
     });
   });
+
+  itemSpecsCache = {
+    item,
+    sourceTruth,
+    profileKey,
+    specs,
+  };
 
   return specs;
 }
@@ -283,6 +332,107 @@ export function activePriceFiltersForSelection(
   return itemSpecs(item, itemProfile(item), sourceTruth)
     .filter((spec) => selectedSpecKeys.has(spec.key))
     .map((spec) => activeFilterForSpec(spec, selectedPriceProfile, sourceTruth));
+}
+
+export function classifySelectedSpecForSearch(spec: ItemSpec): { classification: FilterClass; reason: string } {
+  if (spec.kind === "item_level" || spec.kind === "quality" || spec.kind === "sockets" || spec.kind === "spirit") {
+    return { classification: "hard", reason: `trusted numeric ${spec.kind}` };
+  }
+
+  if (spec.kind === "armour" || spec.kind === "evasion" || spec.kind === "energy_shield") {
+    return { classification: "hard", reason: `trusted defense ${spec.kind}` };
+  }
+
+  if (spec.kind === "required_level") {
+    return { classification: "score", reason: "required level varies with rolls, not identity" };
+  }
+
+  if (spec.kind === "explicit") {
+    if (spec.tier_match && spec.tier_match.min !== null) {
+      return { classification: "hard", reason: `matched tier ${spec.tier_match.tier} (${spec.tier_match.source})` };
+    }
+    if (spec.tier_match) {
+      return { classification: "score", reason: "tier matched but lacks numeric band for hard filtering" };
+    }
+    const label = spec.label.toLowerCase();
+    if (label.includes("(implicit)") || label.includes("(rune)") || label.includes("(desecrated)")) {
+      return { classification: "score", reason: "non-explicit modifier without tier match" };
+    }
+    if (label.includes("(corrupted)") || label.includes("(enchant)") || label.includes("(fractured)")) {
+      return { classification: "score", reason: "special modifier without tier match" };
+    }
+    return { classification: "score", reason: "explicit modifier without known tier band or stat ID" };
+  }
+
+  return { classification: "score", reason: `unknown spec kind ${spec.kind}` };
+}
+
+export function hardPriceFiltersForSelection(
+  item: ScannedItem | null,
+  selectedSpecKeys: Set<string>,
+  selectedPriceProfile: PriceProfileId,
+  sourceTruth: Poe2DbDataSnapshot | null = null,
+): ActivePriceFilter[] {
+  return activePriceFiltersForSelection(item, selectedSpecKeys, selectedPriceProfile, sourceTruth)
+    .filter((filter, index, all) => {
+      const spec = itemSpecs(item!, itemProfile(item!), sourceTruth)
+        .filter((s) => selectedSpecKeys.has(s.key))
+        [index];
+      if (!spec) return false;
+      return classifySelectedSpecForSearch(spec).classification === "hard";
+    });
+}
+
+export function rankListings(
+  priceCheck: PriceCheck,
+  item: ScannedItem | undefined,
+  selectedSpecKeys: Set<string>,
+  sourceTruth: Poe2DbDataSnapshot | null = null,
+): ListingRank[] {
+  const specs = item ? itemSpecs(item, itemProfile(item), sourceTruth) : [];
+  const selectedSpecs = specs.filter((spec) => selectedSpecKeys.has(spec.key));
+  const maxScore = selectedSpecs.length;
+  if (!maxScore) {
+    return priceCheck.listings.map((listing) => ({
+      listing,
+      score: 1,
+      maxScore: 1,
+      penalties: [],
+    }));
+  }
+
+  const priceMatched = priceCheck.listings.map((listing) =>
+    listingMatchesSelectedPriceOption(priceCheck, listing),
+  );
+
+  return priceCheck.listings.map((listing, listingIndex) => {
+    if (!priceMatched[listingIndex]) {
+      return { listing, score: -1, maxScore, penalties: ["price option mismatch"] };
+    }
+
+    const penalties: string[] = [];
+    let hits = 0;
+
+    for (const spec of selectedSpecs) {
+      const classification = classifySelectedSpecForSearch(spec);
+      if (!listingMatchesSpec(listing, spec)) {
+        if (classification.classification === "hard") {
+          penalties.push(`hard filter failed: ${spec.kind} "${spec.label}"`);
+        } else {
+          penalties.push(`score filter missed: ${spec.kind} "${spec.label}"`);
+        }
+      } else {
+        hits++;
+      }
+    }
+
+    const hardFailCount = penalties.filter((p) => p.startsWith("hard filter")).length;
+    if (hardFailCount > 0) {
+      return { listing, score: -1, maxScore, penalties };
+    }
+
+    return { listing, score: hits, maxScore, penalties };
+  });
 }
 
 export function activeFilterSignature(filters: ActivePriceFilter[]) {
@@ -356,16 +506,16 @@ export function filteredListings(
   selectedSpecKeys: Set<string>,
   sourceTruth: Poe2DbDataSnapshot | null = null,
 ) {
-  const specs = item ? itemSpecs(item, itemProfile(item), sourceTruth) : [];
-  const selectedSpecs = specs.filter((spec) => selectedSpecKeys.has(spec.key));
+  const ranked = rankListings(priceCheck, item, selectedSpecKeys, sourceTruth);
 
-  return priceCheck.listings.filter((listing) => {
-    if (!listingMatchesSelectedPriceOption(priceCheck, listing)) {
-      return false;
-    }
-
-    return selectedSpecs.every((spec) => listingMatchesSpec(listing, spec));
-  });
+  return ranked
+    .filter((entry) => entry.score > 0 || (entry.score === 1 && entry.maxScore <= 1))
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      if (left.penalties.length !== right.penalties.length) return left.penalties.length - right.penalties.length;
+      return 0;
+    })
+    .map((entry) => entry.listing);
 }
 
 export function listingMatchesSelectedPriceOption(priceCheck: PriceCheck, listing: PriceListing) {
@@ -404,6 +554,7 @@ export function listingMatchesSpec(listing: PriceListing, spec: ItemSpec) {
 export function resolveTierMatch(
   modifierLabel: string,
   sourceTruth: Poe2DbDataSnapshot | null,
+  item?: Pick<ScannedItem, "item_class" | "base_type"> | null,
 ): TierMatch | null {
   if (!sourceTruth?.mod_pages?.length) {
     return null;
@@ -414,9 +565,14 @@ export function resolveTierMatch(
   if (!values.length) {
     return null;
   }
+  const sourceHints = sourceKindHints(modifierLabel);
 
-  for (const page of sourceTruth.mod_pages) {
-    const sameTemplate = page.tiers.filter((tier) => specTemplate(tier.template) === template);
+  for (const page of prioritizedModPages(sourceTruth.mod_pages, item)) {
+    let sameTemplate = page.tiers.filter((tier) => templatesCompatible(specTemplate(tier.template), template));
+    if (sourceHints.length) {
+      sameTemplate = sameTemplate.filter((tier) => sourceHints.includes(tier.source_kind));
+    }
+    sameTemplate.sort((left, right) => sourceKindScore(right.source_kind, sourceHints) - sourceKindScore(left.source_kind, sourceHints));
     const matchingTier = sameTemplate.find((tier) => tierMatchesValues(tier, values));
     if (!matchingTier) {
       continue;
@@ -424,12 +580,13 @@ export function resolveTierMatch(
 
     const firstBand = matchingTier.roll_bands[0];
     return {
-      source: "poe2db",
+      source: page.slug.startsWith("repoe-") ? "repoe" : "poe2db",
       page_slug: page.slug,
       tier: matchingTier.tier,
       tier_name: matchingTier.name,
       required_level: matchingTier.required_level,
       affix: matchingTier.affix,
+      source_kind: matchingTier.source_kind,
       min: firstBand?.min ?? null,
       max: firstBand?.max ?? null,
       template,
@@ -437,6 +594,69 @@ export function resolveTierMatch(
   }
 
   return null;
+}
+
+function prioritizedModPages(
+  pages: Poe2DbModTierPage[],
+  item?: Pick<ScannedItem, "item_class" | "base_type"> | null,
+) {
+  const hints = [item?.item_class, item?.base_type]
+    .filter((value): value is string => Boolean(value))
+    .map(normalizedPageHint);
+
+  if (!hints.length) {
+    return pages;
+  }
+
+  return [...pages].sort((left, right) => pageHintScore(right.slug, hints) - pageHintScore(left.slug, hints));
+}
+
+function pageHintScore(slug: string, hints: string[]) {
+  const normalizedSlug = normalizedPageHint(slug);
+  if (hints.some((hint) => normalizedSlug === hint || normalizedSlug.endsWith(`_${hint}`))) {
+    return 100;
+  }
+  if (hints.some((hint) => normalizedSlug.includes(hint) || hint.includes(normalizedSlug))) {
+    return 50;
+  }
+  const hintWords = hints.flatMap((hint) => hint.split("_")).filter((word) => word.length > 3);
+  return hintWords.some((word) => normalizedSlug.includes(word)) ? 20 : 0;
+}
+
+function normalizedPageHint(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function sourceKindHints(value: string) {
+  const normalized = cleanTradeMarkup(value).toLowerCase();
+  const hints: string[] = [];
+  if (normalized.includes("rune")) {
+    hints.push("socketable", "rune", "item_card");
+  }
+  if (normalized.includes("desecrated")) {
+    hints.push("desecrated");
+  }
+  if (normalized.includes("implicit")) {
+    hints.push("implicit", "rune", "item_card");
+  }
+  if (normalized.includes("corrupted")) {
+    hints.push("corrupted");
+  }
+  if (normalized.includes("essence")) {
+    hints.push("essence", "perfect_essence");
+  }
+  return hints;
+}
+
+function sourceKindScore(sourceKind: string, hints: string[]) {
+  if (!hints.length) {
+    return 0;
+  }
+  const index = hints.indexOf(sourceKind);
+  return index >= 0 ? 100 - index : 0;
 }
 
 export function cleanTradeMarkup(value: string) {
@@ -448,6 +668,7 @@ export function specTemplate(value: string) {
     .toLowerCase()
     .replace(/\b(rune|implicit|desecrated|corrupted|fractured|enchant|augmented)\b/g, " ")
     .replace(/\d+(?:\.\d+)?/g, "#")
+    .replace(/\s*%\s*/g, "% ")
     .replace(/[^a-z#%]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -676,10 +897,13 @@ function tierMatchesValues(tier: Poe2DbModTier, values: number[]) {
     return false;
   }
 
-  return tier.roll_bands.every((band, index) => {
-    const value = values[index];
-    return typeof value === "number" && value >= band.min && value <= band.max;
-  });
+  return values.every((value, index) => {
+    const band = tier.roll_bands[index];
+    if (!band) {
+      return false;
+    }
+    return value >= band.min && value <= band.max;
+  }) && values.length <= tier.roll_bands.length;
 }
 
 function numbersInText(value: string) {

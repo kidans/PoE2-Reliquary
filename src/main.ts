@@ -7,6 +7,7 @@ import {
   appliedSpecKeySet,
   cleanTradeMarkup,
   filteredListings,
+  hardPriceFiltersForSelection,
   isItemValueModifier,
   itemProfile,
   itemSpecs,
@@ -225,6 +226,9 @@ let pinnedListingPreviewIndex: number | null = null;
 let previewPollHandle = 0;
 let latestRequestedFilterSignature: string | null = null;
 let activeFilterPushTimer = 0;
+let requestedScanWindowHeight = 0;
+const PRICE_REQUEST_COOLDOWN_MS = 10_000;
+const recentPriceRequestSignatures = new Map<string, number>();
 
 const SETTINGS_STORAGE_KEY = "reliquary.ui.settings";
 const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -291,19 +295,31 @@ root.innerHTML = isListingPreviewWindow
 
         <nav class="tab-row" aria-label="Overlay panels">
           <button class="tab-button" data-tab="scan" type="button" title="Scan">
+            <span class="tab-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M8 4H5a1 1 0 0 0-1 1v3M16 4h3a1 1 0 0 1 1 1v3M8 20H5a1 1 0 0 1-1-1v-3M16 20h3a1 1 0 0 0 1-1v-3"/><path d="M7 12h10M12 7v10"/></svg>
+            </span>
             <span class="tab-label">Scan</span>
           </button>
           <button class="tab-button" data-tab="trade" type="button" title="Trade">
+            <span class="tab-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M5 7h14M7 5l-2 2 2 2M19 17H5M17 15l2 2-2 2"/><path d="M8 12h8"/></svg>
+            </span>
             <span class="tab-label">Trade</span>
           </button>
           <button class="tab-button" data-tab="data" type="button" title="Data">
+            <span class="tab-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M5 6c0-1.7 3.1-3 7-3s7 1.3 7 3-3.1 3-7 3-7-1.3-7-3Z"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
+            </span>
             <span class="tab-label">Data</span>
           </button>
           <button class="tab-button tab-button-icon" data-tab="settings" type="button" title="Settings" aria-label="Settings">
-            <svg class="tab-cog" viewBox="0 0 24 24" aria-hidden="true">
+            <span class="tab-icon" aria-hidden="true">
+            <svg class="tab-cog" viewBox="0 0 24 24">
               <path d="M12 8.2a3.8 3.8 0 1 1 0 7.6 3.8 3.8 0 0 1 0-7.6Z" />
               <path d="M18.6 13.4c.1-.5.1-.9.1-1.4s0-.9-.1-1.4l2-1.5-1.9-3.3-2.4 1a8.2 8.2 0 0 0-2.3-1.3L13.7 3h-3.8l-.4 2.5a8.2 8.2 0 0 0-2.3 1.3l-2.3-1L3 9.1l2 1.5c-.1.5-.1.9-.1 1.4s0 .9.1 1.4l-2 1.5 1.9 3.3 2.3-1a8.2 8.2 0 0 0 2.3 1.3l.4 2.5h3.8l.4-2.5a8.2 8.2 0 0 0 2.3-1.3l2.4 1 1.9-3.3-2.1-1.5Z" />
             </svg>
+            </span>
+            <span class="tab-label">Settings</span>
           </button>
         </nav>
 
@@ -609,7 +625,7 @@ function renderScanPanel(item: ScannedItem | null, priceCheck: PriceCheck | null
             ${activeSpecCount ? `<button class="clear-specs" data-clear-specs type="button">Clear</button>` : ""}
           </div>
           <div class="mod-chip-stack" data-mod-stack aria-label="Clickable item specifications">
-            ${renderModifierSections(modifierGroups)}
+            ${renderModifierSections(modifierGroups, item.rarity)}
           </div>
           <div class="item-tags">
             <span>${escapeHtml(item.rarity)} ${escapeHtml(itemClass)}</span>
@@ -661,7 +677,7 @@ function renderPriceProfileControls() {
 
 function renderValueLine(spec: ItemSpec) {
   const selected = isSpecSelected(spec);
-  const applied = isSpecApplied(spec);
+  const applied = selected && isSpecApplied(spec);
   const [label, value] = splitSpecLabel(spec.label);
 
   return `
@@ -833,16 +849,16 @@ function renderPreviewModifierGroup(
   `;
 }
 
-function renderItemSpec(spec: ItemSpec, tone = "explicit") {
-  return renderSpecButton(spec, `mod-chip is-${tone}`);
+function renderItemSpec(spec: ItemSpec, tone = "explicit", meta?: ModifierChipMeta) {
+  return renderSpecButton(spec, `mod-chip is-${tone}`, meta);
 }
 
-function renderModifierSections(groups: ModifierGroups) {
+function renderModifierSections(groups: ModifierGroups, rarity: string) {
   const sections = [
-    renderModifierGroup("Rune Mods", groups.rune, "rune"),
-    renderModifierGroup("Item Mods", groups.explicit, "explicit"),
-    renderModifierGroup("Implicit", groups.implicit, "implicit"),
-    renderModifierGroup("Special", groups.special, "special"),
+    renderModifierGroup("Rune Mods", groups.rune, "rune", rarity),
+    renderModifierGroup("Item Mods", groups.explicit, "explicit", rarity),
+    renderModifierGroup("Implicit", groups.implicit, "implicit", rarity),
+    renderModifierGroup("Special", groups.special, "special", rarity),
   ].filter(Boolean);
 
   return sections.length
@@ -854,26 +870,105 @@ function renderModifierGroup(
   label: string,
   specs: ItemSpec[],
   tone: "rune" | "explicit" | "implicit" | "special",
+  rarity: string,
 ) {
   if (!specs.length) {
     return "";
   }
 
+  const metas = modifierChipMetas(specs, rarity);
   return `
     <section class="modifier-group modifier-group-${tone}">
       <p class="modifier-group-label">${escapeHtml(label)}</p>
       <div class="modifier-group-body">
-        ${specs.map((spec) => renderItemSpec(spec, tone)).join("")}
+        ${specs.map((spec, index) => renderItemSpec(spec, tone, metas[index])).join("")}
       </div>
     </section>
   `;
 }
 
-function renderSpecButton(spec: ItemSpec, className: string) {
+type ModifierChipMeta = {
+  tierLabel: string;
+  tierTitle: string;
+  affixLabel: string;
+  affixTone: "prefix" | "suffix" | "unique" | "special" | "unknown";
+};
+
+function modifierChipMetas(specs: ItemSpec[], rarity: string): ModifierChipMeta[] {
+  let prefixCount = 0;
+  let suffixCount = 0;
+
+  return specs.map((spec) => {
+    const affix = spec.tier_match?.affix ?? null;
+    const sourceKind = spec.tier_match?.source_kind ?? null;
+    const isUnique = rarity.toLowerCase() === "unique";
+    const tierLabel = spec.tier_match?.tier ?? sourceKindLabel(sourceKind);
+    const tierTitle = spec.tier_match
+      ? `${spec.tier_match.tier} ${spec.tier_match.tier_name} (${sourceKindLabel(sourceKind)})`
+      : "Tier unknown until PoE2DB data matches this modifier";
+
+    if (isUnique) {
+      return { tierLabel, tierTitle, affixLabel: "U", affixTone: "unique" };
+    }
+
+    if (affix === "prefix") {
+      prefixCount += 1;
+      return { tierLabel, tierTitle, affixLabel: `P${prefixCount}`, affixTone: "prefix" };
+    }
+
+    if (affix === "suffix") {
+      suffixCount += 1;
+      return { tierLabel, tierTitle, affixLabel: `S${suffixCount}`, affixTone: "suffix" };
+    }
+
+    if (sourceKind && sourceKind !== "normal" && sourceKind !== "table") {
+      return { tierLabel, tierTitle, affixLabel: sourceKindLabel(sourceKind), affixTone: "special" };
+    }
+
+    return { tierLabel, tierTitle, affixLabel: "?", affixTone: "unknown" };
+  });
+}
+
+function sourceKindLabel(sourceKind: string | null) {
+  switch (sourceKind) {
+    case "socketable":
+    case "rune":
+      return "R";
+    case "bonded":
+      return "B";
+    case "item_card":
+      return "I";
+    case "essence":
+    case "perfect_essence":
+      return "E";
+    case "desecrated":
+      return "D";
+    case "implicit":
+      return "I";
+    case "corrupted":
+      return "C";
+    case "enchant":
+      return "EN";
+    case "normal":
+    case "table":
+      return "T?";
+    case "repoe":
+      return "R?";
+    default:
+      return sourceKind ? sourceKind.slice(0, 2).toUpperCase() : "T?";
+  }
+}
+
+function renderSpecButton(spec: ItemSpec, className: string, meta?: ModifierChipMeta) {
   const selected = isSpecSelected(spec);
-  const applied = isSpecApplied(spec);
-  const tier = spec.tier_match
-    ? `<small class="tier-badge">${escapeHtml(`${spec.tier_match.tier} ${spec.tier_match.tier_name}`)}</small>`
+  const applied = selected && isSpecApplied(spec);
+  const sideMeta = meta
+    ? `
+      <small class="mod-side-label" title="${escapeAttribute(meta.tierTitle)}">
+        <span class="mod-tier-label">${escapeHtml(meta.tierLabel)}</span>
+        <span class="mod-affix-label is-${escapeAttribute(meta.affixTone)}">${escapeHtml(meta.affixLabel)}</span>
+      </small>
+    `
     : "";
   return `
     <button
@@ -882,7 +977,7 @@ function renderSpecButton(spec: ItemSpec, className: string) {
       type="button"
       title="Rebuild trade search with this specification"
     >
-      <span>${escapeHtml(spec.label)}</span>${tier}
+      ${sideMeta}<span class="mod-chip-text">${escapeHtml(spec.label)}</span>
     </button>
   `;
 }
@@ -1146,14 +1241,14 @@ function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedIt
     <section class="price-check">
         <div class="price-check-meta">
         <div class="estimate-card">
-          <div>
+          <div class="estimate-main">
             <p class="section-label">Estimated Value</p>
             <div class="estimate-value">
               <span>~</span>
               <strong>${estimate.amount === null ? "-" : formatCompactNumber(estimate.amount)}</strong>
               ${estimate.iconUrl ? `<img class="currency-icon large" src="${escapeAttribute(estimate.iconUrl)}" alt="" />` : `<small>${escapeHtml(estimate.currencyId)}</small>`}
             </div>
-            <p>
+            <p class="estimate-range">
               Range: ${estimate.low === null || estimate.high === null ? "-" : `${formatCompactNumber(estimate.low)}-${formatCompactNumber(estimate.high)} ${escapeHtml(estimate.currencyId)}`}
               <span class="reliability ${estimate.reliabilityClass}">Reliability: ${escapeHtml(estimate.reliability)}</span>
             </p>
@@ -1174,7 +1269,13 @@ function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedIt
           <button class="source-link" data-source-url="${escapeAttribute(priceCheck.source_url ?? "")}" type="button" ${priceCheck.source_url ? "" : "disabled"}>
             Results from pathofexile.com/trade
           </button>
-          <button class="refresh-mark" data-open-trade type="button" title="Open latest search">Refresh</button>
+          <button class="refresh-mark" data-open-trade type="button" title="Open latest search" aria-label="Open latest search">
+            <svg class="redirect-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 7H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-2" />
+              <path d="M13 4h7v7" />
+              <path d="m11 13 9-9" />
+            </svg>
+          </button>
         </div>
 
         <div class="trade-control-row">
@@ -1948,6 +2049,33 @@ function activePriceFiltersForCurrentSelection() {
   );
 }
 
+function currentPriceRequestSignature(filters: ReturnType<typeof activePriceFiltersForCurrentSelection>) {
+  return [
+    state.scanned_item?.raw_text ?? "",
+    state.trade_league,
+    state.price_currency,
+    state.price_option,
+    activeFilterSignature(filters),
+  ].join("||");
+}
+
+function recentlyRequestedPriceCheck(signature: string) {
+  const now = Date.now();
+  for (const [cachedSignature, timestamp] of recentPriceRequestSignatures) {
+    if (now - timestamp > PRICE_REQUEST_COOLDOWN_MS) {
+      recentPriceRequestSignatures.delete(cachedSignature);
+    }
+  }
+
+  const lastRequestedAt = recentPriceRequestSignatures.get(signature);
+  if (lastRequestedAt && now - lastRequestedAt <= PRICE_REQUEST_COOLDOWN_MS) {
+    return true;
+  }
+
+  recentPriceRequestSignatures.set(signature, now);
+  return false;
+}
+
 function currentRequestedFilterSignature() {
   return activeFilterSignature(activePriceFiltersForCurrentSelection());
 }
@@ -2060,16 +2188,35 @@ async function pushActivePriceFilters() {
     return;
   }
 
-  const filters = activePriceFiltersForCurrentSelection();
-  latestRequestedFilterSignature = activeFilterSignature(filters);
+  const hardFilters = hardPriceFiltersForSelection(
+    state.scanned_item,
+    selectedSpecKeys,
+    selectedPriceProfile,
+    state.source_truth_snapshot,
+  );
+
+  const allFilters = activePriceFiltersForCurrentSelection();
+  latestRequestedFilterSignature = activeFilterSignature(allFilters);
+  const requestSignature = currentPriceRequestSignature(allFilters);
+  if (recentlyRequestedPriceCheck(requestSignature)) {
+    if (state.price_check) {
+      state.price_check.status = allFilters.length
+        ? `Using locally filtered listings for ${allFilters.length} selected filter${allFilters.length === 1 ? "" : "s"} (${hardFilters.length} hard)...`
+        : "Using locally filtered listings without selected filters...";
+      render();
+    }
+    return;
+  }
+
   if (state.price_check) {
-    state.price_check.status = filters.length
-      ? `Refreshing trade search for ${filters.length} selected filter${filters.length === 1 ? "" : "s"}...`
+    state.price_check.status = allFilters.length
+      ? `Refreshing trade search for ${hardFilters.length} hard filter${hardFilters.length === 1 ? "" : "s"} (${allFilters.length} selected)...`
       : "Refreshing trade search without selected filters...";
+    render();
   }
 
   await invoke("set_active_price_filters", {
-    filters,
+    filters: hardFilters,
   }).catch((error) => pushStatus("price", String(error)));
 }
 
@@ -2077,7 +2224,7 @@ function scheduleActivePriceFilterPush() {
   window.clearTimeout(activeFilterPushTimer);
   activeFilterPushTimer = window.setTimeout(() => {
     void pushActivePriceFilters();
-  }, 180);
+  }, 100);
 }
 
 function estimatePrice(priceCheck: PriceCheck): PriceEstimate {
@@ -2525,7 +2672,7 @@ function syncEvaluateLayout() {
   const listingChrome = 18;
   const minimumResultsHeight =
     metaHeight + listingHeaderHeight + desiredVisibleRows * listingRowHeight + listingChrome;
-  const minimumItemHeight = 240;
+  const minimumItemHeight = 260;
   const maximumResultsHeight = Math.max(260, panelHeight - minimumItemHeight - sectionGap);
   const resultsHeight = Math.min(minimumResultsHeight, maximumResultsHeight);
   evaluate.style.setProperty("--results-height", `${resultsHeight}px`);
@@ -2540,16 +2687,40 @@ function syncEvaluateLayout() {
     .filter((child) => child !== itemProfile)
     .reduce((sum, child) => sum + child.offsetHeight, 0);
 
-  const availableItemHeight = Math.max(
+  const desiredItemHeight = Math.max(
     minimumItemHeight,
-    itemSection.clientHeight || panelHeight - resultsHeight - sectionGap,
+    nonProfileHeight + staticProfileHeight + modStack.scrollHeight + 18,
   );
+  evaluate.style.setProperty("--item-row-height", `${desiredItemHeight}px`);
+
+  const desiredWindowHeight = Math.ceil(
+    panelElement!.offsetTop + desiredItemHeight + resultsHeight + sectionGap + 12,
+  );
+  syncScanWindowHeight(desiredWindowHeight);
+
+  const availableItemHeight = Math.max(minimumItemHeight, desiredItemHeight);
   const modsMaxHeight = Math.max(
     92,
     availableItemHeight - nonProfileHeight - staticProfileHeight - 14,
   );
 
   evaluate.style.setProperty("--mods-max-height", `${modsMaxHeight}px`);
+}
+
+function syncScanWindowHeight(height: number) {
+  if (compactMode || activeTab !== "scan") {
+    return;
+  }
+
+  const currentWindowHeight = hudElement?.clientHeight ?? window.innerHeight;
+  if (Math.abs(height - requestedScanWindowHeight) < 10 && currentWindowHeight >= height - 8) {
+    return;
+  }
+
+  requestedScanWindowHeight = height;
+  void invoke("set_scan_window_height", { contentHeight: height }).catch((error) =>
+    pushStatus("window", String(error)),
+  );
 }
 
 async function setPassthrough(passthrough: boolean) {
@@ -2897,6 +3068,7 @@ if (!isListingPreviewWindow && leagueElement) {
   void listen<ScannedItem>("scan://item-updated", (event) => {
     loadingMoreMarketplaceResults = false;
     compactMode = false;
+    recentPriceRequestSignatures.clear();
     void hideListingPreview();
     state.scanned_item = event.payload;
     applyProfileSelection(event.payload);

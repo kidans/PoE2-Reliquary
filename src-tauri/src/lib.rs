@@ -44,6 +44,7 @@ const DEFAULT_WINDOW_WIDTH: f64 = 472.0;
 const DEFAULT_WINDOW_HEIGHT: f64 = 760.0;
 const SCAN_WINDOW_WIDTH: f64 = 540.0;
 const SCAN_WINDOW_HEIGHT: f64 = 980.0;
+const MAX_SCAN_WINDOW_HEIGHT: f64 = 1160.0;
 const SETTINGS_WINDOW_WIDTH: f64 = 740.0;
 const SETTINGS_WINDOW_HEIGHT: f64 = 620.0;
 const TRADE_WINDOW_WIDTH: f64 = 1000.0;
@@ -364,6 +365,39 @@ fn set_window_layout(window: tauri::Window, layout: String) -> Result<(), String
 
     window
         .set_size(Size::Logical(LogicalSize::new(width, height)))
+        .map_err(|error| error.to_string())?;
+    window
+        .set_position(Position::Logical(position))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_scan_window_height(window: tauri::Window, content_height: f64) -> Result<(), String> {
+    let monitor = window
+        .current_monitor()
+        .map_err(|error| error.to_string())?
+        .or_else(|| window.primary_monitor().ok().flatten());
+
+    let max_height = monitor
+        .as_ref()
+        .map(|monitor| {
+            let scale_factor = monitor.scale_factor();
+            let monitor_height = monitor.size().height as f64 / scale_factor;
+            (monitor_height - SNAP_MARGIN * 2.0).max(IDLE_WINDOW_HEIGHT)
+        })
+        .unwrap_or(MAX_SCAN_WINDOW_HEIGHT);
+
+    let height = if max_height < SCAN_WINDOW_HEIGHT {
+        max_height
+    } else {
+        content_height
+            .ceil()
+            .clamp(SCAN_WINDOW_HEIGHT, MAX_SCAN_WINDOW_HEIGHT.min(max_height))
+    };
+    let position = snapped_window_position(&window, "scan", SCAN_WINDOW_WIDTH, height)?;
+
+    window
+        .set_size(Size::Logical(LogicalSize::new(SCAN_WINDOW_WIDTH, height)))
         .map_err(|error| error.to_string())?;
     window
         .set_position(Position::Logical(position))
@@ -874,6 +908,7 @@ pub fn run() {
             set_trade_league,
             set_compact_mode,
             set_window_layout,
+            set_scan_window_height,
             set_click_passthrough,
             show_listing_preview,
             start_drag_window,

@@ -315,6 +315,81 @@ Remaining Phase 4 expansion work can deepen item intelligence category-by-catego
 5. Start the PoE2DB adapter foundation after the scan interaction layer is stable.
 6. Add tier-band matching as the first required PoE2DB-backed marketplace behavior.
 
+### Checkpoint: May 21 Handoff To opencode
+
+Logged on May 21, 2026 so opencode can continue without re-discovering the same edge cases.
+
+Current implementation state:
+
+- The app is now branded Reliquary, but the local workspace path is still `C:\Projects\Kalandra`.
+- The active branch is `main`; there are uncommitted working-tree changes from the latest source-truth, UI, tiering, and scan-layout work.
+- RePoE/PoE2DB source-truth integration is active in `src-tauri/src/source_truth.rs`; RePoE currently provides the stronger modifier coverage, with PoE2DB retained as fallback/cross-check data.
+- TypeScript owns the evaluator path in `src/evaluate.ts`; `src/main.ts` still handles render wiring, selected-state ownership, IPC orchestration, and immediate UI behavior.
+- Tier labels, affix labels, and modifier selection display are now rendered in TypeScript/CSS. Prefix is yellow, suffix is blue, unique/source labels use their own colors.
+- Scan window height was recently changed to grow via a Tauri command instead of squishing the scanned item card.
+- Modifier selection now updates immediately and duplicate exact item/filter requests have a short cooldown to reduce official API churn.
+
+Recent bugs fixed immediately before this handoff:
+
+- The scanned item card was squishing instead of expanding down. Root cause: CSS still allowed the item profile row to compress itself, and the Tauri resize command could be skipped if the requested height was already cached. Fix touched `src/styles.css`, `src/main.ts`, and `src-tauri/src/lib.rs`.
+- Rune modifiers appeared stuck selected. Root cause: old successful API `applied_filters` were painted with the same blue selected style even after local user deselection. Fix: a spec is visually `applied` only if it is still selected in current TypeScript state.
+- Release rebuild initially failed because Windows had `reliquary.exe` locked. Closing the running process allowed `npm run tauri:build` to complete.
+
+Latest verification before this handoff:
+
+- `npm run test` passed.
+- `npm run build` passed.
+- `cargo check --manifest-path src-tauri/Cargo.toml` passed.
+- `graphify update .` ran.
+- `npm run tauri:build` passed after closing the locked running executable.
+
+Current main pain point:
+
+- Reliquary is getting many tier labels correct, but marketplace results still do not match PoE Overlay II quality.
+- The latest debug log shows the issue clearly on `Maji Talisman`.
+- Example selected filters included `158% increased Physical Damage`, `Adds 30 to 40 Physical Damage`, `+5 to Level of all Attack Skills`, and `Gain 28% of Damage as Extra Physical Damage`.
+- Official query construction only applied the subset that mapped cleanly to official trade stat IDs.
+- One request only applied `+5 to Level of all Attack Skills`, which returned thousands of broad official results.
+- The frontend then locally filtered those fetched rows against all currently selected specs, rejected them, and showed `No fetched listings match the selected item specifications`.
+- This means tiering alone is not enough; our query semantics are too strict and our local validation is stricter than the official search response.
+
+What Codex believes is happening compared with PoE Overlay II:
+
+- PoE Overlay II appears to use a more forgiving evaluator model.
+- It likely sends only a small set of trusted hard filters to official trade.
+- Other item mods become scoring/ranking signals rather than mandatory blockers.
+- It heavily uses official fetched item `extended.mods`, `extended.hashes`, stat hashes, DPS, ilvl, quality, and listing metadata to score similarity.
+- Reliquary currently behaves more like "all selected specs must match" after fetch, which creates empty results even when the official trade search returned useful nearby listings.
+
+Next recommended implementation direction:
+
+1. Split selected specs into `hard filters` and `score-only filters`.
+2. Hard filters should be only trusted, high-confidence constraints: base type, rarity/name for uniques, item level when selected, fixed-value mods, and a small number of trusted official stat IDs.
+3. Score-only filters should include most comparable explicit/rune/desecrated/implicit mods, especially when stat ID mapping is missing or uncertain.
+4. Official trade query should use hard filters only.
+5. Local results should not be rejected just because score-only filters are missing. Instead, score and rank fetched rows by how many selected/tier-compatible specs they match.
+6. The marketplace table should show a similarity/quality signal later, but first step is simply to stop hiding all fetched rows.
+7. Use official fetch data where possible: `extended.mods`, `extended.hashes`, `explicitMods`, `runeMods`, `implicitMods`, `desecratedMods`, DPS/pDPS/eDPS, ilvl, and quality.
+8. Keep selected chip highlighting tied to TypeScript user intent, not backend `applied_filters`.
+9. Keep stale response and request-signature guards. Do not let Rust responses overwrite TypeScript selection state.
+
+Suggested first code slice for opencode:
+
+- Add an evaluator concept such as `classifySelectedSpecForSearch(spec)` in `src/evaluate.ts`.
+- Return `hard` or `score` plus a reason string for debugging.
+- Update `activePriceFiltersForSelection` or add a sibling function so Rust receives only hard filters for official API calls.
+- Add a new local ranking helper such as `rankListings(priceCheck, item, selectedSpecKeys, sourceTruth)`.
+- Replace the current all-or-nothing `filteredListings(...)` behavior with "filter by selected price option, rank by selected specs, hide only impossible rows if a hard filter fails."
+- Add Vitest fixtures for the Maji Talisman case so the expected behavior is: `+5 to Level of all Attack Skills` can be hard-filtered, other selected mods score/rank, and listings are still shown instead of becoming empty.
+
+Implementation cautions:
+
+- Do not remove tier-band work; it is still useful and launch-critical.
+- Do not make all selected mods score-only forever; the split should become smarter as source-truth confidence improves.
+- Do not depend on PoE Overlay II private/backend code. Copy behavior, not proprietary implementation.
+- Do not add more API calls to compensate. The point is better use of the official search/fetch data we already request.
+- If the debug log shows official trade cannot map a selected mod to a stat ID, that selected mod should usually be score-only, not a hard blocker.
+
 ## Success Criteria
 
 Reliquary is on-track when:

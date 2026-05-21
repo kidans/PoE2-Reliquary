@@ -5,6 +5,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::PathBuf,
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -13,11 +14,85 @@ use crate::{DataLeague, LeagueCatalogEntry, TradeLeague};
 pub const POE2DB_SCHEMA_VERSION: u16 = 1;
 const POE2DB_HOME_URL: &str = "https://poe2db.tw/us/";
 const POE2DB_LEAGUE_URL: &str = "https://poe2db.tw/us/League";
+const POE2DB_MODIFIERS_URL: &str = "https://poe2db.tw/us/Modifiers";
+const REPOE_MODS_URL: &str = "https://repoe-fork.github.io/poe2/mods.min.json";
+const REPOE_BASE_ITEMS_URL: &str = "https://repoe-fork.github.io/poe2/base_items.min.json";
 const POE_NINJA_INDEX_STATE_URL: &str = "https://poe.ninja/poe2/api/data/index-state";
 const TRADE_API_BASE: &str = "https://www.pathofexile.com/api/trade2";
 const POE2DB_CACHE_FILE: &str = "poe2db-source-truth-v1.json";
 const POE2DB_CACHE_TTL_MS: u64 = 30 * 60 * 1000;
-const DEFAULT_MOD_TIER_SLUGS: &[&str] = &["Physical_damage"];
+const FALLBACK_MOD_TIER_SLUGS: &[&str] = &[
+    "Claws",
+    "Daggers",
+    "Wands",
+    "One_Hand_Swords",
+    "One_Hand_Axes",
+    "One_Hand_Maces",
+    "Sceptres",
+    "Spears",
+    "Flails",
+    "Bows",
+    "Staves",
+    "Two_Hand_Swords",
+    "Two_Hand_Axes",
+    "Two_Hand_Maces",
+    "Quarterstaves",
+    "Crossbows",
+    "Traps",
+    "Talismans",
+    "Amulets",
+    "Rings",
+    "Belts",
+    "Gloves_str",
+    "Gloves_dex",
+    "Gloves_int",
+    "Gloves_str_dex",
+    "Gloves_str_int",
+    "Gloves_dex_int",
+    "Boots_str",
+    "Boots_dex",
+    "Boots_int",
+    "Boots_str_dex",
+    "Boots_str_int",
+    "Boots_dex_int",
+    "Body_Armours_str",
+    "Body_Armours_dex",
+    "Body_Armours_int",
+    "Body_Armours_str_dex",
+    "Body_Armours_str_int",
+    "Body_Armours_dex_int",
+    "Body_Armours_str_dex_int",
+    "Helmets_str",
+    "Helmets_dex",
+    "Helmets_int",
+    "Helmets_str_dex",
+    "Helmets_str_int",
+    "Helmets_dex_int",
+    "Quivers",
+    "Shields_str",
+    "Shields_str_dex",
+    "Shields_str_int",
+    "Bucklers",
+    "Foci",
+    "Ruby",
+    "Emerald",
+    "Sapphire",
+    "Time-Lost_Ruby",
+    "Time-Lost_Emerald",
+    "Time-Lost_Sapphire",
+    "Life_Flasks",
+    "Mana_Flasks",
+    "Charms",
+    "Waystones_low_tier",
+    "Waystones_mid_tier",
+    "Waystones_top_tier",
+    "Runes",
+    "Physical_damage",
+    "Chaos_damage",
+    "Fire_damage",
+    "Cold_damage",
+    "Lightning_damage",
+];
 
 static POE2DB_LEAGUE_ROW_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
@@ -39,6 +114,12 @@ static POE2DB_MOD_ROW_RE: Lazy<Regex> = Lazy::new(|| {
     )
     .expect("valid PoE2DB modifier tier row regex")
 });
+static POE2DB_MODIFIERS_LINK_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r##"href="/us/(?P<slug>[^"#]+)(?:#ModifiersCalc)""##)
+        .expect("valid PoE2DB modifiers link regex")
+});
+static MODS_VIEW_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"ModsView\(\{").expect("valid ModsView marker regex"));
 
 static HTML_TAG_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?s)<[^>]+>").expect("valid HTML tag regex"));
@@ -46,9 +127,13 @@ static BADGE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?s)<span class="badge\b.*?</span>"#).expect("valid badge regex"));
 static MOD_VALUE_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r#"(?s)<span class=['"]mod-value['"]>\(?(?P<min>-?\d+(?:\.\d+)?)\s*<span class="ndash">[^<]+</span>\s*(?P<max>-?\d+(?:\.\d+)?)\)?</span>"#,
+        r#"(?s)<span class=['"]mod-value['"]>\(?(?P<min>[+-]?\d+(?:\.\d+)?)\s*<span class="ndash">[^<]+</span>\s*(?P<max>[+-]?\d+(?:\.\d+)?)\)?</span>"#,
     )
     .expect("valid modifier value regex")
+});
+static SINGLE_MOD_VALUE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?s)<span class=['"]mod-value['"]>(?P<value>[+-]?\d+(?:\.\d+)?)</span>"#)
+        .expect("valid single modifier value regex")
 });
 static TAG_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(?s)<span class="badge\b[^"]*" data-tag="(?P<tag>[^"]+)">(?P<label>.*?)</span>"#)
@@ -57,6 +142,12 @@ static TAG_RE: Lazy<Regex> = Lazy::new(|| {
 static WEIGHT_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(?s)<i>(?P<tag>[^<]+)</i>\s*(?P<weight>-?\d+(?:\.\d+)?)"#)
         .expect("valid modifier weight regex")
+});
+static ITEM_CARD_MOD_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r#"(?s)<div class="(?P<class>implicitMod|explicitMod|craftedMod|enchantMod|bondedMod)">(?P<modifier>.*?)</div>"#,
+    )
+    .expect("valid PoE2DB item card modifier regex")
 });
 static RANGE_TEXT_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\(?-?\d+(?:\.\d+)?\s*[—-]\s*-?\d+(?:\.\d+)?\)?").expect("valid range text regex")
@@ -93,6 +184,7 @@ pub struct Poe2DbModTier {
     pub id: String,
     pub tier: String,
     pub name: String,
+    pub source_kind: String,
     pub required_level: u16,
     pub affix: Option<AffixKind>,
     pub text: String,
@@ -120,6 +212,78 @@ pub struct RollBand {
 pub struct TagWeight {
     pub tag: String,
     pub weight: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModsViewPayload {
+    #[serde(default)]
+    gen: HashMap<String, String>,
+    #[serde(default)]
+    normal: Vec<ModsViewModifier>,
+    #[serde(flatten)]
+    extra: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModsViewModifier {
+    #[serde(rename = "Name")]
+    name: Option<String>,
+    #[serde(rename = "Level")]
+    level: Option<String>,
+    #[serde(rename = "ModGenerationTypeID")]
+    generation_type_id: Option<String>,
+    #[serde(default)]
+    str: String,
+    #[serde(default)]
+    mod_no: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RePoeMod {
+    #[serde(default)]
+    domain: String,
+    #[serde(default)]
+    generation_type: String,
+    #[serde(default)]
+    implicit_tags: Vec<String>,
+    #[serde(default)]
+    is_essence_only: bool,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    required_level: u16,
+    #[serde(default)]
+    spawn_weights: Vec<RePoeWeight>,
+    #[serde(default)]
+    stats: Vec<RePoeStat>,
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    r#type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RePoeWeight {
+    tag: String,
+    weight: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct RePoeStat {
+    min: f64,
+    max: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct RePoeBaseItem {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    item_class: String,
+    #[serde(default)]
+    implicits: Vec<String>,
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -297,11 +461,18 @@ pub fn registry() -> Vec<SourceTruth> {
             cli_role: "Normalize listed prices into comparable value units before the overlay ranks trade results.",
         },
         SourceTruth {
+            id: "repoe-fork-poe2",
+            name: "RePoE Fork PoE2",
+            url: "https://repoe-fork.github.io/poe2/",
+            purpose: "Primary static game-data export for modifier tiers, spawn tags, base item implicits, and stat ranges.",
+            cli_role: "Build Reliquary's local tier index without reading GGPK files at runtime.",
+        },
+        SourceTruth {
             id: "poe2db",
             name: "PoE2DB",
             url: "https://poe2db.tw/us/",
             purpose: "Item descriptions, base item metadata, gems, modifiers, and league mechanics reference data.",
-            cli_role: "Resolve copied item text into accurate base metadata before building trade queries.",
+            cli_role: "Cross-check and fill gaps for league discovery, special mechanics, and item text presentation.",
         },
     ]
 }
@@ -407,10 +578,51 @@ pub async fn refresh_poe2db_data_snapshot(force: bool) -> Result<Poe2DbDataSnaps
     });
     let mut mod_pages = Vec::new();
 
-    for slug in DEFAULT_MOD_TIER_SLUGS {
-        match fetch_poe2db_mod_tiers(slug).await {
-            Ok(page) => mod_pages.push(page),
-            Err(error) => failed_pages.push(format!("{slug}: {error}")),
+    match fetch_repoe_mod_pages().await {
+        Ok(mut pages) => mod_pages.append(&mut pages),
+        Err(error) => failed_pages.push(format!("RePoE: {error}")),
+    }
+
+    let mod_slugs = match fetch_poe2db_modifier_slugs().await {
+        Ok(slugs) if !slugs.is_empty() => slugs,
+        Ok(_) => FALLBACK_MOD_TIER_SLUGS
+            .iter()
+            .map(|slug| slug.to_string())
+            .collect(),
+        Err(error) => {
+            failed_pages.push(format!("Modifiers index: {error}"));
+            FALLBACK_MOD_TIER_SLUGS
+                .iter()
+                .map(|slug| slug.to_string())
+                .collect()
+        }
+    };
+
+    let client = Arc::new(
+        reqwest::Client::builder()
+            .user_agent("Reliquary/0.1 poe2db-source-truth")
+            .build()
+            .map_err(|error| error.to_string())?,
+    );
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(8));
+    let mut handles = Vec::new();
+
+    for slug in mod_slugs {
+        let client = Arc::clone(&client);
+        let semaphore = Arc::clone(&semaphore);
+        handles.push(tokio::spawn(async move {
+            let Ok(_permit) = semaphore.acquire_owned().await else {
+                return (slug, Err("PoE2DB fetch semaphore closed".to_string()));
+            };
+            let result = fetch_poe2db_mod_tiers_with_client(&slug, &client).await;
+            (slug, result)
+        }));
+    }
+
+    for handle in handles {
+        match handle.await.map_err(|error| error.to_string())? {
+            (_slug, Ok(page)) => mod_pages.push(page),
+            (slug, Err(error)) => failed_pages.push(format!("{slug}: {error}")),
         }
     }
 
@@ -633,11 +845,18 @@ pub fn print_poe2db_snapshot_cli(args: &[String]) -> Result<(), String> {
 }
 
 pub async fn fetch_poe2db_mod_tiers(slug_or_url: &str) -> Result<Poe2DbModTierPage, String> {
-    let (slug, url) = poe2db_mod_url(slug_or_url);
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 poe2db-mod-tiers")
         .build()
         .map_err(|error| error.to_string())?;
+    fetch_poe2db_mod_tiers_with_client(slug_or_url, &client).await
+}
+
+async fn fetch_poe2db_mod_tiers_with_client(
+    slug_or_url: &str,
+    client: &reqwest::Client,
+) -> Result<Poe2DbModTierPage, String> {
+    let (slug, url) = poe2db_mod_url(slug_or_url);
     let html = client
         .get(&url)
         .send()
@@ -659,6 +878,54 @@ pub async fn fetch_poe2db_mod_tiers(slug_or_url: &str) -> Result<Poe2DbModTierPa
         source_url: url,
         tiers,
     })
+}
+
+async fn fetch_poe2db_modifier_slugs() -> Result<Vec<String>, String> {
+    let html = reqwest::Client::builder()
+        .user_agent("Reliquary/0.1 poe2db-modifier-index")
+        .build()
+        .map_err(|error| error.to_string())?
+        .get(POE2DB_MODIFIERS_URL)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?
+        .text()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(parse_poe2db_modifier_slugs(&html))
+}
+
+async fn fetch_repoe_mod_pages() -> Result<Vec<Poe2DbModTierPage>, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Reliquary/0.1 repoe-source-truth")
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let (mods_result, base_items_result) = tokio::join!(
+        fetch_repoe_json::<HashMap<String, RePoeMod>>(&client, REPOE_MODS_URL),
+        fetch_repoe_json::<HashMap<String, RePoeBaseItem>>(&client, REPOE_BASE_ITEMS_URL)
+    );
+
+    Ok(build_repoe_mod_pages(mods_result?, base_items_result?))
+}
+
+async fn fetch_repoe_json<T>(client: &reqwest::Client, url: &str) -> Result<T, String>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?
+        .json::<T>()
+        .await
+        .map_err(|error| error.to_string())
 }
 
 async fn fetch_trade_leagues() -> Result<Vec<TradeLeague>, String> {
@@ -797,6 +1064,7 @@ fn parse_poe2db_mod_tiers(html: &str) -> Vec<Poe2DbModTier> {
                 id,
                 tier: String::new(),
                 name,
+                source_kind: "table".to_string(),
                 required_level,
                 affix,
                 text,
@@ -808,6 +1076,10 @@ fn parse_poe2db_mod_tiers(html: &str) -> Vec<Poe2DbModTier> {
         })
         .collect::<Vec<_>>();
 
+    rows.extend(parse_mods_view_tiers(html, &mut seen));
+    if rows.is_empty() {
+        rows.extend(parse_item_card_modifiers(html, &mut seen));
+    }
     assign_tier_labels(&mut rows);
     rows.sort_by(|left, right| {
         left.template
@@ -818,13 +1090,395 @@ fn parse_poe2db_mod_tiers(html: &str) -> Vec<Poe2DbModTier> {
     rows
 }
 
+fn parse_item_card_modifiers(html: &str, seen: &mut HashSet<String>) -> Vec<Poe2DbModTier> {
+    ITEM_CARD_MOD_RE
+        .captures_iter(html)
+        .filter_map(|captures| {
+            let class_name = captures.name("class")?.as_str();
+            let modifier_html = captures.name("modifier")?.as_str();
+            let text = item_card_modifier_text(modifier_html);
+            let template = modifier_template(&text);
+
+            if text.is_empty() || template.is_empty() {
+                return None;
+            }
+
+            let source_kind = item_card_source_kind(class_name).to_string();
+            let key = format!("{source_kind}|{template}|{text}");
+            if !seen.insert(key) {
+                return None;
+            }
+
+            Some(Poe2DbModTier {
+                id: modifier_tier_id(&source_kind, 1, None, &template),
+                tier: String::new(),
+                name: source_kind.clone(),
+                source_kind,
+                required_level: 1,
+                affix: None,
+                text,
+                template,
+                roll_bands: roll_bands(modifier_html),
+                tags: modifier_tags(modifier_html),
+                weights: Vec::new(),
+            })
+        })
+        .collect()
+}
+
+fn item_card_modifier_text(modifier_html: &str) -> String {
+    let text = modifier_text(modifier_html);
+    if let Some((prefix, modifier)) = text.split_once(':') {
+        let prefix_words = prefix.split_whitespace().count();
+        if prefix_words <= 4 {
+            return modifier.trim().to_string();
+        }
+    }
+    text
+}
+
+fn item_card_source_kind(class_name: &str) -> &'static str {
+    match class_name {
+        "implicitMod" => "rune",
+        "bondedMod" => "bonded",
+        "enchantMod" => "enchant",
+        _ => "item_card",
+    }
+}
+
+fn build_repoe_mod_pages(
+    mods: HashMap<String, RePoeMod>,
+    base_items: HashMap<String, RePoeBaseItem>,
+) -> Vec<Poe2DbModTierPage> {
+    let implicit_tags = repoe_implicit_tags_by_mod_id(&base_items);
+    let mut page_tiers: HashMap<String, Vec<Poe2DbModTier>> = HashMap::new();
+
+    for (id, modifier) in mods {
+        let text = clean_cell(&modifier.text.replace('\n', " "));
+        if text.is_empty() || modifier.stats.is_empty() {
+            continue;
+        }
+
+        let mut tags = repoe_modifier_page_tags(&id, &modifier, &implicit_tags);
+        tags.insert("repoe".to_string());
+
+        let tier = repoe_mod_tier(&id, &modifier, &text);
+        for tag in tags {
+            page_tiers.entry(tag).or_default().push(tier.clone());
+        }
+    }
+
+    let mut pages = page_tiers
+        .into_iter()
+        .filter_map(|(slug, mut tiers)| {
+            if tiers.is_empty() {
+                return None;
+            }
+            assign_tier_labels(&mut tiers);
+            tiers.sort_by(|left, right| {
+                left.template
+                    .cmp(&right.template)
+                    .then(left.affix.cmp(&right.affix))
+                    .then(right.required_level.cmp(&left.required_level))
+            });
+            Some(Poe2DbModTierPage {
+                slug: format!("repoe-{slug}"),
+                source_url: REPOE_MODS_URL.to_string(),
+                tiers,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    pages.sort_by(|left, right| left.slug.cmp(&right.slug));
+    pages
+}
+
+fn repoe_implicit_tags_by_mod_id(
+    base_items: &HashMap<String, RePoeBaseItem>,
+) -> HashMap<String, HashSet<String>> {
+    let mut tags_by_mod = HashMap::<String, HashSet<String>>::new();
+
+    for base_item in base_items.values() {
+        let mut tags = base_item.tags.iter().cloned().collect::<HashSet<_>>();
+        if !base_item.item_class.is_empty() {
+            tags.insert(slugify(&base_item.item_class).replace('-', "_"));
+        }
+        if !base_item.name.is_empty() {
+            tags.insert(slugify(&base_item.name).replace('-', "_"));
+        }
+
+        for implicit in &base_item.implicits {
+            tags_by_mod
+                .entry(implicit.clone())
+                .or_default()
+                .extend(tags.iter().cloned());
+        }
+    }
+
+    tags_by_mod
+}
+
+fn repoe_modifier_page_tags(
+    id: &str,
+    modifier: &RePoeMod,
+    implicit_tags: &HashMap<String, HashSet<String>>,
+) -> HashSet<String> {
+    let mut tags = modifier
+        .spawn_weights
+        .iter()
+        .filter(|weight| weight.weight > 0.0 && weight.tag != "default")
+        .map(|weight| weight.tag.clone())
+        .collect::<HashSet<_>>();
+
+    if let Some(extra_tags) = implicit_tags.get(id) {
+        tags.extend(extra_tags.iter().cloned());
+    }
+
+    for token in ["talisman", "rune", "charm", "waystone", "jewel", "flask"] {
+        if id.to_ascii_lowercase().contains(token)
+            || modifier.r#type.to_ascii_lowercase().contains(token)
+            || modifier.text.to_ascii_lowercase().contains(token)
+        {
+            tags.insert(token.to_string());
+        }
+    }
+
+    if tags.is_empty() {
+        tags.insert("global".to_string());
+    }
+
+    tags
+}
+
+fn repoe_mod_tier(id: &str, modifier: &RePoeMod, text: &str) -> Poe2DbModTier {
+    let affix = affix_kind(Some(&modifier.generation_type));
+    let source_kind = repoe_source_kind(id, modifier);
+    let template = modifier_template(text);
+    let name = clean_cell(&modifier.name);
+
+    Poe2DbModTier {
+        id: format!("repoe:{id}"),
+        tier: String::new(),
+        name: if name.is_empty() {
+            id.to_string()
+        } else {
+            name
+        },
+        source_kind,
+        required_level: modifier.required_level,
+        affix,
+        text: text.to_string(),
+        template,
+        roll_bands: modifier
+            .stats
+            .iter()
+            .map(|stat| RollBand {
+                min: stat.min,
+                max: stat.max,
+            })
+            .collect(),
+        tags: modifier.implicit_tags.clone(),
+        weights: modifier
+            .spawn_weights
+            .iter()
+            .map(|weight| TagWeight {
+                tag: weight.tag.clone(),
+                weight: weight.weight,
+            })
+            .collect(),
+    }
+}
+
+fn repoe_source_kind(id: &str, modifier: &RePoeMod) -> String {
+    let lower_id = id.to_ascii_lowercase();
+    let lower_type = modifier.r#type.to_ascii_lowercase();
+    let lower_domain = modifier.domain.to_ascii_lowercase();
+
+    if lower_domain == "desecrated" {
+        return "desecrated".to_string();
+    }
+    if modifier.is_essence_only || lower_id.contains("essence") {
+        if lower_id.contains("perfect") {
+            return "perfect_essence".to_string();
+        }
+        return "essence".to_string();
+    }
+    if lower_id.contains("rune") || lower_type.contains("rune") {
+        return "rune".to_string();
+    }
+    if lower_id.contains("implicit") || lower_type.contains("implicit") {
+        return "implicit".to_string();
+    }
+    if lower_id.contains("corrupt") || lower_domain.contains("corrupt") {
+        return "corrupted".to_string();
+    }
+    if modifier.generation_type == "prefix" || modifier.generation_type == "suffix" {
+        return "normal".to_string();
+    }
+
+    "repoe".to_string()
+}
+
+fn parse_poe2db_modifier_slugs(html: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut slugs = POE2DB_MODIFIERS_LINK_RE
+        .captures_iter(html)
+        .filter_map(|captures| {
+            let slug = captures.name("slug")?.as_str().trim().to_string();
+            (!slug.is_empty() && seen.insert(slug.clone())).then_some(slug)
+        })
+        .collect::<Vec<_>>();
+
+    for fallback in FALLBACK_MOD_TIER_SLUGS {
+        if seen.insert((*fallback).to_string()) {
+            slugs.push((*fallback).to_string());
+        }
+    }
+
+    slugs
+}
+
+fn parse_mods_view_tiers(html: &str, seen: &mut HashSet<String>) -> Vec<Poe2DbModTier> {
+    let Some(payload) = extract_mods_view_payload(html) else {
+        return Vec::new();
+    };
+    let Ok(payload) = serde_json::from_str::<ModsViewPayload>(&payload) else {
+        return Vec::new();
+    };
+
+    let generation_map = payload.gen.clone();
+    let mut tiers = Vec::new();
+    for (source_kind, modifiers) in mods_view_groups(payload) {
+        for modifier in modifiers {
+            if let Some(tier) =
+                mods_view_modifier_tier(&generation_map, &source_kind, modifier, seen)
+            {
+                tiers.push(tier);
+            }
+        }
+    }
+
+    tiers
+}
+
+fn mods_view_groups(payload: ModsViewPayload) -> Vec<(String, Vec<ModsViewModifier>)> {
+    let mut groups = vec![("normal".to_string(), payload.normal)];
+
+    for (source_kind, value) in payload.extra {
+        if let Ok(modifiers) = serde_json::from_value::<Vec<ModsViewModifier>>(value) {
+            if !modifiers.is_empty() {
+                groups.push((source_kind, modifiers));
+            }
+        }
+    }
+
+    groups
+}
+
+fn mods_view_modifier_tier(
+    generation_map: &HashMap<String, String>,
+    source_kind: &str,
+    modifier: ModsViewModifier,
+    seen: &mut HashSet<String>,
+) -> Option<Poe2DbModTier> {
+    let name = clean_cell(modifier.name.as_deref().unwrap_or_default());
+    let required_level = modifier
+        .level
+        .as_deref()
+        .and_then(|level| clean_cell(level).parse::<u16>().ok())?;
+    let affix = mods_view_affix_kind(modifier.generation_type_id.as_deref(), generation_map);
+    let text = modifier_text(&modifier.str);
+    let template = modifier_template(&text);
+
+    if name.is_empty() || text.is_empty() || template.is_empty() {
+        return None;
+    }
+
+    let source_kind = source_kind.to_string();
+    let affix_key = affix
+        .as_ref()
+        .map(|value| format!("{value:?}"))
+        .unwrap_or_else(|| "unknown".to_string());
+    let key = format!("{source_kind}|{name}|{required_level}|{affix_key}|{template}");
+    if !seen.insert(key) {
+        return None;
+    }
+
+    let id = modifier_tier_id(&name, required_level, affix.as_ref(), &template);
+    let mut tags = modifier_tags_from_fragments(&modifier.mod_no);
+    tags.extend(modifier_tags(&modifier.str));
+    tags.sort();
+    tags.dedup();
+
+    Some(Poe2DbModTier {
+        id,
+        tier: String::new(),
+        name,
+        source_kind,
+        required_level,
+        affix,
+        text,
+        template,
+        roll_bands: roll_bands(&modifier.str),
+        tags,
+        weights: Vec::new(),
+    })
+}
+
+fn mods_view_affix_kind(
+    generation_type_id: Option<&str>,
+    generation_map: &HashMap<String, String>,
+) -> Option<AffixKind> {
+    let id = generation_type_id.map(clean_cell).unwrap_or_default();
+    affix_kind(generation_map.get(&id).map(String::as_str)).or_else(|| affix_kind(Some(&id)))
+}
+
+fn extract_mods_view_payload(html: &str) -> Option<String> {
+    let marker = MODS_VIEW_RE.find(html)?;
+    let start = marker.end() - 1;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (offset, character) in html[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match character {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match character {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let end = start + offset + character.len_utf8();
+                    return Some(html[start..end].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
 fn assign_tier_labels(rows: &mut [Poe2DbModTier]) {
     let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
 
     for (index, row) in rows.iter().enumerate() {
         groups
             .entry(format!(
-                "{}|{}",
+                "{}|{}|{}",
+                row.source_kind,
                 row.affix
                     .as_ref()
                     .map(|affix| format!("{affix:?}"))
@@ -860,16 +1514,31 @@ fn modifier_text(modifier_html: &str) -> String {
 fn modifier_template(text: &str) -> String {
     let no_ranges = RANGE_TEXT_RE.replace_all(text, "#");
     let no_numbers = NUMBER_TEXT_RE.replace_all(&no_ranges, "#");
-    clean_cell(&no_numbers)
+    clean_cell(&no_numbers.replace('%', "% "))
 }
 
 fn roll_bands(modifier_html: &str) -> Vec<RollBand> {
-    MOD_VALUE_RE
+    let ranges = MOD_VALUE_RE
         .captures_iter(modifier_html)
         .filter_map(|captures| {
             let min = captures.name("min")?.as_str().parse::<f64>().ok()?;
             let max = captures.name("max")?.as_str().parse::<f64>().ok()?;
             Some(RollBand { min, max })
+        })
+        .collect::<Vec<_>>();
+
+    if !ranges.is_empty() {
+        return ranges;
+    }
+
+    SINGLE_MOD_VALUE_RE
+        .captures_iter(modifier_html)
+        .filter_map(|captures| {
+            let value = captures.name("value")?.as_str().parse::<f64>().ok()?;
+            Some(RollBand {
+                min: value,
+                max: value,
+            })
         })
         .collect()
 }
@@ -885,6 +1554,21 @@ fn modifier_tags(modifier_html: &str) -> Vec<String> {
         .collect()
 }
 
+fn modifier_tags_from_fragments(fragments: &[String]) -> Vec<String> {
+    let mut tags = Vec::new();
+    let mut seen = HashSet::new();
+
+    for fragment in fragments {
+        for tag in modifier_tags(fragment) {
+            if seen.insert(tag.clone()) {
+                tags.push(tag);
+            }
+        }
+    }
+
+    tags
+}
+
 fn modifier_weights(weights_html: &str) -> Vec<TagWeight> {
     WEIGHT_RE
         .captures_iter(weights_html)
@@ -897,9 +1581,14 @@ fn modifier_weights(weights_html: &str) -> Vec<TagWeight> {
 }
 
 fn affix_kind(value: Option<&str>) -> Option<AffixKind> {
-    match value.map(clean_cell).unwrap_or_default().as_str() {
-        "Prefix" => Some(AffixKind::Prefix),
-        "Suffix" => Some(AffixKind::Suffix),
+    match value
+        .map(clean_cell)
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "prefix" => Some(AffixKind::Prefix),
+        "suffix" => Some(AffixKind::Suffix),
         "" => None,
         _ => Some(AffixKind::Unknown),
     }
@@ -1287,8 +1976,8 @@ struct PoeNinjaLeague {
 mod tests {
     use super::{
         classify_item_class, item_family_manifest, normalized_item_family_manifest,
-        parse_poe2db_leagues, parse_poe2db_mod_tiers, AffixKind, Poe2DbAdapterStatus,
-        Poe2DbDataSnapshot, POE2DB_SCHEMA_VERSION,
+        parse_poe2db_leagues, parse_poe2db_mod_tiers, parse_poe2db_modifier_slugs, AffixKind,
+        Poe2DbAdapterStatus, Poe2DbDataSnapshot, POE2DB_SCHEMA_VERSION,
     };
 
     #[test]
@@ -1357,6 +2046,72 @@ mod tests {
         assert_eq!(flaring.roll_bands[0].max, 39.0);
         assert!(flaring.tags.iter().any(|tag| tag == "damage"));
         assert!(flaring.weights.iter().any(|weight| weight.tag == "bow"));
+    }
+
+    #[test]
+    fn parses_poe2db_mods_view_payload_rows() {
+        let html = r#"
+            <script>
+            ModsView({"gen":{"1":"Prefix","2":"Suffix"},"normal":[
+              {"Name":"Tyrannical","Level":"75","ModGenerationTypeID":"1","str":"<span class='mod-value'>(155<span class=\"ndash\">—</span>169)</span> % increased <a data-keyword=\"Physical\">Physical</a> Damage","mod_no":["<span class=\"badge bg-primary craftingdamage\" data-tag=\"damage\">Damage</span>"]},
+              {"Name":"of Celebration","Level":"77","ModGenerationTypeID":"2","str":"<span class='mod-value'>(26<span class=\"ndash\">—</span>28)</span> % increased Attack Speed","mod_no":["<span class=\"badge bg-primary craftingspeed\" data-tag=\"speed\">Speed</span>"]}
+            ],"socketable":[
+              {"Name":"Rune","Level":"1","ModGenerationTypeID":"0","str":"Gain <span class='mod-value'>5</span>% of Damage as Extra Damage of all Elements","mod_no":[]}
+            ],"desecrated":[
+              {"Name":"Desecrated","Level":"1","ModGenerationTypeID":"0","str":"<span class='mod-value'>15</span>% increased Attack Speed","mod_no":[]}
+            ]});
+            </script>
+        "#;
+
+        let tiers = parse_poe2db_mod_tiers(html);
+        let tyrannical = tiers
+            .iter()
+            .find(|tier| tier.name == "Tyrannical")
+            .expect("ModsView prefix tier parsed");
+        let celebration = tiers
+            .iter()
+            .find(|tier| tier.name == "of Celebration")
+            .expect("ModsView suffix tier parsed");
+
+        assert_eq!(tyrannical.tier, "T1");
+        assert_eq!(tyrannical.source_kind, "normal");
+        assert_eq!(tyrannical.affix, Some(AffixKind::Prefix));
+        assert_eq!(tyrannical.roll_bands[0].min, 155.0);
+        assert!(tyrannical.tags.iter().any(|tag| tag == "damage"));
+        assert_eq!(celebration.affix, Some(AffixKind::Suffix));
+
+        let rune = tiers
+            .iter()
+            .find(|tier| tier.source_kind == "socketable")
+            .expect("socketable rune tier parsed");
+        assert_eq!(rune.roll_bands[0].min, 5.0);
+
+        let desecrated = tiers
+            .iter()
+            .find(|tier| tier.source_kind == "desecrated")
+            .expect("desecrated tier parsed");
+        assert_eq!(desecrated.template, "# % increased Attack Speed");
+    }
+
+    #[test]
+    fn discovers_modifier_pages_from_poe2db_index() {
+        let html = r#"
+          <a href="/us/Talismans#ModifiersCalc">Talismans</a>
+          <a href="/us/Body_Armours_str_int#ModifiersCalc">Body Armour</a>
+          <a href="/us/Talismans#ModifiersCalc">Duplicate</a>
+        "#;
+
+        let slugs = parse_poe2db_modifier_slugs(html);
+
+        assert!(slugs.iter().any(|slug| slug == "Talismans"));
+        assert!(slugs.iter().any(|slug| slug == "Body_Armours_str_int"));
+        assert_eq!(
+            slugs
+                .iter()
+                .filter(|slug| slug.as_str() == "Talismans")
+                .count(),
+            1
+        );
     }
 
     #[test]

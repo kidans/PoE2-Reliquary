@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   activeFilterSignature,
   activePriceFiltersForSelection,
+  classifySelectedSpecForSearch,
   filteredListings,
+  hardPriceFiltersForSelection,
   itemSpecs,
   listingMatchesSelectedPriceOption,
   profileSpecKeySet,
+  rankListings,
   resolveTierMatch,
   type PriceCheck,
   type PriceListing,
@@ -64,6 +67,7 @@ const poe2dbSnapshot: Poe2DbDataSnapshot = {
           id: "adds-physical-flaring",
           tier: "T1",
           name: "Flaring",
+          source_kind: "normal",
           required_level: 75,
           affix: "prefix",
           text: "Adds (26-39) to (44-66) Physical Damage",
@@ -78,6 +82,7 @@ const poe2dbSnapshot: Poe2DbDataSnapshot = {
           id: "adds-physical-tempered",
           tier: "T2",
           name: "Tempered",
+          source_kind: "normal",
           required_level: 65,
           affix: "prefix",
           text: "Adds (21-31) to (36-53) Physical Damage",
@@ -268,5 +273,158 @@ describe("PoE2DB tier matching", () => {
     expect(activePriceFiltersForSelection(item, selected, "broad", poe2dbSnapshot)).toEqual([
       expect.objectContaining({ min: 21, max: null, tier: "T1+" }),
     ]);
+  });
+});
+
+describe("hard/score filter classification", () => {
+  it("classifies stats with trusted tier band matches as hard", () => {
+    const specs = itemSpecs(baseItem, undefined, poe2dbSnapshot);
+    const physicalSpec = specs.find((spec) => spec.label === "Adds 30 to 40 Physical Damage");
+    expect(physicalSpec).toBeDefined();
+
+    const classification = classifySelectedSpecForSearch(physicalSpec!);
+    expect(classification.classification).toBe("hard");
+    expect(classification.reason).toMatch(/matched tier/);
+  });
+
+  it("classifies explicit mods without tier band matches as score-only", () => {
+    const specs = itemSpecs(baseItem);
+    const gainSpec = specs.find((spec) => spec.label === "Gain 28% of Damage as Extra Physical Damage");
+    expect(gainSpec).toBeDefined();
+
+    const classification = classifySelectedSpecForSearch(gainSpec!);
+    expect(classification.classification).toBe("score");
+  });
+
+  it("classifies item level, quality, and sockets as hard trusted numerics", () => {
+    const specs = itemSpecs(baseItem);
+    for (const kind of ["item_level", "quality", "sockets"] as const) {
+      const spec = specs.find((s) => s.kind === kind);
+      expect(spec).toBeDefined();
+      expect(classifySelectedSpecForSearch(spec!).classification).toBe("hard");
+    }
+  });
+
+  it("classifies required level as score-only", () => {
+    const itemWithRequiredLevel: ScannedItem = {
+      ...baseItem,
+      raw_text: baseItem.raw_text + "\nRequires: Level 79",
+    };
+    const specs = itemSpecs(itemWithRequiredLevel);
+    const requiredLevel = specs.find((s) => s.kind === "required_level");
+    expect(requiredLevel).toBeDefined();
+    expect(classifySelectedSpecForSearch(requiredLevel!).classification).toBe("score");
+    expect(classifySelectedSpecForSearch(requiredLevel!).reason).toContain("varies");
+  });
+
+  it("classifies implicits, runes, and desecrated mods without tier match as score", () => {
+    const specs = itemSpecs(baseItem);
+    const implicit = specs.find((s) => s.label.includes("(Implicit)"));
+    const rune = specs.find((s) => s.label.includes("(Rune)"));
+    const desecrated = specs.find((s) => s.label.includes("(Desecrated)"));
+
+    expect(implicit).toBeDefined();
+    expect(classifySelectedSpecForSearch(implicit!).classification).toBe("score");
+
+    expect(rune).toBeDefined();
+    expect(classifySelectedSpecForSearch(rune!).classification).toBe("score");
+
+    expect(desecrated).toBeDefined();
+    expect(classifySelectedSpecForSearch(desecrated!).classification).toBe("score");
+  });
+});
+
+describe("hard filter routing", () => {
+  it("sends only hard filters to the API and keeps all for ranking", () => {
+    const specs = itemSpecs(baseItem, undefined, poe2dbSnapshot);
+    const allKeys = new Set(specs.map((s) => s.key));
+    const hardFilters = hardPriceFiltersForSelection(baseItem, allKeys, "quick", poe2dbSnapshot);
+
+    expect(hardFilters.length).toBeLessThan(allKeys.size);
+    expect(hardFilters.length).toBeGreaterThan(0);
+
+    expect(hardFilters.every((f) => (
+      f.kind === "item_level"
+      || f.kind === "quality"
+      || f.kind === "sockets"
+      || (f.kind === "explicit" && f.tier !== null)
+    ))).toBe(true);
+  });
+});
+
+describe("soft listing ranking", () => {
+  it("ranks listings by selected spec match count instead of all-or-nothing", () => {
+    const specs = itemSpecs(baseItem);
+    const selected = new Set([
+      specs.find((s) => s.kind === "item_level")?.key,
+      specs.find((s) => s.label === "+5 to Level of all Attack Skills")?.key,
+    ].filter((key): key is string => Boolean(key)));
+
+    const check = priceCheck({ selected_price_option: "exalted_divine" });
+    const rankings = rankListings(check, baseItem, selected);
+
+    const passing = rankings.filter((r) => r.score >= 0);
+    const failing = rankings.filter((r) => r.score < 0);
+    expect(passing.length).toBe(2);
+    expect(failing.length).toBe(1);
+    expect(failing[0].penalties).toEqual(
+      expect.arrayContaining([expect.stringContaining("item_level")]),
+    );
+  });
+
+  it("Maji Talisman shows listings even when some selected mods lack stat ID mappings", () => {
+    const specs = itemSpecs(baseItem, undefined, poe2dbSnapshot);
+    const selected = new Set(
+      specs
+        .filter((s) =>
+          s.label.includes("158% increased Physical Damage")
+          || s.label.includes("Level of all Attack")
+          || s.label.includes("Gain 28%")
+          || s.label.includes("Item Level"),
+        )
+        .map((s) => s.key),
+    );
+    expect(selected.size).toBeGreaterThanOrEqual(3);
+
+    const hardCount = hardPriceFiltersForSelection(baseItem, selected, "quick", poe2dbSnapshot).length;
+    expect(hardCount).toBeGreaterThan(0);
+    expect(hardCount).toBeLessThan(selected.size);
+
+    const visible = filteredListings(priceCheck(), baseItem, selected, poe2dbSnapshot);
+    expect(visible.length).toBeGreaterThan(0);
+    expect(visible.length).toBeLessThanOrEqual(3);
+  });
+
+  it("does not return empty results when hard filters match but score filters miss", () => {
+    const check = priceCheck({
+      listings: [
+        listing({
+          explicit_mods: [
+            "158% increased Physical Damage",
+            "+5 to Level of all Attack Skills",
+          ],
+        }),
+        listing({
+          explicit_mods: [
+            "Adds 28 to 48 Physical Damage",
+            "+5 to Level of all Attack Skills",
+          ],
+        }),
+      ],
+    });
+
+    const specs = itemSpecs(baseItem, undefined, poe2dbSnapshot);
+    const selected = new Set(
+      specs
+        .filter((s) =>
+          s.label.includes("Physical Damage")
+          || s.label.includes("Level of all Attack")
+          || s.label.includes("Gain 28% as Extra Physical Damage"),
+        )
+        .map((s) => s.key),
+    );
+
+    const visible = filteredListings(check, baseItem, selected, poe2dbSnapshot);
+    expect(visible.length).toBeGreaterThan(0);
   });
 });
