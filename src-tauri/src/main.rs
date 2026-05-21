@@ -46,6 +46,17 @@ fn main() {
         return;
     }
 
+    if matches!(
+        args.first().map(String::as_str),
+        Some("poe2db-cache" | "source-cache" | "source-truth-cache")
+    ) {
+        if let Err(error) = reliquary_core::source_truth::print_poe2db_snapshot_cli(&args[1..]) {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if matches!(args.first().map(String::as_str), Some("debug-log" | "log")) {
         if let Err(error) = reliquary_core::debug_log::print_cli(&args[1..]) {
             eprintln!("{error}");

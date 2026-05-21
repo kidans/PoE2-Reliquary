@@ -14,7 +14,7 @@ use linemux::MuxedLines;
 use rdev::{listen, Event, EventType, Key};
 use serde::{Deserialize, Serialize};
 use tauri::{
-    Emitter, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl,
+    Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl,
     WebviewWindowBuilder,
 };
 use thiserror::Error;
@@ -52,6 +52,9 @@ const LISTING_PREVIEW_WINDOW_LABEL: &str = "listing-preview";
 const LISTING_PREVIEW_WIDTH: f64 = 360.0;
 const LISTING_PREVIEW_HEIGHT: f64 = 560.0;
 const LISTING_PREVIEW_GAP: f64 = 12.0;
+const SNAP_MARGIN: f64 = 8.0;
+const FULL_SNAP_LEFT: f64 = 0.0;
+const FULL_SNAP_TOP_RATIO: f64 = 0.09;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppState {
@@ -62,6 +65,7 @@ pub struct AppState {
     pub league_catalog: Vec<LeagueCatalogEntry>,
     pub trade_leagues: Vec<TradeLeague>,
     pub data_leagues: Vec<DataLeague>,
+    pub source_truth_snapshot: Option<source_truth::Poe2DbDataSnapshot>,
     pub price_check: Option<PriceCheck>,
     pub exchange_tab: ExchangeTabState,
     pub price_currency: String,
@@ -217,12 +221,24 @@ pub struct ListingPreviewRequest {
     pub family: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ActivePriceFilter {
     pub kind: String,
     pub label: String,
     pub value: Option<f64>,
     pub template: String,
+    #[serde(default)]
+    pub min: Option<f64>,
+    #[serde(default)]
+    pub max: Option<f64>,
+    #[serde(default)]
+    pub tier: Option<String>,
+    #[serde(default)]
+    pub tier_name: Option<String>,
+    #[serde(default)]
+    pub affix: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -344,9 +360,55 @@ fn set_window_layout(window: tauri::Window, layout: String) -> Result<(), String
         }
     };
 
+    let position = snapped_window_position(&window, layout.as_str(), width, height)?;
+
     window
         .set_size(Size::Logical(LogicalSize::new(width, height)))
+        .map_err(|error| error.to_string())?;
+    window
+        .set_position(Position::Logical(position))
         .map_err(|error| error.to_string())
+}
+
+fn snapped_window_position(
+    window: &tauri::Window,
+    layout: &str,
+    width: f64,
+    height: f64,
+) -> Result<LogicalPosition<f64>, String> {
+    let monitor = window
+        .current_monitor()
+        .map_err(|error| error.to_string())?
+        .or_else(|| window.primary_monitor().ok().flatten());
+
+    let Some(monitor) = monitor else {
+        return Ok(LogicalPosition::new(FULL_SNAP_LEFT, SNAP_MARGIN));
+    };
+
+    let scale_factor = monitor.scale_factor();
+    let monitor_position = monitor.position();
+    let monitor_size = monitor.size();
+    let monitor_x = monitor_position.x as f64 / scale_factor;
+    let monitor_y = monitor_position.y as f64 / scale_factor;
+    let monitor_width = monitor_size.width as f64 / scale_factor;
+    let monitor_height = monitor_size.height as f64 / scale_factor;
+
+    let (x, y) = if layout == "compact" {
+        (
+            monitor_x + monitor_width - width - SNAP_MARGIN,
+            monitor_y + SNAP_MARGIN,
+        )
+    } else {
+        (
+            monitor_x + FULL_SNAP_LEFT,
+            monitor_y + (monitor_height * FULL_SNAP_TOP_RATIO).max(SNAP_MARGIN),
+        )
+    };
+
+    Ok(LogicalPosition::new(
+        x.clamp(monitor_x, monitor_x + monitor_width - width),
+        y.clamp(monitor_y, monitor_y + monitor_height - height),
+    ))
 }
 
 #[tauri::command]
@@ -981,10 +1043,11 @@ fn spawn_trade_league_worker(app_handle: tauri::AppHandle, state: SharedAppState
 }
 
 async fn refresh_league_sources(app_handle: &tauri::AppHandle, state: &SharedAppState) {
-    let (trade_result, data_result, catalog_result) = tokio::join!(
+    let (trade_result, data_result, catalog_result, snapshot_result) = tokio::join!(
         price_check::fetch_trade_leagues(),
         source_truth::fetch_poe2db_leagues(),
-        source_truth::fetch_league_catalog()
+        source_truth::fetch_league_catalog(),
+        source_truth::refresh_poe2db_data_snapshot(false)
     );
 
     let mut trade_count = None;
@@ -1060,6 +1123,21 @@ async fn refresh_league_sources(app_handle: &tauri::AppHandle, state: &SharedApp
             app_handle,
             "league",
             format!("failed to build merged league catalog: {error}"),
+        ),
+    }
+
+    match snapshot_result {
+        Ok(snapshot) => {
+            {
+                let mut locked_state = state.lock().await;
+                locked_state.source_truth_snapshot = Some(snapshot.clone());
+            }
+            let _ = app_handle.emit("scan://source-truth-updated", snapshot);
+        }
+        Err(error) => emit_worker_status(
+            app_handle,
+            "source-truth",
+            format!("failed to refresh PoE2DB source-truth cache: {error}"),
         ),
     }
 

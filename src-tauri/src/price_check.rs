@@ -888,9 +888,20 @@ fn price_check_cache_key(
             .cmp(&right.kind)
             .then(left.template.cmp(&right.template))
             .then(left.label.cmp(&right.label))
+            .then(left.tier.cmp(&right.tier))
             .then_with(|| {
                 left.value
                     .partial_cmp(&right.value)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| {
+                left.min
+                    .partial_cmp(&right.min)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| {
+                left.max
+                    .partial_cmp(&right.max)
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
     });
@@ -946,28 +957,46 @@ fn build_trade_filters(
     }
 
     for filter in active_filters {
-        let Some(value) = filter.value else {
+        let Some(value) = filter.min.or(filter.value) else {
             continue;
         };
 
         match filter.kind.as_str() {
             "item_level" => {
                 filters["type_filters"]["filters"]["ilvl"]["min"] = json!(value);
+                if let Some(max) = filter.max {
+                    filters["type_filters"]["filters"]["ilvl"]["max"] = json!(max);
+                }
             }
             "quality" => {
                 filters["type_filters"]["filters"]["quality"]["min"] = json!(value);
+                if let Some(max) = filter.max {
+                    filters["type_filters"]["filters"]["quality"]["max"] = json!(max);
+                }
             }
             "required_level" => {
                 filters["req_filters"]["filters"]["lvl"]["min"] = json!(value);
+                if let Some(max) = filter.max {
+                    filters["req_filters"]["filters"]["lvl"]["max"] = json!(max);
+                }
             }
             "armour" => {
                 filters["equipment_filters"]["filters"]["ar"]["min"] = json!(value);
+                if let Some(max) = filter.max {
+                    filters["equipment_filters"]["filters"]["ar"]["max"] = json!(max);
+                }
             }
             "evasion" => {
                 filters["equipment_filters"]["filters"]["ev"]["min"] = json!(value);
+                if let Some(max) = filter.max {
+                    filters["equipment_filters"]["filters"]["ev"]["max"] = json!(max);
+                }
             }
             "energy_shield" => {
                 filters["equipment_filters"]["filters"]["es"]["min"] = json!(value);
+                if let Some(max) = filter.max {
+                    filters["equipment_filters"]["filters"]["es"]["max"] = json!(max);
+                }
             }
             _ => {}
         }
@@ -990,7 +1019,7 @@ fn applied_price_filters(
 fn filter_is_searchable(filter: &ActivePriceFilter, stats: &[TradeStatEntry]) -> bool {
     match filter.kind.as_str() {
         "item_level" | "quality" | "required_level" | "armour" | "evasion" | "energy_shield" => {
-            filter.value.is_some()
+            filter.value.is_some() || filter.min.is_some()
         }
         "explicit" => matching_trade_stat(filter, stats).is_some(),
         _ => false,
@@ -1011,8 +1040,11 @@ fn build_stat_filters(
                 "id": stat.id,
             });
 
-            if let Some(value) = filter.value {
-                stat_filter["value"]["min"] = json!(value);
+            if let Some(min) = filter.min.or(filter.value) {
+                stat_filter["value"]["min"] = json!(min);
+            }
+            if let Some(max) = filter.max {
+                stat_filter["value"]["max"] = json!(max);
             }
 
             Some(stat_filter)
@@ -1843,6 +1875,7 @@ mod tests {
                 label: "Item Level: 83".to_string(),
                 value: Some(83.0),
                 template: "item_level".to_string(),
+                ..Default::default()
             }],
             &[],
         );
@@ -1903,6 +1936,7 @@ mod tests {
             label: "64% increased Armour".to_string(),
             value: Some(64.0),
             template: spec_template("64% increased Armour"),
+            ..Default::default()
         };
         let stats = vec![TradeStatEntry {
             id: "explicit.stat_1062208444".to_string(),
@@ -1918,6 +1952,51 @@ mod tests {
         assert_eq!(
             request["query"]["stats"][0]["filters"][0]["value"]["min"],
             64.0
+        );
+    }
+
+    #[test]
+    fn tier_band_filters_send_min_and_max_to_trade_query() {
+        let item = Item {
+            name: "Test Talisman".to_string(),
+            rarity: "Rare".to_string(),
+            family: "weapon".to_string(),
+            item_class: Some("Talismans".to_string()),
+            base_type: Some("Maji Talisman".to_string()),
+            item_level: Some(81),
+            property_lines: Vec::new(),
+            explicit_mods: vec!["Adds 30 to 40 Physical Damage".to_string()],
+            sockets: None,
+            spirit: None,
+            hazards: Vec::new(),
+            trade_url: None,
+            raw_text: String::new(),
+        };
+        let filter = crate::ActivePriceFilter {
+            kind: "explicit".to_string(),
+            label: "Adds 30 to 40 Physical Damage".to_string(),
+            value: Some(30.0),
+            min: Some(26.0),
+            max: Some(39.0),
+            tier: Some("T1".to_string()),
+            tier_name: Some("Flaring".to_string()),
+            template: spec_template("Adds 30 to 40 Physical Damage"),
+            ..Default::default()
+        };
+        let stats = vec![TradeStatEntry {
+            id: "explicit.stat_1940865751".to_string(),
+            template: spec_template("Adds # to # Physical Damage"),
+        }];
+
+        let request = build_trade_request(&item, "equivalent", &[filter], &stats);
+
+        assert_eq!(
+            request["query"]["stats"][0]["filters"][0]["value"]["min"],
+            26.0
+        );
+        assert_eq!(
+            request["query"]["stats"][0]["filters"][0]["value"]["max"],
+            39.0
         );
     }
 
@@ -1977,12 +2056,14 @@ mod tests {
             label: "30% increased Movement Speed".to_string(),
             value: Some(30.0),
             template: spec_template("30% increased Movement Speed"),
+            ..Default::default()
         };
         let filter_b = crate::ActivePriceFilter {
             kind: "explicit".to_string(),
             label: "+36 to maximum Life".to_string(),
             value: Some(36.0),
             template: spec_template("+36 to maximum Life"),
+            ..Default::default()
         };
 
         let first = price_check_cache_key(

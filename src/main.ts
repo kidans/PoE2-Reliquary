@@ -1,9 +1,32 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import {
+  PRICE_PROFILES,
+  activeFilterSignature,
+  activePriceFiltersForSelection,
+  appliedSpecKeySet,
+  cleanTradeMarkup,
+  filteredListings,
+  isItemValueModifier,
+  itemProfile,
+  itemSpecs,
+  listingMatchesSelectedPriceOption,
+  priceProfileLabel,
+  profileSpecKeySet,
+  specTemplate,
+  type CurrencyMeta,
+  type ItemSpec,
+  type Poe2DbDataSnapshot,
+  type PriceCheck,
+  type PriceFilter,
+  type PriceListing,
+  type PriceProfileId,
+  type ScannedItem,
+  type TradeRateLimit,
+} from "./evaluate";
 import "./styles.css";
 
 type TabId = "scan" | "trade" | "data" | "settings";
-type PriceProfileId = "quick" | "exact" | "broad" | "base";
 
 type AppState = {
   scanned_item: ScannedItem | null;
@@ -13,6 +36,7 @@ type AppState = {
   league_catalog: LeagueCatalogEntry[];
   trade_leagues: TradeLeague[];
   data_leagues: DataLeague[];
+  source_truth_snapshot: Poe2DbDataSnapshot | null;
   price_check: PriceCheck | null;
   exchange_tab: ExchangeTabState;
   price_currency: string;
@@ -20,112 +44,10 @@ type AppState = {
   debug_log_path: string | null;
 };
 
-type ScannedItem = {
-  name: string;
-  rarity: string;
-  family: string;
-  item_class: string | null;
-  base_type: string | null;
-  item_level: number | null;
-  property_lines: string[];
-  explicit_mods: string[];
-  sockets: number | null;
-  spirit: number | null;
-  hazards: string[];
-  trade_url: string | null;
-  raw_text: string;
-};
-
-type PriceCheck = {
-  status: string;
-  matched: number;
-  source_url: string | null;
-  selected_currency: string;
-  selected_price_option: string;
-  rate_source: string | null;
-  rate_limit: TradeRateLimit | null;
-  currencies: CurrencyMeta[];
-  filters: PriceFilter[];
-  requested_filters: ActivePriceFilter[];
-  applied_filters: ActivePriceFilter[];
-  listings: PriceListing[];
-  error: string | null;
-};
-
-type TradeRateLimit = {
-  policy: string | null;
-  scope: string;
-  current_hits: number | null;
-  limit: number | null;
-  interval_seconds: number | null;
-  usage_ratio: number;
-  active_timeout_seconds: number | null;
-  retry_after_seconds: number | null;
-};
-
-type CurrencyMeta = {
-  id: string;
-  name: string;
-  icon_url: string | null;
-};
-
-type PriceFilter = {
-  label: string;
-  source: string;
-  enabled: boolean;
-  value: number | null;
-  min: number | null;
-  max: number | null;
-  tier: string | null;
-};
-
-type ActivePriceFilter = {
-  kind: ItemSpec["kind"];
-  label: string;
-  value: number | null;
-  template: string;
-};
-
-type PriceListing = {
-  price: string;
-  amount: number | null;
-  currency: string | null;
-  currency_icon_url: string | null;
-  normalized_price: string | null;
-  normalized_amount: number | null;
-  normalized_currency: string | null;
-  normalized_currency_icon_url: string | null;
-  item_level: number | null;
-  listed: string;
-  source_url: string;
-  seller: string | null;
-  online: boolean;
-  required_level: number | null;
-  quality: number | null;
-  armour: number | null;
-  evasion: number | null;
-  energy_shield: number | null;
-  explicit_mods: string[];
-  preview_name: string | null;
-  preview_base_type: string | null;
-  preview_rarity: string | null;
-  preview_item_class: string | null;
-  preview_icon_url: string | null;
-  preview_property_lines: string[];
-  preview_description: string | null;
-};
 
 type ListingPreviewRequest = {
   listing: PriceListing;
   family: string | null;
-};
-
-type ItemProfile = {
-  requiredLevel: number | null;
-  quality: number | null;
-  evasion: number | null;
-  energyShield: number | null;
-  armour: number | null;
 };
 
 type ValueLineEntry = {
@@ -143,14 +65,6 @@ type PriceEstimate = {
   currencyId: string;
   currencyName: string;
   iconUrl: string | null;
-};
-
-type ItemSpec = {
-  key: string;
-  label: string;
-  kind: "item_level" | "required_level" | "quality" | "armour" | "evasion" | "energy_shield" | "sockets" | "spirit" | "explicit";
-  value: number | null;
-  template: string;
 };
 
 type TradeWhisper = {
@@ -207,6 +121,23 @@ type DataLeague = {
   source: string;
   trade_enabled: boolean;
   note: string | null;
+};
+
+type NormalizedItemFamily = {
+  family: string;
+  poe2db_section: string;
+  item_classes: string[];
+  notes: string;
+};
+
+type Poe2DbAdapterStatus = {
+  state: string;
+  message: string;
+  fresh: boolean;
+  cache_age_seconds: number | null;
+  pages_cached: number;
+  pages_failed: number;
+  failed_pages: string[];
 };
 
 type ExchangeCategory = {
@@ -272,6 +203,7 @@ const state: AppState = {
   league_catalog: [],
   trade_leagues: [],
   data_leagues: [],
+  source_truth_snapshot: null,
   price_check: null,
   exchange_tab: fallbackExchangeTab(),
   price_currency: "exalted",
@@ -322,29 +254,6 @@ const CURRENCY_ICON_ALIASES: Record<string, string> = {
   alch: "alchemy",
   aug: "augment",
 };
-
-const PRICE_PROFILES: Array<{ id: PriceProfileId; label: string; title: string }> = [
-  {
-    id: "quick",
-    label: "Quick Price",
-    title: "Automatically selects the highest-impact searchable modifiers.",
-  },
-  {
-    id: "exact",
-    label: "Exact Match",
-    title: "Matches every searchable value exactly. This may return few results.",
-  },
-  {
-    id: "broad",
-    label: "Broad (-10%)",
-    title: "Uses the same searchable values with relaxed numeric minimums.",
-  },
-  {
-    id: "base",
-    label: "Crafting Base",
-    title: "Prices the base using item level and base-defining implicits/special mods.",
-  },
-];
 
 root.innerHTML = isListingPreviewWindow
   ? `
@@ -651,7 +560,7 @@ function renderScanPanel(item: ScannedItem | null, priceCheck: PriceCheck | null
   }
 
   const profile = itemProfile(item);
-  const specs = itemSpecs(item, profile);
+  const specs = itemSpecs(item, profile, state.source_truth_snapshot);
   const activeSpecCount = specs.filter((spec) => selectedSpecKeys.has(spec.key)).length;
   const hazardMarkup = item.hazards.length
     ? `
@@ -748,10 +657,6 @@ function renderPriceProfileControls() {
       ).join("")}
     </div>
   `;
-}
-
-function priceProfileLabel(profileId: PriceProfileId) {
-  return PRICE_PROFILES.find((profile) => profile.id === profileId)?.label ?? profileId;
 }
 
 function renderValueLine(spec: ItemSpec) {
@@ -967,6 +872,9 @@ function renderModifierGroup(
 function renderSpecButton(spec: ItemSpec, className: string) {
   const selected = isSpecSelected(spec);
   const applied = isSpecApplied(spec);
+  const tier = spec.tier_match
+    ? `<small class="tier-badge">${escapeHtml(`${spec.tier_match.tier} ${spec.tier_match.tier_name}`)}</small>`
+    : "";
   return `
     <button
       class="${className} spec-chip ${selected ? "is-active" : ""} ${applied ? "is-applied" : selected ? "is-pending" : ""}"
@@ -974,7 +882,7 @@ function renderSpecButton(spec: ItemSpec, className: string) {
       type="button"
       title="Rebuild trade search with this specification"
     >
-      ${escapeHtml(spec.label)}
+      <span>${escapeHtml(spec.label)}</span>${tier}
     </button>
   `;
 }
@@ -1026,12 +934,6 @@ function splitModifierSpecs(specs: ItemSpec[]): ModifierGroups {
   });
 
   return groups;
-}
-
-function isItemValueModifier(label: string) {
-  return /^(quality|armour|evasion rating|energy shield|physical damage|critical hit chance|attacks per second|dps):/i.test(
-    cleanTradeMarkup(label),
-  );
 }
 
 function splitSpecLabel(label: string) {
@@ -1228,7 +1130,7 @@ function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedIt
     return renderExchangeModePanel(priceCheck, item);
   }
 
-  const visibleListings = filteredListings(priceCheck, item);
+  const visibleListings = filteredListings(priceCheck, item, selectedSpecKeys, state.source_truth_snapshot);
   const estimate = estimatePriceFromListings(priceCheck, visibleListings);
   const selectedCurrency = currencyById(priceCheck, priceCheck.selected_currency);
   const filters = priceCheck.filters.length
@@ -1242,7 +1144,7 @@ function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedIt
 
   return `
     <section class="price-check">
-      <div class="price-check-meta">
+        <div class="price-check-meta">
         <div class="estimate-card">
           <div>
             <p class="section-label">Estimated Value</p>
@@ -1256,6 +1158,15 @@ function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedIt
               <span class="reliability ${estimate.reliabilityClass}">Reliability: ${escapeHtml(estimate.reliability)}</span>
             </p>
           </div>
+          <button
+            class="stash-note-button"
+            data-copy-stash-note="${escapeAttribute(stashNoteFromEstimate(estimate))}"
+            type="button"
+            ${estimate.amount === null ? "disabled" : ""}
+            title="Copy a stash pricing note from the median estimate"
+          >
+            Copy note
+          </button>
         </div>
 
         <div class="result-source-row">
@@ -1865,6 +1776,14 @@ function formatTimestamp(epochMs: number) {
 }
 
 function renderDataPanel() {
+  const sourceTruth = state.source_truth_snapshot;
+  const sourceStatus = sourceTruth?.status.message ?? "Waiting for PoE2DB source-truth cache...";
+  const sourceFreshness = sourceTruth
+    ? `${sourceTruth.mod_pages.reduce((count, page) => count + page.tiers.length, 0)} tiers · ${sourceTruth.families.length} families · ${formatRelativeAge(sourceTruth.fetched_at_epoch_ms)}`
+    : "No cached snapshot loaded yet.";
+  const failedPages = sourceTruth?.status.failed_pages.length
+    ? `<small>${escapeHtml(sourceTruth.status.failed_pages.slice(0, 3).join(" | "))}</small>`
+    : `<small>${escapeHtml(sourceTruth?.cache_path ?? "Cache path appears once the adapter writes its snapshot.")}</small>`;
   const catalogRows = state.league_catalog.length
     ? state.league_catalog
         .map((league) => renderLeagueCatalogRow(league))
@@ -1883,7 +1802,8 @@ function renderDataPanel() {
       <div><span>Waystone Hazard</span><strong>No Regen</strong><small>Unsafe for sustain-dependent builds.</small></div>
       <div><span>Trade Hotkey</span><strong>Alt+D</strong><small>Opens latest generated trade URL.</small></div>
       <div><span>Rates Source</span><strong>poe.ninja</strong><small>Planned CLI feed for exchange-rate normalization.</small></div>
-      <div><span>Item Source</span><strong>PoE2DB</strong><small>Planned CLI feed for item descriptions and metadata.</small></div>
+      <div><span>PoE2DB Adapter</span><strong>${escapeHtml(sourceTruth?.status.state ?? "warming")}</strong><small>${escapeHtml(sourceStatus)}</small></div>
+      <div><span>Source Freshness</span><strong>${escapeHtml(sourceFreshness)}</strong>${failedPages}</div>
       <div><span>Debug Log</span><strong>Trade diagnostics</strong><small>${escapeHtml(state.debug_log_path ?? "Log path loading...")}</small></div>
       <div><span>League Catalog</span><strong>${escapeHtml(state.trade_league)}</strong><ul class="feed-list">${catalogRows}</ul></div>
       <div><span>PoE2DB Data Feed</span><strong>Early league/item signal</strong><ul class="feed-list">${dataLeagueRows}</ul></div>
@@ -1999,223 +1919,37 @@ function formatCoordinates(coordinates: TabCoordinates | null) {
   return `Tab ${coordinates.tab_name}: left ${coordinates.left}, top ${coordinates.top}`;
 }
 
-function itemProfile(item: ScannedItem): ItemProfile {
-  return {
-    requiredLevel: parseRawNumber(item.raw_text, /(?:^|\n)Requires:.*?\bLevel\s+(\d+)/i),
-    quality: parseRawNumber(item.raw_text, /(?:^|\n)Quality:\s*\+?(\d+)%/i),
-    evasion: parseRawNumber(item.raw_text, /(?:^|\n)Evasion Rating:\s*(\d+)/i),
-    energyShield: parseRawNumber(item.raw_text, /(?:^|\n)Energy Shield:\s*(\d+)/i),
-    armour: parseRawNumber(item.raw_text, /(?:^|\n)Armour:\s*(\d+)/i),
-  };
-}
-
-function itemSpecs(item: ScannedItem, profile = itemProfile(item)): ItemSpec[] {
-  const specs: ItemSpec[] = [];
-
-  addNumericSpec(specs, "item_level", "Item Level", item.item_level);
-  addNumericSpec(specs, "required_level", "Requires Level", profile.requiredLevel);
-  addNumericSpec(specs, "armour", "Armour", profile.armour);
-  addNumericSpec(specs, "evasion", "Evasion Rating", profile.evasion);
-  addNumericSpec(specs, "energy_shield", "Energy Shield", profile.energyShield);
-  addNumericSpec(specs, "quality", "Quality", profile.quality, "%");
-  addNumericSpec(specs, "sockets", "Sockets", item.sockets);
-  addNumericSpec(specs, "spirit", "Spirit", item.spirit);
-
-  item.explicit_mods.forEach((modifier, index) => {
-    const label = cleanTradeMarkup(modifier);
-    specs.push({
-      key: `explicit:${index}:${specTemplate(label)}`,
-      label,
-      kind: "explicit",
-      value: firstNumber(label),
-      template: specTemplate(label),
-    });
-  });
-
-  return specs;
-}
-
-function addNumericSpec(
-  specs: ItemSpec[],
-  kind: ItemSpec["kind"],
-  label: string,
-  value: number | null,
-  suffix = "",
-) {
-  if (value === null) {
-    return;
-  }
-
-  specs.push({
-    key: `${kind}:${value}`,
-    label: `${label}: ${value}${suffix}`,
-    kind,
-    value,
-    template: kind,
-  });
-}
-
 function applyProfileSelection(item: ScannedItem, profile: PriceProfileId = selectedPriceProfile) {
-  selectedSpecKeys = profileSpecKeySet(item, profile);
+  selectedSpecKeys = profileSpecKeySet(item, profile, state.source_truth_snapshot);
 }
 
-function profileSpecKeySet(item: ScannedItem, profile: PriceProfileId) {
-  const specs = itemSpecs(item);
-  const keys = new Set<string>();
-
-  profileSpecs(item, profile, specs).forEach((spec) => {
-    keys.add(spec.key);
-  });
-
-  return keys;
-}
-
-function profileSpecs(item: ScannedItem, profile: PriceProfileId, specs = itemSpecs(item)) {
-  const searchable = searchableProfileSpecs(specs);
-
-  switch (profile) {
-    case "exact":
-      return searchable;
-    case "broad":
-      return searchable;
-    case "base":
-      return searchable.filter((spec) => isBaseProfileSpec(spec));
-    case "quick":
-    default:
-      return quickPriceSpecs(searchable);
-  }
-}
-
-function searchableProfileSpecs(specs: ItemSpec[]) {
-  return specs.filter((spec) => {
-    if (spec.kind === "sockets" || spec.kind === "spirit" || spec.kind === "required_level") {
-      return false;
-    }
-
-    if (spec.kind !== "explicit") {
-      return spec.value !== null;
-    }
-
-    if (isItemValueModifier(spec.label)) {
-      return false;
-    }
-
-    return true;
-  });
-}
-
-function quickPriceSpecs(specs: ItemSpec[]) {
-  return specs
-    .filter((spec) => spec.kind === "explicit" && isQuickPriceCandidate(spec))
-    .map((spec) => ({ spec, score: priceImpactScore(spec) }))
-    .filter((entry) => entry.score > 0)
-    .sort((left, right) => right.score - left.score || left.spec.label.localeCompare(right.spec.label))
-    .slice(0, 3)
-    .map((entry) => entry.spec);
-}
-
-function isQuickPriceCandidate(spec: ItemSpec) {
-  const label = spec.label.toLowerCase();
-  return !(
-    label.includes("(implicit)") ||
-    label.includes("(rune)") ||
-    label.includes("(desecrated)") ||
-    label.includes("(corrupted)") ||
-    label.includes("(enchant)") ||
-    label.includes("(fractured)")
-  );
-}
-
-function isBaseProfileSpec(spec: ItemSpec) {
-  if (spec.kind === "item_level") {
-    return true;
+function formatRelativeAge(epochMs: number) {
+  if (!Number.isFinite(epochMs) || epochMs <= 0) {
+    return "unknown age";
   }
 
-  if (spec.kind !== "explicit") {
-    return false;
+  const ageSeconds = Math.max(0, Math.floor((Date.now() - epochMs) / 1000));
+  if (ageSeconds < 60) {
+    return `${ageSeconds}s old`;
   }
-
-  const label = spec.label.toLowerCase();
-  return (
-    label.includes("(implicit)") ||
-    label.includes("(fractured)") ||
-    label.includes("(desecrated)") ||
-    label.includes("(corrupted)")
-  );
-}
-
-function priceImpactScore(spec: ItemSpec) {
-  const label = spec.label.toLowerCase();
-  const value = Math.abs(spec.value ?? 0);
-  let score = Math.min(value, 120);
-
-  if (/level of all|level of .* skills|gem level/.test(label)) {
-    score += 320;
+  const ageMinutes = Math.floor(ageSeconds / 60);
+  if (ageMinutes < 60) {
+    return `${ageMinutes}m old`;
   }
-  if (/movement speed|attack speed|cast speed|projectile speed/.test(label)) {
-    score += 260;
-  }
-  if (/gain .* as extra|power charge|frenzy charge|endurance charge|maximum power charges|maximum rage/.test(label)) {
-    score += 250;
-  }
-  if (/physical damage|elemental damage|spell damage|attack damage|damage with/.test(label)) {
-    score += 220;
-  }
-  if (/maximum life|maximum mana|spirit|strength|dexterity|intelligence|all attributes/.test(label)) {
-    score += 180;
-  }
-  if (/resistance|chaos resistance|rarity of items/.test(label)) {
-    score += 150;
-  }
-  if (/stun threshold|accuracy|light radius|life regeneration/.test(label)) {
-    score += 70;
-  }
-
-  return score;
+  return `${Math.floor(ageMinutes / 60)}h old`;
 }
 
 function activePriceFiltersForCurrentSelection() {
-  if (!state.scanned_item) {
-    return [];
-  }
-
-  const specs = itemSpecs(state.scanned_item).filter((spec) => selectedSpecKeys.has(spec.key));
-  return specs.map((spec) => ({
-    kind: spec.kind,
-    label: spec.label,
-    value: valueForProfileFilter(spec),
-    template: spec.template,
-  }));
-}
-
-function activeFilterSignature(filters: ActivePriceFilter[]) {
-  return filters
-    .map((filter) =>
-      [
-        filter.kind,
-        filter.template,
-        filter.label,
-        filter.value === null ? "" : Number(filter.value).toFixed(3),
-      ].join("|"),
-    )
-    .sort()
-    .join(";");
+  return activePriceFiltersForSelection(
+    state.scanned_item,
+    selectedSpecKeys,
+    selectedPriceProfile,
+    state.source_truth_snapshot,
+  );
 }
 
 function currentRequestedFilterSignature() {
   return activeFilterSignature(activePriceFiltersForCurrentSelection());
-}
-
-function valueForProfileFilter(spec: ItemSpec) {
-  if (selectedPriceProfile !== "broad" || spec.value === null) {
-    return spec.value;
-  }
-
-  if (spec.kind === "item_level" || spec.kind === "required_level") {
-    return spec.value;
-  }
-
-  return Math.floor(spec.value * 0.9 * 10) / 10;
 }
 
 function isSpecApplied(
@@ -2227,126 +1961,11 @@ function isSpecApplied(
     return false;
   }
 
-  return appliedSpecKeySet(item, priceCheck).has(spec.key);
+  return appliedSpecKeySet(item, priceCheck, state.source_truth_snapshot).has(spec.key);
 }
 
 function isSpecSelected(spec: ItemSpec) {
   return selectedSpecKeys.has(spec.key);
-}
-
-function appliedSpecKeySet(item: ScannedItem, priceCheck: PriceCheck) {
-  const applied = new Set<string>();
-  const filters = priceCheck.applied_filters ?? [];
-  if (!filters.length) {
-    return applied;
-  }
-
-  const specs = itemSpecs(item);
-  filters.forEach((filter) => {
-    const spec = specs.find((candidate) => activeFilterMatchesSpec(filter, candidate));
-    if (spec) {
-      applied.add(spec.key);
-    }
-  });
-
-  return applied;
-}
-
-function activeFilterMatchesSpec(filter: ActivePriceFilter, spec: ItemSpec) {
-  if (filter.kind !== spec.kind) {
-    return false;
-  }
-
-  if (filter.kind === "explicit") {
-    return templatesCompatible(filter.template, spec.template);
-  }
-
-  if (filter.label === spec.label) {
-    return true;
-  }
-
-  if (filter.value === null || spec.value === null) {
-    return filter.label === spec.label;
-  }
-
-  return Math.round(filter.value * 1000) === Math.round(spec.value * 1000);
-}
-
-function templatesCompatible(left: string, right: string) {
-  return left === right || left.includes(right) || right.includes(left);
-}
-
-function filteredListings(priceCheck: PriceCheck, item?: ScannedItem) {
-  const specs = item ? itemSpecs(item) : [];
-  const selectedSpecs = specs.filter((spec) => selectedSpecKeys.has(spec.key));
-
-  return priceCheck.listings.filter((listing) => {
-    if (!listingMatchesSelectedPriceOption(priceCheck, listing)) {
-      return false;
-    }
-
-    return selectedSpecs.every((spec) => listingMatchesSpec(listing, spec));
-  });
-}
-
-function listingMatchesSelectedPriceOption(priceCheck: PriceCheck, listing: PriceListing) {
-  switch (priceCheck.selected_price_option) {
-    case "equivalent":
-      return listing.amount !== null && !!listing.currency;
-    case "exalted_divine":
-      return listing.currency === "exalted" || listing.currency === "divine";
-    default:
-      return listing.currency === priceCheck.selected_price_option;
-  }
-}
-
-function listingMatchesSpec(listing: PriceListing, spec: ItemSpec) {
-  switch (spec.kind) {
-    case "item_level":
-      return numericAtLeast(listing.item_level, spec.value);
-    case "required_level":
-      return numericEquals(listing.required_level, spec.value);
-    case "quality":
-      return numericEquals(listing.quality, spec.value);
-    case "armour":
-      return numericAtLeast(listing.armour, spec.value);
-    case "evasion":
-      return numericAtLeast(listing.evasion, spec.value);
-    case "energy_shield":
-      return numericAtLeast(listing.energy_shield, spec.value);
-    case "sockets":
-    case "spirit":
-      return true;
-    case "explicit":
-      return listing.explicit_mods.some((modifier) => specTemplate(cleanTradeMarkup(modifier)) === spec.template);
-  }
-}
-
-function numericAtLeast(actual: number | null, expected: number | null) {
-  return actual !== null && expected !== null && actual >= expected;
-}
-
-function numericEquals(actual: number | null, expected: number | null) {
-  return actual !== null && expected !== null && Math.round(actual) === Math.round(expected);
-}
-
-function cleanTradeMarkup(value: string) {
-  return value.replace(/\[([^|\]]+\|)?([^\]]+)\]/g, "$2").replace(/\s+/g, " ").trim();
-}
-
-function specTemplate(value: string) {
-  return cleanTradeMarkup(value)
-    .toLowerCase()
-    .replace(/\b(rune|implicit|desecrated|corrupted|fractured|enchant|augmented)\b/g, " ")
-    .replace(/\d+(?:\.\d+)?/g, "#")
-    .replace(/[^a-z#%]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function firstNumber(value: string) {
-  const match = value.match(/-?\d+(?:\.\d+)?/);
-  return match ? Number(match[0]) : null;
 }
 
 function estimatePriceFromListings(priceCheck: PriceCheck, listings: PriceListing[]): PriceEstimate {
@@ -2392,6 +2011,24 @@ function estimatePriceFromListings(priceCheck: PriceCheck, listings: PriceListin
     currencyName: currency.name,
     iconUrl: currency.icon_url,
   };
+}
+
+function stashNoteFromEstimate(estimate: PriceEstimate) {
+  if (estimate.amount === null) {
+    return "";
+  }
+
+  return `~price ${formatStashPriceAmount(estimate.amount)} ${estimate.currencyId}`;
+}
+
+function formatStashPriceAmount(amount: number) {
+  if (amount >= 100) {
+    return String(Math.round(amount));
+  }
+  if (amount >= 10) {
+    return String(Math.round(amount * 10) / 10);
+  }
+  return String(Math.round(amount * 100) / 100);
 }
 
 function emptyListingMessage(priceCheck: PriceCheck, currency: CurrencyMeta) {
@@ -2441,16 +2078,6 @@ function scheduleActivePriceFilterPush() {
   activeFilterPushTimer = window.setTimeout(() => {
     void pushActivePriceFilters();
   }, 180);
-}
-
-function parseRawNumber(rawText: string, regex: RegExp) {
-  const match = rawText.match(regex);
-  if (!match?.[1]) {
-    return null;
-  }
-
-  const parsed = Number(match[1]);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function estimatePrice(priceCheck: PriceCheck): PriceEstimate {
@@ -2979,6 +2606,7 @@ if (!isListingPreviewWindow && leagueElement) {
     const exchangeRefreshButton = target.closest<HTMLButtonElement>("[data-refresh-exchange]");
     const exchangeCopyButton = target.closest<HTMLButtonElement>("[data-copy-exchange]");
     const exchangeQuoteButton = target.closest<HTMLButtonElement>("[data-exchange-quote]");
+    const stashNoteButton = target.closest<HTMLButtonElement>("[data-copy-stash-note]");
     const resetVisualSettingsButton = target.closest<HTMLButtonElement>("[data-reset-visual-settings]");
 
     if (resetVisualSettingsButton) {
@@ -3020,6 +2648,14 @@ if (!isListingPreviewWindow && leagueElement) {
         .writeText(exchangeCopyButton.dataset.copyExchange)
         .then(() => pushStatus("exchange", `Copied ${exchangeCopyButton.dataset.copyExchange}`))
         .catch((error) => pushStatus("exchange", String(error)));
+      return;
+    }
+
+    if (stashNoteButton?.dataset.copyStashNote) {
+      void navigator.clipboard
+        .writeText(stashNoteButton.dataset.copyStashNote)
+        .then(() => pushStatus("stash", `Copied stash note ${stashNoteButton.dataset.copyStashNote}`))
+        .catch((error) => pushStatus("stash", String(error)));
       return;
     }
 
@@ -3260,6 +2896,7 @@ if (!isListingPreviewWindow && leagueElement) {
 
   void listen<ScannedItem>("scan://item-updated", (event) => {
     loadingMoreMarketplaceResults = false;
+    compactMode = false;
     void hideListingPreview();
     state.scanned_item = event.payload;
     applyProfileSelection(event.payload);
@@ -3347,6 +2984,14 @@ if (!isListingPreviewWindow && leagueElement) {
     render();
   });
 
+  void listen<Poe2DbDataSnapshot>("scan://source-truth-updated", (event) => {
+    state.source_truth_snapshot = event.payload;
+    if (state.scanned_item && !isExchangeClipboardItem(state.scanned_item) && selectedSpecKeys.size) {
+      scheduleActivePriceFilterPush();
+    }
+    render();
+  });
+
   void listen<string>("scan://trade-league-updated", (event) => {
     state.trade_league = event.payload;
     render();
@@ -3369,6 +3014,7 @@ if (!isListingPreviewWindow && leagueElement) {
       state.league_catalog = initialState.league_catalog || [];
       state.trade_leagues = initialState.trade_leagues || [];
       state.data_leagues = initialState.data_leagues || [];
+      state.source_truth_snapshot = initialState.source_truth_snapshot || null;
       state.price_check = normalizePriceCheck(initialState.price_check);
       state.exchange_tab = normalizeExchangeTab(initialState.exchange_tab);
       state.price_currency = initialState.price_currency || state.price_currency;

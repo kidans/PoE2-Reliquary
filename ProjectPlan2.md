@@ -264,6 +264,50 @@ Logged on May 21, 2026 before starting P2.
 
 Phase 2 begins from this checkpoint with the goal of extracting the TypeScript evaluate brain out of `src/main.ts` and adding focused tests.
 
+### Checkpoint: Phase 2 Evaluate Module
+
+Logged on May 21, 2026 after the evaluator extraction.
+
+- Pure scan/evaluate logic now lives in `src/evaluate.ts` instead of being embedded in `src/main.ts`.
+- `main.ts` keeps orchestration, render wiring, local selected-state ownership, and IPC calls.
+- Filter signature generation, profile default selection, active filter construction, applied filter matching, and local listing matching are covered by Vitest tests.
+- Compact line mode snaps to the upper-right of the active monitor, while expanded scan/trade/settings layouts snap to the left evaluation position.
+- PoE2-gated `Ctrl+C` remains armed in compact line mode and forces the overlay back to the scan tab when a copied item arrives.
+- `npm run test`, `npm run build`, and `cargo check` passed for this checkpoint.
+
+Phase 3 can start from a cleaner TypeScript boundary: PoE2DB data can enrich evaluator rules without reaching directly into the overlay shell.
+
+### Checkpoint: Phase 3 PoE2DB Adapter Foundation
+
+Logged on May 21, 2026 after the source-truth cache foundation.
+
+- `source_truth.rs` now exposes a versioned PoE2DB data snapshot instead of only one-off CLI fetches.
+- The snapshot writes to the local Reliquary cache under `%LOCALAPPDATA%\Reliquary\source-truth\poe2db-source-truth-v1.json`.
+- The normalized schema includes item families, PoE2DB league/data entries, modifier tier pages, tier IDs, tier names, required levels, roll bands, tags, weights, and prefix/suffix/unknown affix classification.
+- Missing or failed PoE2DB pages degrade into adapter status instead of invented values.
+- The Data tab now shows PoE2DB adapter state, cache freshness, tier counts, family counts, and the cache path/failure details.
+- A `poe2db-cache` CLI command can refresh or print the source-truth snapshot for debugging.
+- Live smoke test confirmed the adapter can pull and cache the current PoE2DB `Physical_damage` modifier page.
+- `npm run test`, `cargo test`, `npm run build`, and `cargo check` passed for this checkpoint.
+
+Phase 4 can now consume cached PoE2DB tiers for the first required tier-band marketplace behavior.
+
+### Checkpoint: Phase 4/4b Tier-Band Pricing Slice
+
+Logged on May 21, 2026 after the first PoE2DB-backed evaluator pass.
+
+- TypeScript now resolves copied explicit modifiers against cached PoE2DB tier rows when a trusted template and roll band match.
+- Tier-aware active filters carry source, tier, tier name, affix, min, and max metadata to Rust.
+- Exact and Quick Price searches use the matched PoE2DB tier band instead of the copied exact roll value.
+- Broad searches relax one neighboring lower tier when PoE2DB has that tier group, then omit max so higher rolls remain included.
+- Rust official trade request building now respects active filter `min` and `max`, including explicit stat tier bands.
+- Selected modifier chips show PoE2DB tier badges only when the source-truth match is known.
+- Applied highlighting now treats tier metadata as part of the match, so tiered filters do not falsely mark unrelated same-template modifiers as confirmed.
+- Stash note copy appears near the estimated value and uses the median estimate in the selected display currency, not a random first listing.
+- `npm run test`, `npm run build`, and `cargo test` passed after the tier-band and stash-note changes.
+
+Remaining Phase 4 expansion work can deepen item intelligence category-by-category: more PoE2DB modifier pages, more pseudo/stat grouping, and broader item-type-specific parsing rules.
+
 1. Validate the recent instant-click filter fix in-game.
 2. Split scan evaluation helpers out of `src/main.ts` into a TypeScript module.
 3. Add TypeScript tests for filter signatures, listing matching, and profile defaults.

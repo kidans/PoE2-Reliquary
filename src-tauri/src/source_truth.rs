@@ -1,14 +1,23 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
-use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use crate::{DataLeague, LeagueCatalogEntry, TradeLeague};
 
+pub const POE2DB_SCHEMA_VERSION: u16 = 1;
 const POE2DB_HOME_URL: &str = "https://poe2db.tw/us/";
 const POE2DB_LEAGUE_URL: &str = "https://poe2db.tw/us/League";
 const POE_NINJA_INDEX_STATE_URL: &str = "https://poe.ninja/poe2/api/data/index-state";
 const TRADE_API_BASE: &str = "https://www.pathofexile.com/api/trade2";
+const POE2DB_CACHE_FILE: &str = "poe2db-source-truth-v1.json";
+const POE2DB_CACHE_TTL_MS: u64 = 30 * 60 * 1000;
+const DEFAULT_MOD_TIER_SLUGS: &[&str] = &["Physical_damage"];
 
 static POE2DB_LEAGUE_ROW_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
@@ -72,19 +81,20 @@ pub struct ItemFamilyManifestEntry {
     pub notes: &'static str,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Poe2DbModTierPage {
     pub slug: String,
     pub source_url: String,
     pub tiers: Vec<Poe2DbModTier>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Poe2DbModTier {
+    pub id: String,
     pub tier: String,
     pub name: String,
     pub required_level: u16,
-    pub affix: String,
+    pub affix: Option<AffixKind>,
     pub text: String,
     pub template: String,
     pub roll_bands: Vec<RollBand>,
@@ -92,16 +102,55 @@ pub struct Poe2DbModTier {
     pub weights: Vec<TagWeight>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum AffixKind {
+    Prefix,
+    Suffix,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RollBand {
     pub min: f64,
     pub max: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagWeight {
     pub tag: String,
     pub weight: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Poe2DbDataSnapshot {
+    pub schema_version: u16,
+    pub source: String,
+    pub fetched_at_epoch_ms: u64,
+    pub cache_path: Option<String>,
+    pub families: Vec<NormalizedItemFamily>,
+    pub leagues: Vec<DataLeague>,
+    pub mod_pages: Vec<Poe2DbModTierPage>,
+    pub status: Poe2DbAdapterStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NormalizedItemFamily {
+    pub family: String,
+    pub poe2db_section: String,
+    pub item_classes: Vec<String>,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Poe2DbAdapterStatus {
+    pub state: String,
+    pub message: String,
+    pub fresh: bool,
+    pub cache_age_seconds: Option<u64>,
+    pub pages_cached: usize,
+    pub pages_failed: usize,
+    pub failed_pages: Vec<String>,
 }
 
 static ITEM_FAMILY_MANIFEST: &[ItemFamilyManifestEntry] = &[
@@ -261,6 +310,22 @@ pub fn item_family_manifest() -> &'static [ItemFamilyManifestEntry] {
     ITEM_FAMILY_MANIFEST
 }
 
+pub fn normalized_item_family_manifest() -> Vec<NormalizedItemFamily> {
+    ITEM_FAMILY_MANIFEST
+        .iter()
+        .map(|entry| NormalizedItemFamily {
+            family: entry.family.to_string(),
+            poe2db_section: entry.poe2db_section.to_string(),
+            item_classes: entry
+                .item_classes
+                .iter()
+                .map(|item_class| item_class.to_string())
+                .collect(),
+            notes: entry.notes.to_string(),
+        })
+        .collect()
+}
+
 pub fn classify_item_class(item_class: Option<&str>) -> &'static str {
     let normalized = item_class.unwrap_or("").trim().to_ascii_lowercase();
 
@@ -324,6 +389,70 @@ pub async fn fetch_league_catalog() -> Result<Vec<LeagueCatalogEntry>, String> {
         &data_leagues,
         &ninja_leagues,
     ))
+}
+
+pub async fn refresh_poe2db_data_snapshot(force: bool) -> Result<Poe2DbDataSnapshot, String> {
+    let cache_path = poe2db_cache_path();
+
+    if !force {
+        if let Some(snapshot) = load_fresh_poe2db_snapshot(&cache_path)? {
+            return Ok(snapshot);
+        }
+    }
+
+    let mut failed_pages = Vec::new();
+    let leagues = fetch_poe2db_leagues().await.unwrap_or_else(|error| {
+        failed_pages.push(format!("League: {error}"));
+        Vec::new()
+    });
+    let mut mod_pages = Vec::new();
+
+    for slug in DEFAULT_MOD_TIER_SLUGS {
+        match fetch_poe2db_mod_tiers(slug).await {
+            Ok(page) => mod_pages.push(page),
+            Err(error) => failed_pages.push(format!("{slug}: {error}")),
+        }
+    }
+
+    let pages_failed = failed_pages.len();
+    let fetched_at_epoch_ms = now_epoch_ms();
+    let state = if pages_failed == 0 {
+        "ready"
+    } else if mod_pages.is_empty() && leagues.is_empty() {
+        "degraded"
+    } else {
+        "partial"
+    };
+    let message = match state {
+        "ready" => "PoE2DB source-truth cache is fresh.".to_string(),
+        "partial" => {
+            "PoE2DB source-truth cache is partial; missing pages degrade to unknown.".to_string()
+        }
+        _ => "PoE2DB source-truth cache could not refresh; missing data stays unknown.".to_string(),
+    };
+    let pages_cached = mod_pages.len();
+
+    let snapshot = Poe2DbDataSnapshot {
+        schema_version: POE2DB_SCHEMA_VERSION,
+        source: "PoE2DB".to_string(),
+        fetched_at_epoch_ms,
+        cache_path: Some(cache_path.display().to_string()),
+        families: normalized_item_family_manifest(),
+        leagues,
+        mod_pages,
+        status: Poe2DbAdapterStatus {
+            state: state.to_string(),
+            message,
+            fresh: true,
+            cache_age_seconds: Some(0),
+            pages_cached,
+            pages_failed,
+            failed_pages,
+        },
+    };
+
+    write_poe2db_snapshot_cache(&cache_path, &snapshot)?;
+    Ok(snapshot)
 }
 
 pub fn print_cli(args: &[String]) -> Result<(), String> {
@@ -450,7 +579,14 @@ pub fn print_mod_tiers_cli(args: &[String]) -> Result<(), String> {
             .join(", ");
         println!(
             "{} {} lvl {} {} :: {}",
-            tier.tier, tier.name, tier.required_level, tier.affix, tier.text
+            tier.tier,
+            tier.name,
+            tier.required_level,
+            tier.affix
+                .as_ref()
+                .map(|affix| format!("{affix:?}"))
+                .unwrap_or_else(|| "Unknown".to_string()),
+            tier.text
         );
         println!("  template: {}", tier.template);
         if !bands.is_empty() {
@@ -459,6 +595,38 @@ pub fn print_mod_tiers_cli(args: &[String]) -> Result<(), String> {
         if !tier.tags.is_empty() {
             println!("  tags: {}", tier.tags.join(", "));
         }
+    }
+
+    Ok(())
+}
+
+pub fn print_poe2db_snapshot_cli(args: &[String]) -> Result<(), String> {
+    let force = args
+        .iter()
+        .any(|arg| arg == "--force" || arg == "--refresh");
+    let runtime = tokio::runtime::Runtime::new().map_err(|error| error.to_string())?;
+    let snapshot = runtime.block_on(refresh_poe2db_data_snapshot(force))?;
+
+    if args.iter().any(|arg| arg == "--json") {
+        let json = serde_json::to_string_pretty(&snapshot).map_err(|error| error.to_string())?;
+        println!("{json}");
+        return Ok(());
+    }
+
+    println!("Reliquary PoE2DB source-truth cache");
+    println!("  schema: v{}", snapshot.schema_version);
+    println!("  status: {}", snapshot.status.message);
+    println!(
+        "  cached: {} modifier page(s), {} failed",
+        snapshot.status.pages_cached, snapshot.status.pages_failed
+    );
+    println!(
+        "  families: {}, leagues: {}",
+        snapshot.families.len(),
+        snapshot.leagues.len()
+    );
+    if let Some(cache_path) = &snapshot.cache_path {
+        println!("  cache: {cache_path}");
     }
 
     Ok(())
@@ -605,7 +773,7 @@ fn parse_poe2db_mod_tiers(html: &str) -> Vec<Poe2DbModTier> {
         .filter_map(|captures| {
             let name = clean_cell(captures.name("name")?.as_str());
             let required_level = captures.name("level")?.as_str().parse::<u16>().ok()?;
-            let affix = clean_cell(captures.name("affix")?.as_str());
+            let affix = affix_kind(captures.name("affix").map(|value| value.as_str()));
             let modifier_html = captures.name("modifier")?.as_str();
             let weights_html = captures.name("weights")?.as_str();
             let text = modifier_text(modifier_html);
@@ -615,12 +783,18 @@ fn parse_poe2db_mod_tiers(html: &str) -> Vec<Poe2DbModTier> {
                 return None;
             }
 
-            let key = format!("{name}|{required_level}|{affix}|{template}");
+            let affix_key = affix
+                .as_ref()
+                .map(|value| format!("{value:?}"))
+                .unwrap_or_else(|| "unknown".to_string());
+            let key = format!("{name}|{required_level}|{affix_key}|{template}");
             if !seen.insert(key) {
                 return None;
             }
 
+            let id = modifier_tier_id(&name, required_level, affix.as_ref(), &template);
             Some(Poe2DbModTier {
+                id,
                 tier: String::new(),
                 name,
                 required_level,
@@ -649,7 +823,14 @@ fn assign_tier_labels(rows: &mut [Poe2DbModTier]) {
 
     for (index, row) in rows.iter().enumerate() {
         groups
-            .entry(format!("{}|{}", row.affix, row.template))
+            .entry(format!(
+                "{}|{}",
+                row.affix
+                    .as_ref()
+                    .map(|affix| format!("{affix:?}"))
+                    .unwrap_or_else(|| "unknown".to_string()),
+                row.template
+            ))
             .or_default()
             .push(index);
     }
@@ -715,6 +896,33 @@ fn modifier_weights(weights_html: &str) -> Vec<TagWeight> {
         .collect()
 }
 
+fn affix_kind(value: Option<&str>) -> Option<AffixKind> {
+    match value.map(clean_cell).unwrap_or_default().as_str() {
+        "Prefix" => Some(AffixKind::Prefix),
+        "Suffix" => Some(AffixKind::Suffix),
+        "" => None,
+        _ => Some(AffixKind::Unknown),
+    }
+}
+
+fn modifier_tier_id(
+    name: &str,
+    required_level: u16,
+    affix: Option<&AffixKind>,
+    template: &str,
+) -> String {
+    let affix = affix
+        .map(|value| format!("{value:?}").to_ascii_lowercase())
+        .unwrap_or_else(|| "unknown".to_string());
+    format!(
+        "{}:{}:{}:{}",
+        slugify(template),
+        affix,
+        required_level,
+        slugify(name)
+    )
+}
+
 fn poe2db_mod_url(slug_or_url: &str) -> (String, String) {
     let trimmed = slug_or_url.trim();
     let slug = trimmed
@@ -722,6 +930,14 @@ fn poe2db_mod_url(slug_or_url: &str) -> (String, String) {
         .trim_start_matches("http://poe2db.tw/us/")
         .trim_start_matches('/')
         .to_string();
+    let slug = match slug.as_str() {
+        "PhysicalDamage" => "Physical_damage".to_string(),
+        "ChaosDamage" => "Chaos_damage".to_string(),
+        "FireDamage" => "Fire_damage".to_string(),
+        "ColdDamage" => "Cold_damage".to_string(),
+        "LightningDamage" => "Lightning_damage".to_string(),
+        _ => slug,
+    };
     let url = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
         trimmed.to_string()
     } else {
@@ -729,6 +945,64 @@ fn poe2db_mod_url(slug_or_url: &str) -> (String, String) {
     };
 
     (slug, url)
+}
+
+fn load_fresh_poe2db_snapshot(cache_path: &PathBuf) -> Result<Option<Poe2DbDataSnapshot>, String> {
+    if !cache_path.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(cache_path).map_err(|error| error.to_string())?;
+    let mut snapshot: Poe2DbDataSnapshot =
+        serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+
+    if snapshot.schema_version != POE2DB_SCHEMA_VERSION {
+        return Ok(None);
+    }
+
+    let age = now_epoch_ms().saturating_sub(snapshot.fetched_at_epoch_ms);
+    if age > POE2DB_CACHE_TTL_MS {
+        return Ok(None);
+    }
+
+    snapshot.cache_path = Some(cache_path.display().to_string());
+    snapshot.status.fresh = true;
+    snapshot.status.cache_age_seconds = Some(age / 1000);
+    snapshot.status.message = format!(
+        "PoE2DB source-truth cache loaded from disk; age {} min.",
+        age / 1000 / 60
+    );
+    Ok(Some(snapshot))
+}
+
+fn write_poe2db_snapshot_cache(
+    cache_path: &PathBuf,
+    snapshot: &Poe2DbDataSnapshot,
+) -> Result<(), String> {
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let json = serde_json::to_string_pretty(snapshot).map_err(|error| error.to_string())?;
+    fs::write(cache_path, json).map_err(|error| error.to_string())
+}
+
+fn poe2db_cache_path() -> PathBuf {
+    let root = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
+        .unwrap_or_else(std::env::temp_dir);
+
+    root.join("Reliquary")
+        .join("source-truth")
+        .join(POE2DB_CACHE_FILE)
+}
+
+fn now_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn format_number(value: f64) -> String {
@@ -821,7 +1095,13 @@ fn non_empty(value: String) -> Option<String> {
 }
 
 fn data_league_id(source: &str, version: &str, name: &str) -> String {
-    let slug = name
+    let slug = slugify(name);
+
+    format!("{source}:{version}:{slug}")
+}
+
+fn slugify(value: &str) -> String {
+    value
         .to_ascii_lowercase()
         .chars()
         .map(|character| {
@@ -835,9 +1115,7 @@ fn data_league_id(source: &str, version: &str, name: &str) -> String {
         .split('-')
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
-        .join("-");
-
-    format!("{source}:{version}:{slug}")
+        .join("-")
 }
 
 fn build_league_catalog(
@@ -1008,7 +1286,9 @@ struct PoeNinjaLeague {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_item_class, item_family_manifest, parse_poe2db_leagues, parse_poe2db_mod_tiers,
+        classify_item_class, item_family_manifest, normalized_item_family_manifest,
+        parse_poe2db_leagues, parse_poe2db_mod_tiers, AffixKind, Poe2DbAdapterStatus,
+        Poe2DbDataSnapshot, POE2DB_SCHEMA_VERSION,
     };
 
     #[test]
@@ -1068,13 +1348,44 @@ mod tests {
             .expect("Flaring tier parsed");
 
         assert_eq!(flaring.tier, "T1");
+        assert!(flaring.id.contains("physical-damage"));
         assert_eq!(flaring.required_level, 75);
-        assert_eq!(flaring.affix, "Prefix");
+        assert_eq!(flaring.affix, Some(AffixKind::Prefix));
         assert_eq!(flaring.template, "Adds # to # Physical Damage");
         assert_eq!(flaring.roll_bands.len(), 2);
         assert_eq!(flaring.roll_bands[0].min, 26.0);
         assert_eq!(flaring.roll_bands[0].max, 39.0);
         assert!(flaring.tags.iter().any(|tag| tag == "damage"));
         assert!(flaring.weights.iter().any(|weight| weight.tag == "bow"));
+    }
+
+    #[test]
+    fn serializes_versioned_poe2db_snapshot_schema() {
+        let snapshot = Poe2DbDataSnapshot {
+            schema_version: POE2DB_SCHEMA_VERSION,
+            source: "PoE2DB".to_string(),
+            fetched_at_epoch_ms: 123,
+            cache_path: Some("cache.json".to_string()),
+            families: normalized_item_family_manifest(),
+            leagues: Vec::new(),
+            mod_pages: Vec::new(),
+            status: Poe2DbAdapterStatus {
+                state: "ready".to_string(),
+                message: "test".to_string(),
+                fresh: true,
+                cache_age_seconds: Some(0),
+                pages_cached: 0,
+                pages_failed: 0,
+                failed_pages: Vec::new(),
+            },
+        };
+
+        let json = serde_json::to_string(&snapshot).expect("snapshot serializes");
+        let decoded: Poe2DbDataSnapshot =
+            serde_json::from_str(&json).expect("snapshot deserializes");
+
+        assert_eq!(decoded.schema_version, POE2DB_SCHEMA_VERSION);
+        assert!(decoded.families.iter().any(|entry| entry.family == "belt"));
+        assert_eq!(decoded.status.state, "ready");
     }
 }
