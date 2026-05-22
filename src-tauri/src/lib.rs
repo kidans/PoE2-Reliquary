@@ -63,6 +63,7 @@ pub struct CurrentAreaInfo {
     pub area_level: Option<u32>,
     pub area_type: String,
     pub entered_at_epoch_ms: u64,
+    pub act: Option<u32>,
     pub waystone_mod_count: Option<usize>,
     pub waystone_quantity: Option<u32>,
     pub waystone_rarity: Option<u32>,
@@ -964,15 +965,7 @@ pub fn run() {
             spawn_window_attachment_worker(app_handle.clone());
             spawn_client_log_worker(app_handle, state);
 
-            tauri::async_runtime::spawn(async {
-                ensure_world_areas_loaded().await;
-                debug_log::append(
-                    "world-areas.loaded",
-                    serde_json::json!({
-                        "areas": world_areas().len(),
-                    }),
-                );
-            });
+            init_world_areas();
 
             Ok(())
         })
@@ -1661,11 +1654,22 @@ async fn process_log_line(
                 };
 
                 let display_name = internal_id_to_display(&internal_id);
+                let areas = read_world_areas();
+                let area_meta = areas.and_then(|map| map.get(&internal_id));
+                debug_log::append(
+                    "client-log.area-meta-lookup",
+                    serde_json::json!({
+                        "id": internal_id,
+                        "found": area_meta.is_some(),
+                        "has_act": area_meta.and_then(|m| m.act).is_some(),
+                    }),
+                );
                 let area = CurrentAreaInfo {
                     name: display_name,
                     area_level: Some(level),
                     area_type: area_type.to_string(),
                     entered_at_epoch_ms: now_epoch_ms(),
+                    act: area_meta.and_then(|m| m.act),
                     waystone_mod_count: waystone_data.map(|w| w.0),
                     waystone_quantity: waystone_data.and_then(|w| w.1),
                     waystone_rarity: waystone_data.and_then(|w| w.2),
@@ -1681,6 +1685,7 @@ async fn process_log_line(
                         "area_type": area.area_type,
                         "area_level": area.area_level,
                         "boss": area.boss,
+                        "act": area.act,
                     }),
                 );
 
@@ -1717,6 +1722,7 @@ async fn process_log_line(
             area_level: None,
             area_type: area_type.unwrap_or("other").to_string(),
             entered_at_epoch_ms: now_epoch_ms(),
+            act: None,
             waystone_mod_count: None,
             waystone_quantity: None,
             waystone_rarity: None,
@@ -2038,19 +2044,40 @@ static WORLD_AREAS: OnceLock<HashMap<String, AreaMeta>> = OnceLock::new();
 struct AreaMeta {
     biome: Option<String>,
     boss: Option<String>,
+    act: Option<u32>,
 }
 
-fn world_areas() -> &'static HashMap<String, AreaMeta> {
-    WORLD_AREAS.get_or_init(|| {
-        let path = world_areas_cache_path();
-        let default = HashMap::new();
-        if let Ok(data) = std::fs::read_to_string(&path) {
-            if let Some(parsed) = parse_world_areas(&data) {
-                return parsed;
-            }
-        }
-        default
-    })
+fn init_world_areas() {
+    let path = world_areas_cache_path();
+    let data = if path.exists() {
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| parse_world_areas(&text))
+    } else {
+        None
+    };
+    let map = data.unwrap_or_default();
+    debug_log::append(
+        "world-areas.init",
+        serde_json::json!({
+            "path": path.display().to_string(),
+            "exists": path.exists(),
+            "count": map.len(),
+            "has_g1_2": map.contains_key("G1_2"),
+            "has_g1_town": map.contains_key("G1_town"),
+        }),
+    );
+    let _ = WORLD_AREAS.set(map);
+}
+
+fn read_world_areas() -> Option<&'static HashMap<String, AreaMeta>> {
+    WORLD_AREAS.get()
+}
+
+fn area_boss(internal_id: &str) -> Option<String> {
+    read_world_areas()
+        .and_then(|map| map.get(internal_id))
+        .and_then(|m| m.boss.clone())
 }
 
 fn world_areas_cache_path() -> PathBuf {
@@ -2075,35 +2102,40 @@ fn parse_world_areas(data: &str) -> Option<HashMap<String, AreaMeta>> {
             .filter_map(|t| t.as_str().map(String::from))
             .collect();
 
-        if !tags.contains(&"map".to_string()) {
-            continue;
-        }
+        let is_map = tags.contains(&"map".to_string());
 
-        let biome = tags
-            .iter()
-            .find(|t| t.ends_with("_biome"))
-            .map(|t| t.trim_end_matches("_biome").replace('_', " "));
+        let biome = is_map.then(|| {
+            tags.iter()
+                .find(|t| t.ends_with("_biome"))
+                .map(|t| t.trim_end_matches("_biome").replace('_', " "))
+        }).flatten();
 
-        let boss_path = entry
-            .get("bosses")
-            .and_then(|b| {
-                b.as_str()
-                    .map(|s| s.to_string())
-                    .or_else(|| {
+        let boss_path = is_map.then(|| {
+            entry.get("bosses")
+                .and_then(|b| {
+                    b.as_str().map(|s| s.to_string()).or_else(|| {
                         b.as_array()
                             .and_then(|arr| arr.first())
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string())
                     })
-            })
-            .filter(|s| !s.is_empty())
-            .map(|s| extract_boss_name(&s));
+                })
+                .filter(|s| !s.is_empty())
+                .map(|s| extract_boss_name(&s))
+        }).flatten();
+
+        let act = entry
+            .get("act")
+            .and_then(|a| a.as_u64())
+            .filter(|a| *a > 0)
+            .map(|a| a as u32);
 
         map.insert(
             id.clone(),
             AreaMeta {
                 biome: biome.filter(|b| !b.is_empty()),
                 boss: boss_path,
+                act,
             },
         );
     }
@@ -2140,44 +2172,4 @@ fn extract_boss_name(path: &str) -> String {
         return name.to_string();
     }
     result
-}
-
-async fn ensure_world_areas_loaded() {
-    if WORLD_AREAS.get().is_some() {
-        return;
-    }
-
-    let cache_path = world_areas_cache_path();
-    if cache_path.exists() {
-        if let Ok(data) = std::fs::read_to_string(&cache_path) {
-            if let Some(parsed) = parse_world_areas(&data) {
-                let _ = WORLD_AREAS.set(parsed);
-                return;
-            }
-        }
-    }
-
-    let client = reqwest::Client::builder()
-        .user_agent("Reliquary/0.1 world-areas")
-        .build()
-        .ok();
-
-    if let Some(client) = client {
-        let url = "https://repoe-fork.github.io/poe2/world_areas.min.json";
-        if let Ok(resp) = client.get(url).send().await {
-            if let Ok(text) = resp.text().await {
-                if let Some(parsed) = parse_world_areas(&text) {
-                    let _ = std::fs::write(&cache_path, &text);
-                    let _ = WORLD_AREAS.set(parsed);
-                    return;
-                }
-            }
-        }
-    }
-
-    let _ = WORLD_AREAS.set(HashMap::new());
-}
-
-fn area_boss(internal_id: &str) -> Option<String> {
-    world_areas().get(internal_id).and_then(|m| m.boss.clone())
 }
