@@ -378,7 +378,7 @@ function render() {
     "Ctrl+C scans items. Alt+D opens the latest trade search.";
 
   compactTitleElement!.textContent = compactTitleText(state.scanned_item);
-  compactMetaElement!.innerHTML = compactMetaText(lastStatus);
+  compactMetaElement!.textContent = compactMetaText(lastStatus);
 
   const compactStrip = root?.querySelector<HTMLElement>(".compact-strip");
   if (compactStrip) {
@@ -567,11 +567,11 @@ function compactMetaText(status: string) {
     compactRuntimeHandle = window.setInterval(() => {
       const meta = root?.querySelector<HTMLElement>("[data-compact-meta]");
       if (meta && state.current_area?.area_type === "map") {
-        meta.innerHTML = `${stats} \u00B7 ${formatCompactRuntime(state.current_area.entered_at_epoch_ms)}`;
+        meta.textContent = compactMapMetaText(state.current_area);
       }
     }, 1000);
 
-    return `${stats} \u00B7 ${runtimeLabel}`;
+    return stats ? `${stats} \u00B7 ${runtimeLabel}` : runtimeLabel;
   }
 
   if (state.current_area?.area_type === "hideout") {
@@ -587,6 +587,30 @@ function compactMetaText(status: string) {
   }
 
   return status;
+}
+
+function compactMapMetaText(area: CurrentAreaInfo) {
+  const parts: string[] = [];
+
+  if (area.waystone_mod_count) {
+    parts.push(`${area.waystone_mod_count} mods`);
+  }
+  if (area.waystone_quantity != null) {
+    parts.push(`Q:${area.waystone_quantity}%`);
+  }
+  if (area.waystone_rarity != null) {
+    parts.push(`R:${area.waystone_rarity}%`);
+  }
+  if (area.waystone_pack_size != null) {
+    parts.push(`Pack:${area.waystone_pack_size}%`);
+  }
+  if (area.waystone_hazard_count && area.waystone_hazard_count > 0) {
+    parts.push(`\u25B2${area.waystone_hazard_count}`);
+  }
+
+  const stats = parts.join(" \u00B7 ");
+  const runtimeLabel = formatCompactRuntime(area.entered_at_epoch_ms);
+  return stats ? `${stats} \u00B7 ${runtimeLabel}` : runtimeLabel;
 }
 
 function formatCompactRuntime(enteredAtEpochMs: number) {

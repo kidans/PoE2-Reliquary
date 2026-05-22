@@ -70,12 +70,6 @@ pub struct CurrentAreaInfo {
     pub waystone_hazard_count: Option<usize>,
 }
 
-#[derive(Debug, Clone, Default)]
-struct PendingArea {
-    internal_id: String,
-    level: u32,
-}
-
 fn classify_area_kind(internal_id: &str) -> &'static str {
     let id = internal_id.to_ascii_lowercase();
     if id.starts_with("map") || id.starts_with("mapworlds") {
@@ -1547,8 +1541,8 @@ async fn stream_client_log(
     state: SharedAppState,
     client_log_path: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::fs::File;
+    use tokio::io::{AsyncBufReadExt, BufReader};
 
     debug_log::append(
         "client-log.started",
@@ -1558,12 +1552,9 @@ async fn stream_client_log(
         }),
     );
 
-    let generating_re = Regex::new(
-        r#"Generating level (\d+) area "([^"]+)""#,
-    )
-    .expect("valid area generation regex");
+    let generating_re = Regex::new(r#"Generating level (\d+) area "([^"]+)""#)
+        .expect("valid area generation regex");
 
-    let mut pending_area: Option<PendingArea> = None;
     let mut last_size = tokio::fs::metadata(&client_log_path)
         .await
         .map(|m| m.len())
@@ -1594,11 +1585,8 @@ async fn stream_client_log(
                                     "client-log.line",
                                     serde_json::json!({ "c": &content }),
                                 );
-                                process_log_line(
-                                    &content, &generating_re, &mut pending_area,
-                                    &app_handle, &state,
-                                )
-                                .await;
+                                process_log_line(&content, &generating_re, &app_handle, &state)
+                                    .await;
                             }
                             Err(_) => break,
                         }
@@ -1613,7 +1601,6 @@ async fn stream_client_log(
 async fn process_log_line(
     content: &str,
     generating_re: &Regex,
-    pending_area: &mut Option<PendingArea>,
     app_handle: &tauri::AppHandle,
     state: &SharedAppState,
 ) {
@@ -1639,11 +1626,21 @@ async fn process_log_line(
                             })
                         {
                             let mod_count = item.explicit_mods.len();
-                            let quantity = parse_waystone_number(&item.property_lines, "increased Quantity")
-                                .or_else(|| parse_waystone_number_from_text(&item.raw_text, "increased Quantity"));
-                            let rarity = parse_waystone_number_from_text(&item.raw_text, "increased Rarity");
-                            let pack_size = parse_waystone_number(&item.property_lines, "Monster Pack Size")
-                                .or_else(|| parse_waystone_number_from_text(&item.raw_text, "Pack Size"));
+                            let quantity =
+                                parse_waystone_number(&item.property_lines, "increased Quantity")
+                                    .or_else(|| {
+                                        parse_waystone_number_from_text(
+                                            &item.raw_text,
+                                            "increased Quantity",
+                                        )
+                                    });
+                            let rarity =
+                                parse_waystone_number_from_text(&item.raw_text, "increased Rarity");
+                            let pack_size =
+                                parse_waystone_number(&item.property_lines, "Monster Pack Size")
+                                    .or_else(|| {
+                                        parse_waystone_number_from_text(&item.raw_text, "Pack Size")
+                                    });
                             let hazard_count = item.hazards.len();
                             Some((mod_count, quantity, rarity, pack_size, hazard_count))
                         } else {
@@ -1685,11 +1682,27 @@ async fn process_log_line(
     }
 
     if let Some(zone) = zone_from_log_line(content) {
-        let area_type = "other".to_string();
+        let area_type = area_type_from_scene_source(&zone);
+        let mut locked_state = state.lock().await;
+
+        if area_type.is_none() {
+            let matches_current_area = locked_state
+                .current_area
+                .as_ref()
+                .map(|area| display_names_match(&area.name, &zone))
+                .unwrap_or(false);
+
+            if matches_current_area {
+                locked_state.current_zone = zone.clone();
+                let _ = app_handle.emit("scan://zone-updated", zone);
+            }
+            return;
+        }
+
         let area = CurrentAreaInfo {
             name: zone.clone(),
             area_level: None,
-            area_type,
+            area_type: area_type.unwrap_or("other").to_string(),
             entered_at_epoch_ms: now_epoch_ms(),
             waystone_mod_count: None,
             waystone_quantity: None,
@@ -1697,7 +1710,6 @@ async fn process_log_line(
             waystone_pack_size: None,
             waystone_hazard_count: None,
         };
-        let mut locked_state = state.lock().await;
         locked_state.current_zone = zone.clone();
         locked_state.current_area = Some(area.clone());
         let _ = app_handle.emit("scan://zone-updated", zone);
@@ -1718,20 +1730,58 @@ async fn process_log_line(
 fn internal_id_to_display(id: &str) -> String {
     let id = id
         .strip_prefix("Map")
+        .or_else(|| id.strip_prefix("map"))
+        .or_else(|| id.strip_prefix("Hideout"))
+        .or_else(|| id.strip_prefix("hideout"))
         .unwrap_or(id)
-        .strip_prefix("map")
-        .unwrap_or(id);
+        .trim_matches('_');
     let mut result = String::new();
     for (i, ch) in id.chars().enumerate() {
-        if i > 0 && ch.is_uppercase() {
+        if i > 0 && ch.is_uppercase() && !result.ends_with(' ') {
             result.push(' ');
         }
-        result.push(ch);
+        if ch == '_' {
+            if !result.ends_with(' ') {
+                result.push(' ');
+            }
+        } else {
+            result.push(ch);
+        }
     }
+    let result = result.trim().to_string();
     if result.is_empty() {
         return id.to_string();
     }
     result
+}
+
+fn display_names_match(a: &str, b: &str) -> bool {
+    let normalize = |value: &str| {
+        value
+            .chars()
+            .filter(|ch| ch.is_alphanumeric())
+            .flat_map(|ch| ch.to_lowercase())
+            .collect::<String>()
+    };
+    normalize(a) == normalize(b)
+}
+
+fn area_type_from_scene_source(zone: &str) -> Option<&'static str> {
+    let normalized = zone.to_ascii_lowercase();
+    if normalized == "atlas" || normalized == "(null)" {
+        return None;
+    }
+    if normalized.contains("hideout") {
+        return Some("hideout");
+    }
+    if normalized.contains("encampment")
+        || normalized.contains("refuge")
+        || normalized.contains("town")
+        || zone_ends_with(&normalized, &["_town"])
+    {
+        return Some("town");
+    }
+    None
 }
 
 fn client_log_path() -> PathBuf {
@@ -1763,9 +1813,17 @@ fn client_log_path() -> PathBuf {
     }
 
     let documents = if let Ok(up) = env::var("USERPROFILE") {
-        PathBuf::from(up).join("Documents").join("My Games").join("Path of Exile 2").join("Client.txt")
+        PathBuf::from(up)
+            .join("Documents")
+            .join("My Games")
+            .join("Path of Exile 2")
+            .join("Client.txt")
     } else if let Ok(home) = env::var("HOME") {
-        PathBuf::from(home).join("Documents").join("My Games").join("Path of Exile 2").join("Client.txt")
+        PathBuf::from(home)
+            .join("Documents")
+            .join("My Games")
+            .join("Path of Exile 2")
+            .join("Client.txt")
     } else {
         return PathBuf::from("Client.txt");
     };
