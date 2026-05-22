@@ -29,10 +29,23 @@ import "./styles.css";
 
 type TabId = "scan" | "trade" | "data" | "settings";
 
+type CurrentAreaInfo = {
+  name: string;
+  area_level: number | null;
+  area_type: string;
+  entered_at_epoch_ms: number;
+  waystone_mod_count: number | null;
+  waystone_quantity: number | null;
+  waystone_rarity: number | null;
+  waystone_pack_size: number | null;
+  waystone_hazard_count: number | null;
+};
+
 type AppState = {
   scanned_item: ScannedItem | null;
   trade_queue: TradeWhisper[];
   current_zone: string;
+  current_area: CurrentAreaInfo | null;
   trade_league: string;
   league_catalog: LeagueCatalogEntry[];
   trade_leagues: TradeLeague[];
@@ -200,6 +213,7 @@ const state: AppState = {
   scanned_item: null,
   trade_queue: [],
   current_zone: "Unknown",
+  current_area: null,
   trade_league: "Fate of the Vaal",
   league_catalog: [],
   trade_leagues: [],
@@ -290,6 +304,7 @@ root.innerHTML = isListingPreviewWindow
             <span data-compact-title>Reliquary ready</span>
             <strong data-compact-meta>Ctrl+C scan | Alt+D trade</strong>
           </div>
+          <div class="compact-difficulty-bar" aria-hidden="true"></div>
           <button class="chrome-button" data-toggle-compact type="button">Open</button>
         </div>
 
@@ -363,7 +378,22 @@ function render() {
     "Ctrl+C scans items. Alt+D opens the latest trade search.";
 
   compactTitleElement!.textContent = compactTitleText(state.scanned_item);
-  compactMetaElement!.textContent = compactMetaText(lastStatus);
+  compactMetaElement!.innerHTML = compactMetaText(lastStatus);
+
+  const compactStrip = root?.querySelector<HTMLElement>(".compact-strip");
+  if (compactStrip) {
+    compactStrip.classList.toggle("is-mapping", state.current_area?.area_type === "map");
+    compactStrip.classList.toggle("is-hideout", state.current_area?.area_type === "hideout");
+  }
+
+  const difficultyBar = root?.querySelector<HTMLElement>(".compact-difficulty-bar");
+  if (difficultyBar) {
+    const hazardCount = state.current_area?.waystone_hazard_count ?? 0;
+    const modCount = state.current_area?.waystone_mod_count ?? 0;
+    const pct = modCount > 0 ? Math.round((hazardCount / modCount) * 100) : 0;
+    difficultyBar.style.setProperty("--difficulty-pct", `${pct}%`);
+    difficultyBar.classList.toggle("has-hazards", hazardCount > 0);
+  }
 
   if (activeTab === "scan") {
     panelElement!.innerHTML = renderScanPanel(state.scanned_item, state.price_check);
@@ -484,7 +514,23 @@ function renderListingPreviewWindow(preview: ListingPreviewRequest | null) {
   `;
 }
 
+let compactRuntimeHandle = 0;
+
 function compactTitleText(item: ScannedItem | null) {
+  if (state.current_area?.area_type === "map") {
+    const area = state.current_area;
+    const tier = area.area_level ? `L${area.area_level}` : "";
+    return `${tier} ${area.name}`.trim();
+  }
+
+  if (state.current_area?.area_type === "hideout") {
+    return "Trade Mode";
+  }
+
+  if (state.current_area?.area_type === "town") {
+    return state.current_area.name;
+  }
+
   if (!item) {
     return "Reliquary | waiting for item";
   }
@@ -494,11 +540,60 @@ function compactTitleText(item: ScannedItem | null) {
 }
 
 function compactMetaText(status: string) {
+  if (state.current_area?.area_type === "map") {
+    const area = state.current_area;
+    const parts: string[] = [];
+
+    if (area.waystone_mod_count) {
+      parts.push(`${area.waystone_mod_count} mods`);
+    }
+    if (area.waystone_quantity != null) {
+      parts.push(`Q:${area.waystone_quantity}%`);
+    }
+    if (area.waystone_rarity != null) {
+      parts.push(`R:${area.waystone_rarity}%`);
+    }
+    if (area.waystone_pack_size != null) {
+      parts.push(`Pack:${area.waystone_pack_size}%`);
+    }
+    if (area.waystone_hazard_count && area.waystone_hazard_count > 0) {
+      parts.push(`\u25B2${area.waystone_hazard_count}`);
+    }
+
+    const stats = parts.join(" \u00B7 ");
+    const runtimeLabel = formatCompactRuntime(area.entered_at_epoch_ms);
+
+    window.clearInterval(compactRuntimeHandle);
+    compactRuntimeHandle = window.setInterval(() => {
+      const meta = root?.querySelector<HTMLElement>("[data-compact-meta]");
+      if (meta && state.current_area?.area_type === "map") {
+        meta.innerHTML = `${stats} \u00B7 ${formatCompactRuntime(state.current_area.entered_at_epoch_ms)}`;
+      }
+    }, 1000);
+
+    return `${stats} \u00B7 ${runtimeLabel}`;
+  }
+
+  if (state.current_area?.area_type === "hideout") {
+    return "Ctrl+C scan \u00B7 Alt+D trade";
+  }
+
+  if (state.current_area?.area_type === "town") {
+    return "Ctrl+C scan items";
+  }
+
   if (state.scanned_item?.base_type) {
     return `${state.scanned_item.base_type} | Alt+D trade`;
   }
 
   return status;
+}
+
+function formatCompactRuntime(enteredAtEpochMs: number) {
+  const elapsed = Math.max(0, Math.floor((Date.now() - enteredAtEpochMs) / 1000));
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
 function clearListingPreviewHideTimer() {
@@ -3136,6 +3231,11 @@ if (!isListingPreviewWindow && leagueElement) {
     render();
   });
 
+  void listen<CurrentAreaInfo>("scan://area-updated", (event) => {
+    state.current_area = event.payload;
+    render();
+  });
+
   void listen<TradeWhisper>("scan://trade-whisper", (event) => {
     state.trade_queue = [...state.trade_queue, event.payload];
     render();
@@ -3182,6 +3282,7 @@ if (!isListingPreviewWindow && leagueElement) {
       state.scanned_item = initialState.scanned_item;
       state.trade_queue = initialState.trade_queue;
       state.current_zone = initialState.current_zone || "Unknown";
+      state.current_area = initialState.current_area || null;
       state.trade_league = initialState.trade_league || state.trade_league;
       state.league_catalog = initialState.league_catalog || [];
       state.trade_leagues = initialState.trade_leagues || [];

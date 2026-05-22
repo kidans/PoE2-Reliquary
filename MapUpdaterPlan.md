@@ -1,139 +1,49 @@
-# Kalandra — Map-Aware Line Mode Plan
+# Map-Aware Line Mode — Handoff to Codex
 
-## Goal
+## What Works
 
-When Kalandra is in compact/line mode, show context-aware information:
-- **While in a map:** tier, name, mod count, quantity/rarity/pack size, hazard warnings, run timer
-- **While in hideout:** trade mode (Ctrl+C scan, Alt+D trade)
-- **While in town:** zone name, scan ready
+- **Zone detection**: `scan://zone-updated` fires, header `Zone: Bloodwood` updates correctly
+- **Client.txt found**: searches G/D/E/F/C drives for `{drive}:\Steam\` and `{drive}:\SteamLibrary\` paths
+- **Area classification**: `Generating level NN area "MapBloodwood"` → `classify_area_kind` returns `"map"`/`"hideout"`/`"town"`/`"other"`
+- **Waystone data**: last-scanned waystone stats (mod count, Q/R/Pack size, hazard count) attached to `CurrentAreaInfo`
+- **Events**: `scan://area-updated` emits full `CurrentAreaInfo` payload to frontend
+- **TypeScript listener**: `state.current_area` is set and `render()` is called on area update
 
-## Data Sources & Approach
+## What Doesn't Work
 
-| Data | Source | Method |
-|------|--------|--------|
-| Area name | `You have entered` line in Client.txt | Already parsed (`zone_from_log_line`) |
-| Area level | `Generating level NN` line | **Option A** — new regex, zero external data |
-| Area classification | Internal ID from `Generating level` | **Option A** — heuristic (`MapWorlds` = map, `Hideout` = hideout, `_town` = town) |
-| Waystone mod count/stats | Last scanned waystone clipboard data | Already parsed by `item_parser.rs` |
-| Hazard count + severity | `banned_mods.json` fuzzy match | Already working (`hazards.rs`) |
-| Biome/boss names (cosmetic) | PO2's 699.bundle.js area database | **Light B — deferred post-launch** |
+- **Compact line mode strip** doesn't update despite all Rust events firing and TypeScript integration being complete. Zone header pill updates but compact strip shows stale "Reliquary | waiting for item" or waystone name.
 
-## Client.txt Event Sequence
+## Key Discoveries
 
-```
-Connecting to instance server at 12.34.56.78
-Generating level 79 area "MapWorldsVolcano" with seed 4294967295  ← NEW: parse this
-You have entered Abyssal Volcano.                                    ← already parsed
-```
+1. **PoE2 Client.txt format changed**. No `You have entered` lines. No zone name in `[SCENE] Set Source` (always `(null)`). Zone names are ONLY in `Generating level NN area "MapBloodwood"` lines.
 
-## New Rust Structures
+2. **`state.blocking_lock()` deadlocks tokio**. Must use `state.lock().await` in async context. This was the root cause of ALL previous failures — the client log worker froze silently at the blocking mutex acquisition.
 
-```rust
-// In AppState
-current_area: Option<CurrentArea>,
-pending_area: Option<PendingArea>,
-last_waystone: Option<WaystoneSummary>,
+3. **Steam install path varies**. PoE2 can be at `{drive}:\Steam\steamapps\common\...` (direct install) OR `{drive}:\SteamLibrary\steamapps\common\...` (library folder). Current search covers both.
 
-struct PendingArea {
-    internal_id: String,  // "MapWorldsVolcano"
-    level: u32,           // 79
-}
+4. **Display names need transformation**. Internal IDs like `MapBloodwood` → display `Bloodwood`, `HideoutShoreline` → `Shoreline`. Done via `internal_id_to_display()`.
 
-struct CurrentArea {
-    name: String,          // "Abyssal Volcano"
-    level: u32,            // 79
-    area_type: AreaType,   // Map | Hideout | Town | Other
-    entered_at: Instant,
-    waystone: Option<WaystoneSummary>,
-}
+## Files Changed
 
-enum AreaType { Map, Hideout, Town, Other }
+| File | What |
+|------|------|
+| `src-tauri/src/lib.rs` | `CurrentAreaInfo`, `PendingArea` structs, `classify_area_kind()`, `client_log_path()` (multi-drive search), `stream_client_log()` (polling-based), `process_log_line()` (Generating level handler), `zone_from_log_line()` ([SCENE] Set Source parser), `internal_id_to_display()`, `now_epoch_ms()`, `parse_waystone_number()`, `parse_waystone_number_from_text()` |
+| `src/main.ts` | `CurrentAreaInfo` type, `current_area` in AppState, `scan://area-updated` listener, `compactTitleText()` (map-aware), `compactMetaText()` (map stats + runtime timer), `render()` difficulty bar, compact strip CSS classes |
+| `src/styles.css` | `.compact-difficulty-bar` (hidden by default, shown when `.is-mapping`) |
 
-struct WaystoneSummary {
-    mod_count: usize,
-    quantity: Option<u32>,
-    rarity: Option<u32>,
-    pack_size: Option<u32>,
-    hazard_count: usize,
-    hazards: Vec<String>,
-    difficulty_pct: f32,
-}
-```
+## Last-Mile Debugging Clue
 
-## Classification Heuristic
+The issue is in TypeScript rendering, not Rust. All Rust events fire correctly. The `scan://area-updated` listener sets `state.current_area` and calls `render()`. The `compactTitleText()` function checks `state.current_area?.area_type === "map"` first. But the compact strip doesn't update.
 
-```rust
-fn classify_area(internal_id: &str) -> AreaType {
-    if internal_id.starts_with("MapWorlds")  { AreaType::Map }
-    else if internal_id.starts_with("Hideout") { AreaType::Hideout }
-    else if internal_id.ends_with("_town")   { AreaType::Town }
-    else { AreaType::Other }
-}
-```
+Possible causes to investigate:
+- `compactTitleElement` / `compactMetaElement` might be null/detached DOM references
+- `render()` might be called but the compact strip is outside the panel update path (it's in the HUD chrome, not the panel content)
+- Maybe `compactMode` is false and the strip is `display: none`
+- Race condition: `scan://item-updated` event fires after area update and overwrites `state.scanned_item`, causing `render()` to show scan mode instead of compact mode
 
-Zero data files. Survives any league. Internal IDs are GGG-authored and stable.
+## What I Would Try Next
 
-## Waystone Correlation
-
-Natural user workflow:
-1. User Ctrl+C on waystone → Kalandra parses, stores `last_waystone`
-2. User puts waystone in map device, enters map
-3. `CurrentArea` created with `waystone: Some(last_waystone)`
-4. Line mode displays full map info
-
-If no waystone was scanned before entering (e.g., user scanned an amulet), line mode shows map name + level only. Graceful fallback.
-
-## Line Mode UX
-
-**Mapping:**
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│ L79 Abyssal Volcano · mods:6 Q:87% R:42% Pack:28% · ▲2 hazards · 4:32 │
-│ ████████░░░░░░░░░░░░░░░░░░░░░░  · Alt+D trade              [Open] │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-**Hideout:**
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│ Trade Mode · Ctrl+C scan · Alt+D trade                       [Open] │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-**Town:**
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│ Clearfell Encampment · Ctrl+C scan items                     [Open] │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-## Difficulty Bar
-
-Red segments = hazards (from `banned_mods.json` match)
-Yellow = unranked dangerous mods
-Dim = benign mods
-
-2px-tall CSS bar under the compact strip, matching Kalandra's `neutral-800` border color. Red glow for hazard segments.
-
-## Implementation Scope
-
-| Component | File | Lines | Est. |
-|-----------|------|------:|:---:|
-| `PendingArea` + `classify_area` | `lib.rs` | ~40 | 1h |
-| `Generating level` regex | `lib.rs` | ~15 | 30m |
-| `WaystoneSummary` extraction | `lib.rs` | ~30 | 1h |
-| Wire into AppState + IPC types | `lib.rs` + `main.ts` | ~40 | 1h |
-| `renderCompactStrip` rewrite | `main.ts` | ~60 | 2h |
-| Difficulty bar CSS | `styles.css` | ~20 | 30m |
-| **Total** | | **~200** | **~6h / 1 day** |
-
-## Deferred (Post-Launch)
-
-| Feature | Reason |
-|---------|--------|
-| Biome/boss names from PO2 area DB | Cosmetic, needs data extraction pipeline |
-| Per-build mod difficulty ranking | Complex UX, user profiles needed |
-| Run timer persistence | In-memory timer sufficient for v1 |
-| Expedition logbook support | Niche, complex parsing |
-| Kill tracking via /kill | Very niche |
-| Auto-refresh on currency reroll | Requires screen reading |
+1. Add `console.log("area", state.current_area)` at the top of `compactTitleText()` to verify the function runs with correct data
+2. Check if `hudElement.classList.contains("is-compact")` is true
+3. Check if `compactTitleElement` is still a valid DOM element (not replaced by innerHTML)
+4. Verify `state.current_area` is not being overwritten by another event between `scan://area-updated` and `render()`

@@ -6,12 +6,12 @@ use std::{
         Arc,
     },
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use arboard::Clipboard;
-use linemux::MuxedLines;
 use rdev::{listen, Event, EventType, Key};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tauri::{
     Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl,
@@ -57,11 +57,50 @@ const SNAP_MARGIN: f64 = 8.0;
 const FULL_SNAP_LEFT: f64 = 0.0;
 const FULL_SNAP_TOP_RATIO: f64 = 0.09;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrentAreaInfo {
+    pub name: String,
+    pub area_level: Option<u32>,
+    pub area_type: String,
+    pub entered_at_epoch_ms: u64,
+    pub waystone_mod_count: Option<usize>,
+    pub waystone_quantity: Option<u32>,
+    pub waystone_rarity: Option<u32>,
+    pub waystone_pack_size: Option<u32>,
+    pub waystone_hazard_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PendingArea {
+    internal_id: String,
+    level: u32,
+}
+
+fn classify_area_kind(internal_id: &str) -> &'static str {
+    let id = internal_id.to_ascii_lowercase();
+    if id.starts_with("map") || id.starts_with("mapworlds") {
+        return "map";
+    }
+    if id.starts_with("hideout") {
+        return "hideout";
+    }
+    if id.ends_with("_town") || id.contains("encampment") || id.contains("refuge") {
+        return "town";
+    }
+    "other"
+}
+
+fn zone_ends_with(zone: &str, suffixes: &[&str]) -> bool {
+    let zone = zone.trim_end_matches('.');
+    suffixes.iter().any(|s| zone.ends_with(s))
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppState {
     pub scanned_item: Option<Item>,
     pub trade_queue: Vec<TradeWhisper>,
     pub current_zone: String,
+    pub current_area: Option<CurrentAreaInfo>,
     pub trade_league: String,
     pub league_catalog: Vec<LeagueCatalogEntry>,
     pub trade_leagues: Vec<TradeLeague>,
@@ -1508,54 +1547,231 @@ async fn stream_client_log(
     state: SharedAppState,
     client_log_path: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut lines = MuxedLines::new()?;
-    lines.add_file(&client_log_path).await?;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::fs::File;
 
-    while let Some(line) = lines.next_line().await? {
-        let content = line.line().to_string();
-        if let Some(zone) = zone_from_log_line(&content) {
-            {
-                let mut locked_state = state.lock().await;
-                locked_state.current_zone = zone.clone();
+    debug_log::append(
+        "client-log.started",
+        serde_json::json!({
+            "path": client_log_path.display().to_string(),
+            "exists": client_log_path.exists(),
+        }),
+    );
+
+    let generating_re = Regex::new(
+        r#"Generating level (\d+) area "([^"]+)""#,
+    )
+    .expect("valid area generation regex");
+
+    let mut pending_area: Option<PendingArea> = None;
+    let mut last_size = tokio::fs::metadata(&client_log_path)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    loop {
+        if let Ok(meta) = tokio::fs::metadata(&client_log_path).await {
+            let current_size = meta.len();
+            if current_size > last_size {
+                let start = last_size;
+                last_size = current_size;
+                debug_log::append(
+                    "client-log.poll",
+                    serde_json::json!({ "start": start, "size": current_size, "delta": current_size - start }),
+                );
+                if let Ok(mut file) = File::open(&client_log_path).await {
+                    use tokio::io::AsyncSeekExt;
+                    let _ = file.seek(std::io::SeekFrom::Start(start)).await;
+                    let mut reader = BufReader::new(file);
+                    let mut line_buf = String::new();
+                    loop {
+                        line_buf.clear();
+                        match reader.read_line(&mut line_buf).await {
+                            Ok(0) => break,
+                            Ok(_) => {
+                                let content = line_buf.trim_end().to_string();
+                                debug_log::append(
+                                    "client-log.line",
+                                    serde_json::json!({ "c": &content }),
+                                );
+                                process_log_line(
+                                    &content, &generating_re, &mut pending_area,
+                                    &app_handle, &state,
+                                )
+                                .await;
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
             }
-            let _ = app_handle.emit("scan://zone-updated", zone);
         }
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+    }
+}
 
-        if let Some(whisper) = whispers::evaluate_whisper_string(&content) {
-            {
+async fn process_log_line(
+    content: &str,
+    generating_re: &Regex,
+    pending_area: &mut Option<PendingArea>,
+    app_handle: &tauri::AppHandle,
+    state: &SharedAppState,
+) {
+    if let Some(caps) = generating_re.captures(content) {
+        if let (Some(level_str), Some(id)) = (caps.get(1), caps.get(2)) {
+            if let Ok(level) = level_str.as_str().parse::<u32>() {
+                debug_log::append(
+                    "client-log.area-generated",
+                    serde_json::json!({
+                        "internal_id": id.as_str(),
+                        "level": level,
+                    }),
+                );
+                let internal_id = id.as_str().to_string();
+                let area_type = classify_area_kind(&internal_id);
+                let waystone_data = {
+                    let locked_state = state.lock().await;
+                    locked_state.scanned_item.as_ref().and_then(|item| {
+                        if item.family == "waystone"
+                            || item.base_type.as_deref().map_or(false, |bt| {
+                                bt.to_ascii_lowercase().contains("waystone")
+                                    || bt.to_ascii_lowercase().contains("tablet")
+                            })
+                        {
+                            let mod_count = item.explicit_mods.len();
+                            let quantity = parse_waystone_number(&item.property_lines, "increased Quantity")
+                                .or_else(|| parse_waystone_number_from_text(&item.raw_text, "increased Quantity"));
+                            let rarity = parse_waystone_number_from_text(&item.raw_text, "increased Rarity");
+                            let pack_size = parse_waystone_number(&item.property_lines, "Monster Pack Size")
+                                .or_else(|| parse_waystone_number_from_text(&item.raw_text, "Pack Size"));
+                            let hazard_count = item.hazards.len();
+                            Some((mod_count, quantity, rarity, pack_size, hazard_count))
+                        } else {
+                            None
+                        }
+                    })
+                };
+
+                let display_name = internal_id_to_display(&internal_id);
+                let area = CurrentAreaInfo {
+                    name: display_name,
+                    area_level: Some(level),
+                    area_type: area_type.to_string(),
+                    entered_at_epoch_ms: now_epoch_ms(),
+                    waystone_mod_count: waystone_data.map(|w| w.0),
+                    waystone_quantity: waystone_data.and_then(|w| w.1),
+                    waystone_rarity: waystone_data.and_then(|w| w.2),
+                    waystone_pack_size: waystone_data.and_then(|w| w.3),
+                    waystone_hazard_count: waystone_data.map(|w| w.4),
+                };
+
+                debug_log::append(
+                    "client-log.area-updated",
+                    serde_json::json!({
+                        "name": area.name,
+                        "area_type": area.area_type,
+                        "area_level": area.area_level,
+                    }),
+                );
+
                 let mut locked_state = state.lock().await;
-                locked_state.trade_queue.push(whisper.clone());
+                locked_state.current_zone = area.name.clone();
+                locked_state.current_area = Some(area.clone());
+                let _ = app_handle.emit("scan://zone-updated", &area.name);
+                let _ = app_handle.emit("scan://area-updated", &area);
+                return;
             }
-            let _ = app_handle.emit("scan://trade-whisper", whisper);
         }
-
-        let _ = app_handle.emit("scan://client-log-line", content);
     }
 
-    Ok(())
+    if let Some(zone) = zone_from_log_line(content) {
+        let area_type = "other".to_string();
+        let area = CurrentAreaInfo {
+            name: zone.clone(),
+            area_level: None,
+            area_type,
+            entered_at_epoch_ms: now_epoch_ms(),
+            waystone_mod_count: None,
+            waystone_quantity: None,
+            waystone_rarity: None,
+            waystone_pack_size: None,
+            waystone_hazard_count: None,
+        };
+        let mut locked_state = state.lock().await;
+        locked_state.current_zone = zone.clone();
+        locked_state.current_area = Some(area.clone());
+        let _ = app_handle.emit("scan://zone-updated", zone);
+        let _ = app_handle.emit("scan://area-updated", area);
+    }
+
+    if let Some(whisper) = whispers::evaluate_whisper_string(content) {
+        {
+            let mut locked_state = state.lock().await;
+            locked_state.trade_queue.push(whisper.clone());
+        }
+        let _ = app_handle.emit("scan://trade-whisper", whisper);
+    }
+
+    let _ = app_handle.emit("scan://client-log-line", content);
+}
+
+fn internal_id_to_display(id: &str) -> String {
+    let id = id
+        .strip_prefix("Map")
+        .unwrap_or(id)
+        .strip_prefix("map")
+        .unwrap_or(id);
+    let mut result = String::new();
+    for (i, ch) in id.chars().enumerate() {
+        if i > 0 && ch.is_uppercase() {
+            result.push(' ');
+        }
+        result.push(ch);
+    }
+    if result.is_empty() {
+        return id.to_string();
+    }
+    result
 }
 
 fn client_log_path() -> PathBuf {
     if let Ok(path) = env::var("POE2_CLIENT_LOG") {
-        return PathBuf::from(path);
-    }
-
-    if cfg!(target_os = "windows") {
-        if let Ok(user_profile) = env::var("USERPROFILE") {
-            return PathBuf::from(user_profile)
-                .join("Documents")
-                .join("My Games")
-                .join("Path of Exile 2")
-                .join("Client.txt");
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return p;
         }
     }
 
-    if let Ok(home) = env::var("HOME") {
-        return PathBuf::from(home)
-            .join("Documents")
-            .join("My Games")
-            .join("Path of Exile 2")
-            .join("Client.txt");
+    for drive in ["G", "D", "E", "F", "C"] {
+        for prefix in [
+            format!("{drive}:\\Steam\\steamapps\\common\\Path of Exile 2\\logs\\Client.txt"),
+            format!("{drive}:\\SteamLibrary\\steamapps\\common\\Path of Exile 2\\logs\\Client.txt"),
+            format!("{drive}:\\Program Files (x86)\\Steam\\steamapps\\common\\Path of Exile 2\\logs\\Client.txt"),
+        ] {
+            let path = PathBuf::from(&prefix);
+            if path.exists() {
+                return path;
+            }
+        }
+    }
+
+    let default_steam = PathBuf::from(
+        "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Path of Exile 2\\logs\\Client.txt",
+    );
+    if default_steam.exists() {
+        return default_steam;
+    }
+
+    let documents = if let Ok(up) = env::var("USERPROFILE") {
+        PathBuf::from(up).join("Documents").join("My Games").join("Path of Exile 2").join("Client.txt")
+    } else if let Ok(home) = env::var("HOME") {
+        PathBuf::from(home).join("Documents").join("My Games").join("Path of Exile 2").join("Client.txt")
+    } else {
+        return PathBuf::from("Client.txt");
+    };
+
+    if documents.exists() {
+        return documents;
     }
 
     PathBuf::from("Client.txt")
@@ -1596,9 +1812,17 @@ fn hazard_catalog_path() -> PathBuf {
 }
 
 fn zone_from_log_line(line: &str) -> Option<String> {
-    const MARKER: &str = "You have entered ";
-    let start = line.find(MARKER)? + MARKER.len();
-    Some(line[start..].trim_end_matches('.').trim().to_string())
+    if let Some(start) = line.find("[SCENE] Set Source [") {
+        let rest = &line[start + "[SCENE] Set Source [".len()..];
+        if let Some(end) = rest.find(']') {
+            let name = &rest[..end];
+            if name == "(null)" {
+                return None;
+            }
+            return Some(name.to_string());
+        }
+    }
+    None
 }
 
 fn emit_worker_status(app_handle: &tauri::AppHandle, worker: &'static str, message: String) {
@@ -1691,4 +1915,44 @@ fn position_listing_preview(
             y.round() as i32,
         )))
         .map_err(|error| error.to_string())
+}
+
+fn now_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn parse_waystone_number(lines: &[String], needle: &str) -> Option<u32> {
+    let needle = needle.to_ascii_lowercase();
+    for line in lines {
+        let lower = line.to_ascii_lowercase();
+        if lower.contains(&needle) {
+            if let Some(num) = lower.split_whitespace().find_map(|w| {
+                w.trim_end_matches('%')
+                    .trim_end_matches('+')
+                    .parse::<u32>()
+                    .ok()
+            }) {
+                return Some(num);
+            }
+        }
+    }
+    None
+}
+
+fn parse_waystone_number_from_text(text: &str, needle: &str) -> Option<u32> {
+    let needle = needle.to_ascii_lowercase();
+    let lower = text.to_ascii_lowercase();
+    if lower.contains(&needle) {
+        lower.split_whitespace().find_map(|w| {
+            w.trim_end_matches('%')
+                .trim_end_matches('+')
+                .parse::<u32>()
+                .ok()
+        })
+    } else {
+        None
+    }
 }

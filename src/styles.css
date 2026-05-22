@@ -248,6 +248,39 @@ select {
   font-weight: 700;
 }
 
+.compact-difficulty-bar {
+  display: none;
+  flex: 1;
+  height: 2px;
+  min-width: 20px;
+  max-width: 80px;
+  background: var(--neutral-800);
+  border-radius: 1px;
+  position: relative;
+  overflow: hidden;
+}
+
+.compact-difficulty-bar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: var(--difficulty-pct, 0%);
+  background: var(--gold-bright);
+  border-radius: 1px;
+  transition: width 0.3s ease;
+}
+
+.compact-difficulty-bar.has-hazards::after {
+  background: #ff4444;
+  box-shadow: 0 0 6px rgba(255, 68, 68, 0.5);
+}
+
+.compact-strip.is-mapping .compact-difficulty-bar {
+  display: block;
+}
+
 .eyebrow,
 .section-label {
   margin: 0 0 6px;
