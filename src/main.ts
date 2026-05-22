@@ -39,6 +39,7 @@ type CurrentAreaInfo = {
   waystone_rarity: number | null;
   waystone_pack_size: number | null;
   waystone_hazard_count: number | null;
+  boss: string | null;
 };
 
 type AppState = {
@@ -520,7 +521,8 @@ function compactTitleText(item: ScannedItem | null) {
   if (state.current_area?.area_type === "map") {
     const area = state.current_area;
     const tier = area.area_level ? `L${area.area_level}` : "";
-    return `${tier} ${area.name}`.trim();
+    const boss = area.boss ? ` \u00B7 ${area.boss}` : "";
+    return `${tier} ${area.name}${boss}`.trim();
   }
 
   if (state.current_area?.area_type === "hideout") {
