@@ -1048,9 +1048,9 @@ pub fn run() {
             spawn_trade_league_worker(app_handle.clone(), state.clone());
             spawn_global_input_worker(app_handle.clone(), state.clone());
             spawn_window_attachment_worker(app_handle.clone());
-            spawn_client_log_worker(app_handle, state);
 
             init_world_areas();
+            spawn_client_log_worker(app_handle, state);
 
             Ok(())
         })
