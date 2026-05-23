@@ -1481,12 +1481,86 @@ fn handle_global_input_event(
 }
 
 fn active_window_allows_overlay_visibility() -> bool {
-    let title = active_window_title();
-    is_poe_window_title(&title) || is_overlay_window_title(&title)
+    is_poe2_running() || is_overlay_window_title(&active_window_title())
 }
 
 fn active_window_is_poe2() -> bool {
     is_poe_window_title(&active_window_title())
+}
+
+#[cfg(target_os = "windows")]
+fn is_poe2_running() -> bool {
+    use std::sync::Mutex as StdMutex;
+    static CACHE: once_cell::sync::Lazy<StdMutex<(bool, std::time::Instant)>> =
+        once_cell::sync::Lazy::new(|| StdMutex::new((false, std::time::Instant::now())));
+
+    {
+        let cached = CACHE.lock().unwrap();
+        if cached.1.elapsed() < Duration::from_secs(3) {
+            return cached.0;
+        }
+    }
+
+    unsafe extern "system" {
+        fn CreateToolhelp32Snapshot(dwFlags: u32, th32ProcessID: u32) -> isize;
+        fn Process32FirstW(hSnapshot: isize, lppe: *mut PROCESSENTRY32W) -> i32;
+        fn Process32NextW(hSnapshot: isize, lppe: *mut PROCESSENTRY32W) -> i32;
+        fn CloseHandle(hObject: isize) -> i32;
+    }
+
+    #[repr(C)]
+    #[allow(non_snake_case)]
+    struct PROCESSENTRY32W {
+        dwSize: u32,
+        cntUsage: u32,
+        th32ProcessID: u32,
+        th32DefaultHeapID: usize,
+        th32ModuleID: u32,
+        cntThreads: u32,
+        th32ParentProcessID: u32,
+        pcPriClassBase: i32,
+        dwFlags: u32,
+        szExeFile: [u16; 260],
+    }
+
+    const TH32CS_SNAPPROCESS: u32 = 0x00000002;
+    const INVALID_HANDLE_VALUE: isize = -1;
+
+    let found = unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE as isize {
+            return true;
+        }
+
+        let mut pe = std::mem::zeroed::<PROCESSENTRY32W>();
+        pe.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+        let mut found = false;
+        if Process32FirstW(snapshot, &mut pe) != 0 {
+            loop {
+                let end = pe.szExeFile.iter().position(|&c| c == 0).unwrap_or(pe.szExeFile.len());
+                let name = String::from_utf16_lossy(&pe.szExeFile[..end]).to_ascii_lowercase();
+                if name.contains("pathofexilesteam") || name.contains("pathofexile") {
+                    found = true;
+                    break;
+                }
+                if Process32NextW(snapshot, &mut pe) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snapshot);
+        found
+    };
+
+    let mut cached = CACHE.lock().unwrap();
+    *cached = (found, std::time::Instant::now());
+    found
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_poe2_running() -> bool {
+    true
 }
 
 fn is_poe_window_title(title: &str) -> bool {
