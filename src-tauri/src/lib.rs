@@ -1523,13 +1523,18 @@ fn handle_global_input_event(
             std::mem::drop(locked);
 
             if is_scan {
-                thread::sleep(Duration::from_millis(20));
-                match read_clipboard_text() {
-                    Ok(text) if !text.trim().is_empty() => {
-                        let _ = input_tx.send(InputAction::ClipboardScan(text));
+                let before = read_clipboard_text().unwrap_or_default();
+                for _ in 0..25 {
+                    thread::sleep(Duration::from_millis(20));
+                    match read_clipboard_text() {
+                        Ok(text) if !text.trim().is_empty() && text != before => {
+                            if looks_like_poe_item_buffer(&text) {
+                                let _ = input_tx.send(InputAction::ClipboardScan(text));
+                                return;
+                            }
+                        }
+                        _ => {}
                     }
-                    Ok(_) => {}
-                    Err(error) => eprintln!("{error}"),
                 }
             }
             if is_trade {
