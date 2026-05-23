@@ -3514,9 +3514,7 @@ if (!isListingPreviewWindow && leagueElement) {
         }
       }
       if (name === "scanKey" || name === "tradeKey") {
-        const v = settingInput.value.toUpperCase().replace(/[^A-Z]/, "").slice(0, 1);
-        if (v) appSettings[name] = v;
-        settingInput.value = appSettings[name];
+        return; // handled via keydown listener below
       }
 
       applyAppSettings(appSettings);
@@ -3530,6 +3528,26 @@ if (!isListingPreviewWindow && leagueElement) {
 
     tradeSearchQuery = tradeSearch.value;
     render();
+  });
+
+  root.addEventListener("keydown", (event) => {
+    const target = event.target as HTMLElement;
+    const keyInput = target.closest<HTMLInputElement>(".keybind-letter[data-setting]");
+    if (!keyInput?.dataset.setting) return;
+
+    const name = keyInput.dataset.setting;
+    if (name !== "scanKey" && name !== "tradeKey") return;
+
+    const key = event.key.toUpperCase();
+    if (key.length === 1 && key >= "A" && key <= "Z") {
+      event.preventDefault();
+      appSettings[name] = key;
+      keyInput.value = key;
+      applyAppSettings(appSettings);
+      saveAppSettings();
+    } else if (event.key.length === 1) {
+      event.preventDefault();
+    }
   });
 
   root.addEventListener(
