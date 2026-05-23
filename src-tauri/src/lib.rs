@@ -433,10 +433,6 @@ async fn set_keybinds(
     locked.scan_key = scan_key.chars().next().unwrap_or('C');
     locked.trade_mod = trade_mod.clone();
     locked.trade_key = trade_key.chars().next().unwrap_or('D');
-    debug_log::append("keybinds.set", serde_json::json!({
-        "scan": format!("{}+{}", locked.scan_mod, locked.scan_key),
-        "trade": format!("{}+{}", locked.trade_mod, locked.trade_key),
-    }));
     Ok(())
 }
 
@@ -1535,6 +1531,10 @@ fn handle_global_input_event(
             alt_down.store(false, Ordering::SeqCst);
         }
         EventType::KeyPress(ref key) if active_window_is_poe2() => {
+            static SIMULATING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if SIMULATING.load(Ordering::SeqCst) {
+                return;
+            }
             let locked = state.blocking_lock();
             let scan_key = match locked.scan_key {
                 'A' => Key::KeyA, 'B' => Key::KeyB, 'C' => Key::KeyC, 'D' => Key::KeyD,
@@ -1564,15 +1564,18 @@ fn handle_global_input_event(
             };
             let is_scan = key == &scan_key && ((locked.scan_mod == "Ctrl" && ctrl_down.load(Ordering::SeqCst)) || (locked.scan_mod == "Alt" && alt_down.load(Ordering::SeqCst)));
             let is_trade = key == &trade_key && ((locked.trade_mod == "Ctrl" && ctrl_down.load(Ordering::SeqCst)) || (locked.trade_mod == "Alt" && alt_down.load(Ordering::SeqCst)));
-            if is_scan || is_trade {
-                debug_log::append("keybinds.triggered", serde_json::json!({
-                    "is_scan": is_scan,
-                    "is_trade": is_trade,
-                    "scan_cfg": format!("{}+{}", locked.scan_mod, locked.scan_key),
-                    "trade_cfg": format!("{}+{}", locked.trade_mod, locked.trade_key),
-                }));
-            }
+            let needs_simulate = is_scan && (scan_key != Key::KeyC || locked.scan_mod != "Ctrl");
             std::mem::drop(locked);
+
+            if needs_simulate {
+                SIMULATING.store(true, Ordering::SeqCst);
+                let _ = rdev::simulate(&EventType::KeyPress(Key::ControlLeft));
+                let _ = rdev::simulate(&EventType::KeyPress(Key::KeyC));
+                let _ = rdev::simulate(&EventType::KeyRelease(Key::KeyC));
+                let _ = rdev::simulate(&EventType::KeyRelease(Key::ControlLeft));
+                thread::sleep(Duration::from_millis(80));
+                SIMULATING.store(false, Ordering::SeqCst);
+            }
 
             if is_scan {
                 let before = read_clipboard_text().unwrap_or_default();
