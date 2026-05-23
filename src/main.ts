@@ -312,6 +312,8 @@ function saveCampaignProgress() {
       completedSteps: [...campaignCompletedSteps],
       currentZone: campaignCurrentZone,
       guidePage: campaignGuidePage,
+      actTimes: campaignActTimes,
+      totalMs: campaignTotalMs,
     }));
   } catch { /* ignore */ }
 }
@@ -324,6 +326,12 @@ function loadCampaignProgress() {
       campaignCompletedSteps = new Set(data.completedSteps ?? []);
       campaignCurrentZone = data.currentZone ?? "";
       campaignGuidePage = data.guidePage ?? 0;
+      if (Array.isArray(data.actTimes) && data.actTimes.length >= 5) {
+        campaignActTimes = data.actTimes;
+      }
+      if (typeof data.totalMs === "number") {
+        campaignTotalMs = data.totalMs;
+      }
     }
   } catch { /* ignore */ }
 }
@@ -377,15 +385,18 @@ function toggleCampaignStep() {
 function startCampaignTimer() {
   if (campaignTimerHandle) return;
   campaignTimerRunning = true;
+  let tick = 0;
   campaignTimerHandle = window.setInterval(() => {
     if (!campaignTimerRunning) return;
     const actIdx = Math.max(0, campaignGuideAct - 1);
     campaignActTimes[actIdx] += 1000;
     campaignTotalMs += 1000;
+    tick++;
     const compact = root?.querySelector<HTMLElement>("[data-compact-meta]");
     if (compact && campaignGuideAct > 0) {
       compact.textContent = compactMetaText("");
     }
+    if (tick % 30 === 0) saveCampaignProgress();
   }, 1000);
 }
 
@@ -2278,52 +2289,17 @@ function renderDataPanel() {
 }
 
 function renderCampaignSection() {
-  const total = formatCampaignTime(campaignTotalMs);
-  const actTime = formatCampaignTime(campaignActTimes[campaignGuideAct - 1] ?? 0);
-  const actLabel = actDisplayName(campaignGuideAct);
-  const zone = findCurrentZoneInGuide();
-  const area = state.current_area;
-  const zoneName = area?.name ?? "";
-
-  if (!zone && campaignGuideAct > 0) {
-    return `
-      <div class="campaign-panel">
-        <p class="campaign-empty">No guide data matched for "${escapeHtml(zoneName)}" in Act ${campaignGuideAct}.</p>
-        <div class="campaign-status${campaignTimerRunning ? " running" : " paused"}" data-campaign-timer>
-          ${actLabel} · ${escapeHtml(zoneName)} · ${actTime} / ${total}
-        </div>
-      </div>
-    `;
-  }
-
-  if (!zone) {
-    return `
-      <div class="campaign-panel">
-        <p class="campaign-empty">Enter a campaign zone to see the guide.</p>
-        <div class="campaign-status${campaignTimerRunning ? " running" : ""}" data-campaign-timer>
-          ${actLabel} · ${actTime} / ${total}
-        </div>
-      </div>
-    `;
-  }
-
-  const stepsHtml = zone.steps.map((step, i) => {
-    const key = stepKey(campaignGuideAct, zone.name, i);
-    const done = campaignCompletedSteps.has(key);
-    const tagLabels = step.tags.length ? ` <small>${step.tags.join(" · ")}</small>` : "";
-    const reward = step.reward ? ` · ${escapeHtml(step.reward)}` : "";
-    const loc = step.loc ? ` (${escapeHtml(step.loc)})` : "";
-    return `<li class="${done ? "completed" : ""}" data-campaign-step-key="${key}">${done ? "☑" : "☐"} ${escapeHtml(step.text)}${loc}${reward}${tagLabels}</li>`;
+  const rows = [1, 2, 3, 4, 5].map(act => {
+    const time = formatCampaignTime(campaignActTimes[act - 1] ?? 0);
+    const isCurrent = act === campaignGuideAct;
+    const cls = isCurrent ? `campaign-act-row${campaignTimerRunning ? " running" : ""}` : "campaign-act-row";
+    return `<div class="${cls}"><span>${actDisplayName(act)}</span><strong>${time}</strong></div>`;
   }).join("");
 
   return `
     <div class="campaign-panel">
-      <div class="campaign-steps">
-        <ul class="guide-list">${stepsHtml}</ul>
-      </div>
-      <div class="campaign-status${campaignTimerRunning ? " running" : " paused"}" data-campaign-timer>
-        ${actLabel} · ${escapeHtml(zone.name)} · ${actTime} / ${total}
-      </div>
+      <div class="campaign-act-list">${rows}</div>
+      <button class="chrome-button campaign-reset" data-campaign-reset type="button">Reset</button>
     </div>
   `;
 }
@@ -3214,6 +3190,7 @@ if (!isListingPreviewWindow && leagueElement) {
     const resetVisualSettingsButton = target.closest<HTMLButtonElement>("[data-reset-visual-settings]");
     const campaignStepButton = target.closest<HTMLElement>("[data-campaign-step-key]");
     const campaignTimerButton = target.closest<HTMLElement>("[data-campaign-timer]");
+    const campaignResetButton = target.closest<HTMLButtonElement>("[data-campaign-reset]");
     const compactMetaClick = target.closest<HTMLElement>("[data-compact-meta]");
     const compactTitleClick = target.closest<HTMLElement>("[data-compact-title]");
 
@@ -3336,6 +3313,15 @@ if (!isListingPreviewWindow && leagueElement) {
       } else {
         campaignCompletedSteps.add(key);
       }
+      saveCampaignProgress();
+      render();
+      return;
+    }
+
+    if (campaignResetButton) {
+      campaignActTimes = [0, 0, 0, 0, 0, 0, 0, 0];
+      campaignTotalMs = 0;
+      stopCampaignTimer();
       saveCampaignProgress();
       render();
       return;
@@ -3602,8 +3588,11 @@ if (!isListingPreviewWindow && leagueElement) {
       campaignGuideAct = newAct;
       campaignGuidePage = 0;
     }
-    if (event.payload.area_type === "hideout" && campaignTimerRunning) {
-      stopCampaignTimer();
+    if (event.payload.area_type === "hideout") {
+      if (campaignTimerRunning) stopCampaignTimer();
+      saveCampaignProgress();
+    } else if (newAct > 0 && !campaignTimerRunning) {
+      startCampaignTimer();
     }
     render();
   });
