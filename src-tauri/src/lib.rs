@@ -429,10 +429,14 @@ async fn set_keybinds(
     trade_key: String,
 ) -> Result<(), String> {
     let mut locked = state.lock().await;
-    locked.scan_mod = scan_mod;
+    locked.scan_mod = scan_mod.clone();
     locked.scan_key = scan_key.chars().next().unwrap_or('C');
-    locked.trade_mod = trade_mod;
+    locked.trade_mod = trade_mod.clone();
     locked.trade_key = trade_key.chars().next().unwrap_or('D');
+    debug_log::append("keybinds.set", serde_json::json!({
+        "scan": format!("{}+{}", locked.scan_mod, locked.scan_key),
+        "trade": format!("{}+{}", locked.trade_mod, locked.trade_key),
+    }));
     Ok(())
 }
 
@@ -1560,10 +1564,22 @@ fn handle_global_input_event(
             };
             let is_scan = key == &scan_key && ((locked.scan_mod == "Ctrl" && ctrl_down.load(Ordering::SeqCst)) || (locked.scan_mod == "Alt" && alt_down.load(Ordering::SeqCst)));
             let is_trade = key == &trade_key && ((locked.trade_mod == "Ctrl" && ctrl_down.load(Ordering::SeqCst)) || (locked.trade_mod == "Alt" && alt_down.load(Ordering::SeqCst)));
+            if is_scan || is_trade {
+                debug_log::append("keybinds.triggered", serde_json::json!({
+                    "is_scan": is_scan,
+                    "is_trade": is_trade,
+                    "scan_cfg": format!("{}+{}", locked.scan_mod, locked.scan_key),
+                    "trade_cfg": format!("{}+{}", locked.trade_mod, locked.trade_key),
+                }));
+            }
             std::mem::drop(locked);
 
             if is_scan {
                 let before = read_clipboard_text().unwrap_or_default();
+                if !before.trim().is_empty() && looks_like_poe_item_buffer(&before) {
+                    let _ = input_tx.send(InputAction::ClipboardScan(before));
+                    return;
+                }
                 for _ in 0..25 {
                     thread::sleep(Duration::from_millis(20));
                     match read_clipboard_text() {

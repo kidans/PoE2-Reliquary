@@ -2869,7 +2869,7 @@ function applyAppSettings(settings: AppSettings) {
     scanKey: settings.scanKey,
     tradeMod: settings.tradeMod,
     tradeKey: settings.tradeKey,
-  }).catch(() => {});
+  }).catch((err) => pushStatus("keybinds", String(err)));
 }
 
 function updateSettingOutput(settingName: keyof AppSettings) {
