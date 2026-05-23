@@ -545,7 +545,7 @@ function render() {
       const c = compactTitleElement.clientWidth;
       if (w > c) {
         compactTitleElement.style.setProperty("--scroll-distance", `${-(w - c + 20)}px`);
-        compactTitleElement.style.setProperty("--scroll-duration", `${Math.max(4, (w - c) / 40)}s`);
+        compactTitleElement.style.setProperty("--scroll-duration", `${Math.max(10, (w - c) / 25)}s`);
         compactTitleElement.classList.add("scroll-text");
       } else {
         compactTitleElement.classList.remove("scroll-text");

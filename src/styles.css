@@ -2845,6 +2845,7 @@ kbd {
   min-height: 38px;
   padding: 0;
   gap: 0;
+  overflow: hidden;
 }
 
 .compact-strip.is-campaign > div:first-child {
@@ -2854,6 +2855,7 @@ kbd {
   gap: 1px;
   padding: 0 36px 0 12px;
   min-height: 38px;
+  min-width: 0;
   box-sizing: border-box;
   cursor: pointer;
   overflow: hidden;
@@ -2863,7 +2865,17 @@ kbd {
   display: block;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
+}
+
+.compact-strip.is-campaign > div:first-child span.scroll-text {
+  animation: marquee var(--scroll-duration, 10s) ease-in-out infinite;
+}
+
+@keyframes marquee {
+  0%, 25%   { transform: translateX(0); }
+  35%, 45%  { transform: translateX(var(--scroll-distance, -100px)); }
+  55%, 100% { transform: translateX(0); }
 }
 
 .compact-strip.is-campaign > div:first-child span.scroll-text {
