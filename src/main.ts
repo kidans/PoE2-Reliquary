@@ -273,6 +273,7 @@ let campaignGuidePage = 0;
 let campaignGuideAct = 0;
 let campaignActTimes: number[] = [0, 0, 0, 0, 0, 0, 0, 0];
 let campaignTotalMs = 0;
+let campaignExpanded = false;
 let campaignTimerHandle = 0;
 let campaignCompletedSteps = new Set<string>();
 let campaignCurrentZone = "";
@@ -454,9 +455,14 @@ root.innerHTML = isListingPreviewWindow
         </header>
 
         <div class="compact-strip" data-drag-handle>
-          <div>
+          <div class="compact-collapsed">
             <span data-compact-title>Reliquary ready</span>
             <strong data-compact-meta>Ctrl+C scan | Alt+D trade</strong>
+          </div>
+          <div class="compact-checklist" data-compat-checklist></div>
+          <div class="compact-campaign-bar" data-compact-campaign-bar style="display:none">
+            <span data-compact-campaign-timer></span>
+            <span class="step-badge" data-expand-campaign></span>
           </div>
           <div class="compact-difficulty-bar" aria-hidden="true"></div>
           <button class="chrome-button" data-toggle-compact type="button">Open</button>
@@ -503,6 +509,10 @@ const leagueElement = isListingPreviewWindow ? null : root.querySelector<HTMLSel
 const hudElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>(".hud-card");
 const compactTitleElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-title]");
 const compactMetaElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-meta]");
+const checklistElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compat-checklist]");
+const campaignBarElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-campaign-bar]");
+const campaignTimerElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-campaign-timer]");
+const campaignBadgeElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-expand-campaign]");
 const tabButtons = isListingPreviewWindow
   ? []
   : Array.from(root.querySelectorAll<HTMLButtonElement>("[data-tab]"));
@@ -533,6 +543,7 @@ function render() {
 
   compactTitleElement!.textContent = compactTitleText(state.scanned_item);
   compactMetaElement!.innerHTML = compactMetaText(lastStatus);
+  renderCampaignChecklist();
 
   const compactStrip = root?.querySelector<HTMLElement>(".compact-strip");
   if (compactStrip) {
@@ -777,6 +788,42 @@ function compactMetaText(status: string) {
   }
 
   return status;
+}
+
+function renderCampaignChecklist(): void {
+  const zone = findCurrentZoneInGuide();
+  if (!checklistElement || !campaignBarElement || !campaignBadgeElement || !campaignTimerElement) return;
+
+  if (!zone || campaignGuideAct <= 0) {
+    checklistElement.innerHTML = "";
+    campaignBarElement.style.display = "none";
+    return;
+  }
+
+  const stepsHtml = zone.steps.map((step, i) => {
+    const key = stepKey(campaignGuideAct, zone.name, i);
+    const done = campaignCompletedSteps.has(key);
+    const tagLabels = step.tags.length ? ` <small>${step.tags.join(" · ")}</small>` : "";
+    const reward = step.reward ? ` · ${escapeHtml(step.reward)}` : "";
+    const loc = step.loc ? ` (${escapeHtml(step.loc)})` : "";
+    return `<div class="checklist-step${done ? " completed" : ""}" data-campaign-step-key="${key}">${done ? "☑" : "☐"} ${escapeHtml(step.text)}${loc}${reward}${tagLabels}</div>`;
+  }).join("");
+
+  const completedCount = zone.steps.filter((_, i) =>
+    campaignCompletedSteps.has(stepKey(campaignGuideAct, zone.name, i))
+  ).length;
+  const totalSteps = zone.steps.length;
+
+  const actTime = formatCampaignTime(campaignActTimes[campaignGuideAct - 1] ?? 0);
+  const total = formatCampaignTime(campaignTotalMs);
+  const actName = actDisplayName(campaignGuideAct);
+  const areaName = escapeHtml(state.current_area?.name ?? "");
+
+  checklistElement.innerHTML = stepsHtml;
+  checklistElement.classList.toggle("is-expanded", campaignExpanded);
+  campaignTimerElement.textContent = `${actName} · ${areaName} · ${actTime} / ${total}`;
+  campaignBadgeElement.innerHTML = `${completedCount}/${totalSteps} ${campaignExpanded ? "▾" : "▸"}`;
+  campaignBarElement.style.display = "flex";
 }
 
 function compactMapMetaText(area: CurrentAreaInfo) {
@@ -2998,6 +3045,15 @@ function syncWindowLayout() {
   });
 }
 
+function syncCompactWindowHeight() {
+  const strip = root?.querySelector<HTMLElement>(".compact-strip");
+  if (!strip) return;
+  const height = strip.getBoundingClientRect().height;
+  void invoke("set_compact_window_height", { contentHeight: height }).catch((err) =>
+    pushStatus("window", String(err)),
+  );
+}
+
 function queueEvaluateLayoutSync() {
   if (evaluateLayoutFrame) {
     cancelAnimationFrame(evaluateLayoutFrame);
@@ -3150,6 +3206,7 @@ if (!isListingPreviewWindow && leagueElement) {
     const resetVisualSettingsButton = target.closest<HTMLButtonElement>("[data-reset-visual-settings]");
     const campaignStepButton = target.closest<HTMLElement>("[data-campaign-step-key]");
     const campaignTimerButton = target.closest<HTMLElement>("[data-campaign-timer]");
+    const expandCampaignBadge = target.closest<HTMLElement>("[data-expand-campaign]");
     const compactMetaElement = target.closest<HTMLElement>("[data-compact-meta]");
 
     if (resetVisualSettingsButton) {
@@ -3273,6 +3330,13 @@ if (!isListingPreviewWindow && leagueElement) {
       }
       saveCampaignProgress();
       render();
+      return;
+    }
+
+    if (expandCampaignBadge) {
+      campaignExpanded = !campaignExpanded;
+      render();
+      syncCompactWindowHeight();
       return;
     }
 

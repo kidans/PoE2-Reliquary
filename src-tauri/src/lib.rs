@@ -439,6 +439,21 @@ fn set_scan_window_height(window: tauri::Window, content_height: f64) -> Result<
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn set_compact_window_height(window: tauri::Window, content_height: f64) -> Result<(), String> {
+    let height = content_height
+        .ceil()
+        .max(COMPACT_WINDOW_HEIGHT)
+        .min(600.0);
+    let position = snapped_window_position(&window, "compact", COMPACT_WINDOW_WIDTH, height)?;
+    window
+        .set_size(Size::Logical(LogicalSize::new(COMPACT_WINDOW_WIDTH, height)))
+        .map_err(|error| error.to_string())?;
+    window
+        .set_position(Position::Logical(position))
+        .map_err(|error| error.to_string())
+}
+
 fn snapped_window_position(
     window: &tauri::Window,
     layout: &str,
@@ -943,6 +958,7 @@ pub fn run() {
             set_trade_league,
             set_compact_mode,
             set_window_layout,
+            set_compact_window_height,
             set_scan_window_height,
             set_click_passthrough,
             show_listing_preview,
