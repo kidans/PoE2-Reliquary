@@ -639,8 +639,14 @@ function renderListingPreviewWindow(preview: ListingPreviewRequest | null) {
 let compactRuntimeHandle = 0;
 
 function actDisplayName(act: number) {
-  const numerals = ["", "I", "II", "III", "IV", "V", "VI"];
+  const numerals = ["", "I", "II", "III", "IV", "V"];
   return act > 0 ? `ACT ${numerals[act] ?? act}` : "INTERLUDE";
+}
+
+function remapCampaignAct(raw: number): number {
+  if (raw >= 1 && raw <= 4) return raw;
+  if (raw === 6) return 5;
+  return 0;
 }
 
 function compactTitleText(item: ScannedItem | null) {
@@ -3499,7 +3505,7 @@ if (!isListingPreviewWindow && leagueElement) {
   void listen<CurrentAreaInfo>("scan://area-updated", (event) => {
     state.current_area = event.payload;
     const rawAct = event.payload.act ?? 0;
-    const newAct = (rawAct >= 1 && rawAct <= 5) ? rawAct : 0;
+    const newAct = remapCampaignAct(rawAct);
     if (newAct !== campaignGuideAct) {
       campaignGuideAct = newAct;
       campaignGuidePage = 0;
