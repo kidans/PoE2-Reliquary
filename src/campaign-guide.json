@@ -88,10 +88,12 @@
           "steps": [
             {
               "text": "Kill Beira of the Rotten Pack (north) +10% Cold Res",
-              "reward": null,
+              "reward": "+10% Cold Res",
               "loc": null,
               "tags": [
-                "boss"
+                "boss",
+                "reward",
+                "res"
               ]
             },
             {
@@ -409,7 +411,9 @@
               "reward": "+2 Skill Points",
               "loc": null,
               "tags": [
-                "boss"
+                "boss",
+                "reward",
+                "skill"
               ]
             },
             {
@@ -464,10 +468,12 @@
             },
             {
               "text": "Big Ritual Altar → kill The King in the Mists +30 Spirit",
-              "reward": null,
+              "reward": "+30 Spirit",
               "loc": null,
               "tags": [
-                "boss"
+                "boss",
+                "reward",
+                "spirit"
               ]
             },
             {
@@ -489,7 +495,9 @@
               "reward": "+2 Skill Points",
               "loc": null,
               "tags": [
-                "item"
+                "item",
+                "reward",
+                "skill"
               ]
             },
             {
@@ -516,10 +524,11 @@
           "steps": [
             {
               "text": "(1st char) Smithing Tools in house Salvage Bench",
-              "reward": null,
+              "reward": "Salvage Bench",
               "loc": null,
               "tags": [
-                "item"
+                "item",
+                "choice"
               ]
             },
             {
@@ -589,7 +598,9 @@
               "reward": "+20 Max Life",
               "loc": null,
               "tags": [
-                "boss"
+                "boss",
+                "reward",
+                "life"
               ]
             },
             {
@@ -1031,7 +1042,9 @@
               "reward": "+2 Skill Points",
               "loc": null,
               "tags": [
-                "boss"
+                "boss",
+                "reward",
+                "skill"
               ]
             },
             {
@@ -1059,11 +1072,12 @@
             },
             {
               "text": "(Opt) Golden Tomb Spirit Gem Lv7",
-              "reward": null,
+              "reward": "Spirit Gem Lv7",
               "loc": null,
               "tags": [
                 "item",
-                "optional"
+                "optional",
+                "choice"
               ]
             },
             {
@@ -1090,10 +1104,11 @@
             },
             {
               "text": "(Opt) Choose Offering (fire/water/lightning) Resist Ring",
-              "reward": null,
+              "reward": "Resist Ring Choice",
               "loc": null,
               "tags": [
-                "optional"
+                "optional",
+                "choice"
               ]
             },
             {
@@ -1173,10 +1188,11 @@
             },
             {
               "text": "(Opt) League mech Random Unique",
-              "reward": null,
+              "reward": "Free Unique",
               "loc": null,
               "tags": [
-                "optional"
+                "optional",
+                "choice"
               ]
             },
             {
@@ -1273,7 +1289,9 @@
               "reward": "+2 Skill Points",
               "loc": null,
               "tags": [
-                "item"
+                "item",
+                "reward",
+                "skill"
               ]
             },
             {
@@ -1330,10 +1348,12 @@
           "steps": [
             {
               "text": "Interact with Sisters of Garukhan shrine +10% Lightning Res",
-              "reward": null,
+              "reward": "+10% Lightning Res",
               "loc": null,
               "tags": [
-                "item"
+                "item",
+                "reward",
+                "res"
               ]
             },
             {
@@ -1533,10 +1553,11 @@
             },
             {
               "text": "Talk to Farrow → accept Quest 3 Unlocks Unique Verisium Runeforging",
-              "reward": null,
+              "reward": "Unique Runeforging",
               "loc": null,
               "tags": [
-                "npc"
+                "npc",
+                "choice"
               ]
             },
             {
@@ -1566,7 +1587,9 @@
               "reward": "+2 Skill Points",
               "loc": null,
               "tags": [
-                "boss"
+                "boss",
+                "reward",
+                "skill"
               ]
             },
             {
@@ -1679,11 +1702,12 @@
           "steps": [
             {
               "text": "Talk to Servi PERMANENT CHOICE",
-              "reward": null,
+              "reward": "Permanent Choice",
               "loc": null,
               "tags": [
                 "npc",
-                "perm"
+                "perm",
+                "choice"
               ]
             },
             {
@@ -1807,11 +1831,13 @@
             },
             {
               "text": "Open door → kill Blackjaw → use Flame Core +10% Fire Res",
-              "reward": null,
+              "reward": "+10% Fire Res",
               "loc": null,
               "tags": [
                 "boss",
-                "item"
+                "item",
+                "reward",
+                "res"
               ]
             },
             {
@@ -1991,20 +2017,23 @@
             },
             {
               "text": "Kill Ignagduk, the Bog Witch → use Gemrot Skull +30 Spirit",
-              "reward": null,
+              "reward": "+30 Spirit",
               "loc": null,
               "tags": [
                 "boss",
-                "item"
+                "item",
+                "reward",
+                "spirit"
               ]
             },
             {
               "text": "Talk Servi in town for Frozen Charm",
-              "reward": null,
+              "reward": "Charm Choice",
               "loc": null,
               "tags": [
                 "npc",
-                "item"
+                "item",
+                "choice"
               ]
             },
             {
@@ -2228,7 +2257,9 @@
               "reward": "+2 Skill Points",
               "loc": null,
               "tags": [
-                "item"
+                "item",
+                "reward",
+                "skill"
               ]
             },
             {
@@ -2510,11 +2541,12 @@
             },
             {
               "text": "Open Chapel, kill Forael, use Goddess of Justice Flask choice",
-              "reward": null,
+              "reward": "Flask Choice",
               "loc": null,
               "tags": [
                 "boss",
-                "item"
+                "item",
+                "choice"
               ]
             },
             {
@@ -2680,7 +2712,9 @@
               "loc": "Silent Hall",
               "tags": [
                 "npc",
-                "perm"
+                "perm",
+                "reward",
+                "mana"
               ]
             },
             {
@@ -2699,10 +2733,11 @@
           "steps": [
             {
               "text": "Trial of Ngakanu (3 tests in clover-leaf), loot Blank Tattoos",
-              "reward": null,
+              "reward": "Blank Tattoos",
               "loc": null,
               "tags": [
-                "item"
+                "item",
+                "choice"
               ]
             },
             {
@@ -2733,15 +2768,18 @@
               "loc": null,
               "tags": [
                 "npc",
-                "perm"
+                "perm",
+                "reward",
+                "skill"
               ]
             },
             {
               "text": "Choose tattoo: +5% Fire/Cold/Lightning Res (recommended) or +5 Str/Dex/Int",
-              "reward": null,
+              "reward": "Tattoo Choice",
               "loc": null,
               "tags": [
-                "perm"
+                "perm",
+                "choice"
               ]
             },
             {
@@ -2829,7 +2867,9 @@
               "loc": null,
               "tags": [
                 "boss",
-                "perm"
+                "perm",
+                "reward",
+                "skill"
               ]
             },
             {
@@ -3019,7 +3059,9 @@
               "loc": null,
               "tags": [
                 "boss",
-                "perm"
+                "perm",
+                "reward",
+                "skill"
               ]
             },
             {
@@ -3049,7 +3091,9 @@
               "tags": [
                 "boss",
                 "npc",
-                "perm"
+                "perm",
+                "reward",
+                "skill"
               ]
             },
             {
@@ -3073,7 +3117,9 @@
               "loc": null,
               "tags": [
                 "item",
-                "perm"
+                "perm",
+                "reward",
+                "life"
               ]
             },
             {
@@ -3084,10 +3130,11 @@
             },
             {
               "text": "Use Orbala's Pillar — pick 1 of 7 Boons (swap anytime) Permanent Boon",
-              "reward": null,
+              "reward": "7 Boons",
               "loc": null,
               "tags": [
-                "item"
+                "item",
+                "choice"
               ]
             },
             {
@@ -3154,11 +3201,13 @@
             },
             {
               "text": "Slay Lythara, the Wayward Spear Gem Lv14 + Gemcrust Skull",
-              "reward": "+40 Spirit Spirit",
+              "reward": "+40 Spirit",
               "loc": null,
               "tags": [
                 "boss",
-                "perm"
+                "perm",
+                "reward",
+                "spirit"
               ]
             },
             {
@@ -3174,7 +3223,9 @@
               "tags": [
                 "boss",
                 "item",
-                "perm"
+                "perm",
+                "reward",
+                "skill"
               ]
             },
             {
@@ -3185,11 +3236,12 @@
             },
             {
               "text": "Find Elder Madox (10–11 o'clock position) Free Unique Item",
-              "reward": null,
+              "reward": "Free Unique",
               "loc": null,
               "tags": [
                 "npc",
-                "perm"
+                "perm",
+                "choice"
               ]
             },
             {
@@ -3228,7 +3280,9 @@
               "loc": null,
               "tags": [
                 "npc",
-                "perm"
+                "perm",
+                "reward",
+                "skill"
               ]
             }
           ]

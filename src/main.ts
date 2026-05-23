@@ -544,6 +544,7 @@ function render() {
     compactStrip.classList.toggle("is-mapping", state.current_area?.area_type === "map");
     compactStrip.classList.toggle("is-hideout", state.current_area?.area_type === "hideout");
     compactStrip.classList.toggle("is-campaign", campaignGuideAct > 0);
+    hudElement!.classList.toggle("compact-checklist-expanded", campaignExpanded && campaignGuideAct > 0);
   }
 
   const difficultyBar = root?.querySelector<HTMLElement>(".compact-difficulty-bar");
@@ -676,6 +677,19 @@ function renderListingPreviewWindow(preview: ListingPreviewRequest | null) {
 
 let compactRuntimeHandle = 0;
 
+function rewardColor(tags: string[], reward: string | null): string {
+  if (tags.includes("choice")) return "#6ee07a";
+  if (tags.includes("skill") || tags.includes("spirit")) return "var(--gold-bright)";
+  if (tags.includes("life")) return "#e0705a";
+  if (tags.includes("mana")) return "#6cb4ee";
+  if (tags.includes("res")) {
+    if (reward?.includes("Cold")) return "#6cb4ee";
+    if (reward?.includes("Fire")) return "#e0705a";
+    return "var(--gold-bright)";
+  }
+  return "var(--vellum-dim)";
+}
+
 function actDisplayName(act: number) {
   const numerals = ["", "I", "II", "III", "IV", "V"];
   return act > 0 ? `ACT ${numerals[act] ?? act}` : "INTERLUDE";
@@ -797,10 +811,12 @@ function renderCampaignChecklist(): void {
   const stepsHtml = zone.steps.map((step, i) => {
     const key = stepKey(campaignGuideAct, zone.name, i);
     const done = campaignCompletedSteps.has(key);
-    const tagLabels = step.tags.length ? ` <small>${step.tags.join(" · ")}</small>` : "";
-    const reward = step.reward ? ` · ${escapeHtml(step.reward)}` : "";
+    const tagLabels = step.tags.join(" · ");
     const loc = step.loc ? ` (${escapeHtml(step.loc)})` : "";
-    return `<div class="checklist-step${done ? " completed" : ""}" data-campaign-step-key="${key}">${done ? "☑" : "☐"} ${escapeHtml(step.text)}${loc}${reward}${tagLabels}</div>`;
+    const rewardHtml = step.reward
+      ? ` <span class="reward-chip" style="color:${rewardColor(step.tags, step.reward)};border-color:${rewardColor(step.tags, step.reward)}">${escapeHtml(step.reward)}</span>`
+      : "";
+    return `<div class="checklist-step${done ? " completed" : ""}" data-campaign-step-key="${key}">${done ? "☑" : "☐"} ${escapeHtml(step.text)}${loc}${rewardHtml}</div>`;
   }).join("");
 
   checklistElement.innerHTML = stepsHtml;
@@ -3469,6 +3485,8 @@ if (!isListingPreviewWindow && leagueElement) {
         target.closest("textarea") ||
         target.closest("option") ||
         target.closest("[role='listbox']") ||
+        target.closest(".compact-strip.is-campaign > div:first-child") ||
+        target.closest("[data-campaign-step-key]") ||
         target.isContentEditable
       ) {
         return;
