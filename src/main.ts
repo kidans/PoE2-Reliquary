@@ -3498,7 +3498,8 @@ if (!isListingPreviewWindow && leagueElement) {
 
   void listen<CurrentAreaInfo>("scan://area-updated", (event) => {
     state.current_area = event.payload;
-    const newAct = event.payload.act ?? 0;
+    const rawAct = event.payload.act ?? 0;
+    const newAct = (rawAct >= 1 && rawAct <= 5) ? rawAct : 0;
     if (newAct !== campaignGuideAct) {
       campaignGuideAct = newAct;
       campaignGuidePage = 0;
