@@ -505,6 +505,7 @@ function render() {
   if (compactStrip) {
     compactStrip.classList.toggle("is-mapping", state.current_area?.area_type === "map");
     compactStrip.classList.toggle("is-hideout", state.current_area?.area_type === "hideout");
+    compactStrip.classList.toggle("is-campaign", campaignGuideAct > 0);
   }
 
   const difficultyBar = root?.querySelector<HTMLElement>(".compact-difficulty-bar");
@@ -637,11 +638,18 @@ function renderListingPreviewWindow(preview: ListingPreviewRequest | null) {
 
 let compactRuntimeHandle = 0;
 
+function actDisplayName(act: number) {
+  const numerals = ["", "I", "II", "III", "IV", "V", "VI"];
+  return act > 0 ? `ACT ${numerals[act] ?? act}` : "INTERLUDE";
+}
+
 function compactTitleText(item: ScannedItem | null) {
   if (campaignGuideAct > 0) {
     const actTime = formatCampaignTime(campaignActTimes[Math.max(0, campaignGuideAct - 1)] ?? 0);
     const total = formatCampaignTime(campaignTotalMs);
-    return `A${campaignGuideAct} \u00B7 ${actTime} / ${total}`;
+    const area = state.current_area;
+    const zoneName = area?.name ?? "";
+    return `${actDisplayName(campaignGuideAct)} \u00B7 ${zoneName} \u00B7 ${actTime} / ${total}`;
   }
 
   if (state.current_area?.area_type === "map") {
@@ -678,7 +686,7 @@ function compactMetaText(status: string) {
       const total = zone.steps.length;
       const tagStr = next.step.tags.length ? `${next.step.tags.map(t => `[${t}]`).join(" ")} ` : "";
       const reward = next.step.reward ? ` \u00B7 ${next.step.reward}` : "";
-      return `${tagStr}${next.step.text}${reward} \u00B7 ${done}/${total}`;
+      return `${tagStr}${escapeHtml(next.step.text)}${reward} \u00B7 ${done}/${total}`;
     }
     return "All tasks complete — enter next zone";
   }
@@ -2178,41 +2186,32 @@ function renderDataPanel() {
 function renderCampaignSection() {
   const total = formatCampaignTime(campaignTotalMs);
   const actTime = formatCampaignTime(campaignActTimes[campaignGuideAct - 1] ?? 0);
-  const actLabel = campaignGuideAct > 0 ? `A${campaignGuideAct}` : "A?";
+  const actLabel = actDisplayName(campaignGuideAct);
   const zone = findCurrentZoneInGuide();
-  const act = campaignGuideActs.find(a => a.act === campaignGuideAct);
+  const area = state.current_area;
+  const zoneName = area?.name ?? "";
 
   if (!zone && campaignGuideAct > 0) {
     return `
-      <div>
-        <span>Campaign</span>
-        <strong>${actLabel} · ${total} total · ${actTime} this act</strong>
-        <small>
-          <button class="chrome-button" data-campaign-timer type="button">${campaignTimerRunning ? "Pause" : "Start"}</button>
-        </small>
-        <small>No guide data matched for "${escapeHtml(state.current_area?.name ?? "")}" in Act ${campaignGuideAct}.</small>
+      <div class="campaign-panel">
+        <p class="campaign-empty">No guide data matched for "${escapeHtml(zoneName)}" in Act ${campaignGuideAct}.</p>
+        <div class="campaign-status${campaignTimerRunning ? " running" : " paused"}" data-campaign-timer>
+          ${actLabel} · ${escapeHtml(zoneName)} · ${actTime} / ${total}
+        </div>
       </div>
     `;
   }
 
   if (!zone) {
     return `
-      <div>
-        <span>Campaign</span>
-        <strong>${actLabel} · ${total} total · ${actTime} this act</strong>
-        <small>
-          <button class="chrome-button" data-campaign-timer type="button">${campaignTimerRunning ? "Pause" : "Start"}</button>
-        </small>
-        <small>Enter a campaign zone to see the guide.</small>
+      <div class="campaign-panel">
+        <p class="campaign-empty">Enter a campaign zone to see the guide.</p>
+        <div class="campaign-status${campaignTimerRunning ? " running" : ""}" data-campaign-timer>
+          ${actLabel} · ${actTime} / ${total}
+        </div>
       </div>
     `;
   }
-
-  const completedCount = zone.steps.filter((_, i) =>
-    campaignCompletedSteps.has(stepKey(campaignGuideAct, zone.name, i))
-  ).length;
-  const totalSteps = zone.steps.length;
-  const levelInfo = act ? `${act.name} · Lvl ${act.level_range}` : "";
 
   const stepsHtml = zone.steps.map((step, i) => {
     const key = stepKey(campaignGuideAct, zone.name, i);
@@ -2224,15 +2223,13 @@ function renderCampaignSection() {
   }).join("");
 
   return `
-    <div>
-      <span>Campaign</span>
-      <strong>${actLabel} · ${total} total · ${actTime} this act</strong>
-      <small>${zone.name} · Lvl ${zone.level}${zone.waypoint ? " · WP" : ""}${zone.town ? " · Town" : ""} · ${completedCount}/${totalSteps}</small>
-      <small>
-        <button class="chrome-button" data-campaign-timer type="button">${campaignTimerRunning ? "Pause" : "Start"}</button>
-        <small>${escapeHtml(levelInfo)}</small>
-      </small>
-      <ul class="guide-list">${stepsHtml}</ul>
+    <div class="campaign-panel">
+      <div class="campaign-steps">
+        <ul class="guide-list">${stepsHtml}</ul>
+      </div>
+      <div class="campaign-status${campaignTimerRunning ? " running" : " paused"}" data-campaign-timer>
+        ${actLabel} · ${escapeHtml(zone.name)} · ${actTime} / ${total}
+      </div>
     </div>
   `;
 }
@@ -3113,7 +3110,7 @@ if (!isListingPreviewWindow && leagueElement) {
     const stashNoteButton = target.closest<HTMLButtonElement>("[data-copy-stash-note]");
     const resetVisualSettingsButton = target.closest<HTMLButtonElement>("[data-reset-visual-settings]");
     const campaignStepButton = target.closest<HTMLElement>("[data-campaign-step-key]");
-    const campaignTimerButton = target.closest<HTMLButtonElement>("[data-campaign-timer]");
+    const campaignTimerButton = target.closest<HTMLElement>("[data-campaign-timer]");
     const compactMetaElement = target.closest<HTMLElement>("[data-compact-meta]");
 
     if (resetVisualSettingsButton) {
