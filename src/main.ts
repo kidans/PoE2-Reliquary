@@ -3644,6 +3644,13 @@ if (!isListingPreviewWindow && leagueElement) {
       state.trade_queue = initialState.trade_queue;
       state.current_zone = initialState.current_zone || "Unknown";
       state.current_area = initialState.current_area || null;
+      if (state.current_area) {
+        const rawAct = state.current_area.act ?? 0;
+        campaignGuideAct = remapCampaignAct(rawAct);
+        if (campaignGuideAct > 0 && state.current_area.area_type !== "hideout") {
+          startCampaignTimer();
+        }
+      }
       state.trade_league = initialState.trade_league || state.trade_league;
       state.league_catalog = initialState.league_catalog || [];
       state.trade_leagues = initialState.trade_leagues || [];
