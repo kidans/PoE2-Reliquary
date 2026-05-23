@@ -17,6 +17,8 @@ use tauri::{
     Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl,
     WebviewWindowBuilder,
 };
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use thiserror::Error;
 use tokio::sync::{mpsc, Mutex};
 #[cfg(target_os = "windows")]
@@ -1001,6 +1003,44 @@ pub fn run() {
             window.set_always_on_top(true)?;
             window.set_ignore_cursor_events(false)?;
             create_listing_preview_window(app)?;
+
+            let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
+            let hide = MenuItemBuilder::with_id("hide", "Hide").build(app)?;
+            let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            let menu = MenuBuilder::new(app).items(&[&show, &hide, &quit]).build()?;
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("Reliquary")
+                .menu(&menu)
+                .on_menu_event(|app, event| {
+                    let window = match app.get_webview_window("main") {
+                        Some(w) => w,
+                        None => return,
+                    };
+                    match event.id.as_ref() {
+                        "show" => { let _ = window.show(); }
+                        "hide" => { let _ = window.hide(); }
+                        "quit" => { app.exit(0); }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up, ..
+                    } = event {
+                        let window = match tray.app_handle().get_webview_window("main") {
+                            Some(w) => w,
+                            None => return,
+                        };
+                        let _ = if window.is_visible().unwrap_or(false) {
+                            window.hide()
+                        } else {
+                            window.show()
+                        };
+                    }
+                })
+                .build(app)?;
 
             let state = app.state::<SharedAppState>().inner().clone();
             let app_handle = app.handle().clone();

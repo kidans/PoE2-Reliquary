@@ -99,7 +99,6 @@ select {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
-  filter: saturate(var(--saturation, 100%));
   border: 1px solid hsl(var(--accent-hue, 355) 70% 58% / calc(var(--surface-alpha) * 0.56));
   border-radius: 0;
   background:
@@ -132,6 +131,7 @@ select {
   inset: 0;
   pointer-events: none;
   content: "";
+  filter: saturate(var(--saturation, 100%));
   opacity: calc(var(--surface-alpha) * 0.08);
   background-image:
     linear-gradient(90deg, hsl(var(--accent-hue, 355) 80% 72% / 0.045) 1px, transparent 1px),
@@ -568,6 +568,7 @@ kbd {
   border: 1px solid hsl(var(--accent-hue, 355) 70% 58% / 0.24);
   border-radius: 11px;
   padding: 10px;
+  filter: saturate(var(--saturation, 100%));
   background:
     linear-gradient(180deg, rgba(23, 13, 15, 0.86), rgba(9, 9, 10, 0.94)),
     var(--char);
@@ -987,6 +988,7 @@ kbd {
   border-radius: 13px;
   padding: 11px;
   background: rgba(9, 9, 10, 0.96);
+  filter: saturate(var(--saturation, 100%));
 }
 
 .settings-field-static {
