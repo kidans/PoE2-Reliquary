@@ -599,6 +599,14 @@ function render() {
       panelElement!.innerHTML = renderTradePanel(state.exchange_tab);
       hoveredListingPreview = null;
       void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+
+      if (!state.exchange_tab.overview && !state.exchange_tab.status.includes("Loading")) {
+        const cat = state.exchange_tab.selected_category_id || "currency";
+        state.exchange_tab.status = `Loading ${exchangeCategoryLabel(cat)} overview...`;
+        void invoke("set_exchange_category", { categoryId: cat }).catch((err) =>
+          pushStatus("exchange", String(err)),
+        );
+      }
     }
 
     if (activeTab === "data") {
@@ -2850,7 +2858,10 @@ function applyAppSettings(settings: AppSettings) {
   rootStyle.setProperty("--accent-hue", String(hue));
   rootStyle.setProperty("--line", `hsl(${hue} 70% 58% / 0.26)`);
   rootStyle.setProperty("--line-strong", `hsl(${hue} 70% 58% / 0.56)`);
-  rootStyle.setProperty("--saturation", settings.saturation.toFixed(0) + "%");
+  const sat = settings.saturation / 100;
+  rootStyle.setProperty("--saturation", (settings.saturation).toFixed(0) + "%");
+  rootStyle.setProperty("--accent-sat", (70 * sat).toFixed(0) + "%");
+  rootStyle.setProperty("--accent-sat-bg", (62 * sat).toFixed(0) + "%");
   rootStyle.setProperty("--surface-alpha", settings.panelAlpha.toFixed(2));
   rootStyle.setProperty("--surface-glow-alpha", (settings.panelAlpha * 0.16).toFixed(3));
   void invoke("set_keybinds", {
