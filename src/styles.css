@@ -2845,7 +2845,6 @@ kbd {
   min-height: 38px;
   padding: 0;
   gap: 0;
-  overflow: hidden;
 }
 
 .compact-strip.is-campaign > div:first-child {
@@ -2853,19 +2852,18 @@ kbd {
   flex-direction: column;
   justify-content: center;
   gap: 1px;
-  padding: 0 36px 0 12px;
+  padding: 0 12px;
   min-height: 38px;
   min-width: 0;
   box-sizing: border-box;
   cursor: pointer;
-  overflow: hidden;
 }
 
 .compact-strip.is-campaign > div:first-child span {
   display: block;
+  max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: clip;
 }
 
 .compact-strip.is-campaign > div:first-child span.scroll-text {

@@ -540,17 +540,15 @@ function render() {
   renderCampaignChecklist();
 
   if (campaignGuideAct > 0 && compactTitleElement) {
-    requestAnimationFrame(() => {
-      const w = compactTitleElement.scrollWidth;
-      const c = compactTitleElement.clientWidth;
-      if (w > c) {
-        compactTitleElement.style.setProperty("--scroll-distance", `${-(w - c + 20)}px`);
-        compactTitleElement.style.setProperty("--scroll-duration", `${Math.max(10, (w - c) / 25)}s`);
-        compactTitleElement.classList.add("scroll-text");
-      } else {
-        compactTitleElement.classList.remove("scroll-text");
-      }
-    });
+    const text = compactTitleElement.textContent ?? "";
+    if (text.length > 68) {
+      const overflow = text.length - 68;
+      compactTitleElement.style.setProperty("--scroll-distance", `${-overflow * 7}px`);
+      compactTitleElement.style.setProperty("--scroll-duration", `${Math.max(10, overflow / 4)}s`);
+      compactTitleElement.classList.add("scroll-text");
+    } else {
+      compactTitleElement.classList.remove("scroll-text");
+    }
   }
 
   const compactStrip = root?.querySelector<HTMLElement>(".compact-strip");
