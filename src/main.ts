@@ -579,27 +579,29 @@ function render() {
     difficultyBar.classList.toggle("has-hazards", hazardCount > 0);
   }
 
-  if (activeTab === "scan") {
-    panelElement!.innerHTML = renderScanPanel(state.scanned_item, state.price_check);
-    queueEvaluateLayoutSync();
-  }
+  if (!compactMode) {
+    if (activeTab === "scan") {
+      panelElement!.innerHTML = renderScanPanel(state.scanned_item, state.price_check);
+      queueEvaluateLayoutSync();
+    }
 
-  if (activeTab === "trade") {
-    panelElement!.innerHTML = renderTradePanel(state.exchange_tab);
-    hoveredListingPreview = null;
-    void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
-  }
+    if (activeTab === "trade") {
+      panelElement!.innerHTML = renderTradePanel(state.exchange_tab);
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
 
-  if (activeTab === "data") {
-    panelElement!.innerHTML = renderDataPanel();
-    hoveredListingPreview = null;
-    void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
-  }
+    if (activeTab === "data") {
+      panelElement!.innerHTML = renderDataPanel();
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
 
-  if (activeTab === "settings") {
-    panelElement!.innerHTML = renderSettingsPanel();
-    hoveredListingPreview = null;
-    void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    if (activeTab === "settings") {
+      panelElement!.innerHTML = renderSettingsPanel();
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
   }
 
   syncWindowLayout();
@@ -824,9 +826,14 @@ function renderCampaignChecklist(): void {
   const zone = findCurrentZoneInGuide();
   if (!checklistElement) return;
 
-  if (!zone || campaignGuideAct <= 0) {
+  if (campaignGuideAct <= 0) {
     checklistElement.innerHTML = "";
     checklistElement.classList.remove("is-expanded");
+    return;
+  }
+
+  if (!zone) {
+    checklistElement.classList.toggle("is-expanded", campaignExpanded);
     return;
   }
 
