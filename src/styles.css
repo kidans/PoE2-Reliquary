@@ -2856,6 +2856,25 @@ kbd {
   min-height: 38px;
   box-sizing: border-box;
   cursor: pointer;
+  overflow: hidden;
+}
+
+.compact-strip.is-campaign > div:first-child span {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compact-strip.is-campaign > div:first-child span.scroll-text {
+  text-overflow: clip;
+  animation: marquee var(--scroll-duration, 8s) linear infinite;
+}
+
+@keyframes marquee {
+  0%, 12%   { transform: translateX(0); }
+  45%, 55%  { transform: translateX(var(--scroll-distance, -100px)); }
+  88%, 100% { transform: translateX(0); }
 }
 
 .compact-strip.is-campaign > div:first-child strong {

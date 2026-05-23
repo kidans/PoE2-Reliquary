@@ -539,6 +539,20 @@ function render() {
   compactMetaElement!.classList.toggle("timer-running", campaignTimerRunning && campaignGuideAct > 0);
   renderCampaignChecklist();
 
+  if (campaignGuideAct > 0 && compactTitleElement) {
+    requestAnimationFrame(() => {
+      const w = compactTitleElement.scrollWidth;
+      const c = compactTitleElement.clientWidth;
+      if (w > c) {
+        compactTitleElement.style.setProperty("--scroll-distance", `${-(w - c + 20)}px`);
+        compactTitleElement.style.setProperty("--scroll-duration", `${Math.max(4, (w - c) / 40)}s`);
+        compactTitleElement.classList.add("scroll-text");
+      } else {
+        compactTitleElement.classList.remove("scroll-text");
+      }
+    });
+  }
+
   const compactStrip = root?.querySelector<HTMLElement>(".compact-strip");
   if (compactStrip) {
     compactStrip.classList.toggle("is-mapping", state.current_area?.area_type === "map");
@@ -706,12 +720,11 @@ function compactTitleText(item: ScannedItem | null) {
     const next = findNextIncompleteStep();
     if (next) {
       const zone = next.zone;
-      const tagStr = next.step.tags.length ? next.step.tags.map(t => `[${t}]`).join(" ") + " " : "";
       const reward = next.step.reward ? ` \u00B7 ${next.step.reward}` : "";
       const done = zone.steps.filter((_, i) =>
         campaignCompletedSteps.has(stepKey(campaignGuideAct, zone.name, i))
       ).length;
-      return `${tagStr}${next.step.text}${reward} \u00B7 ${done}/${zone.steps.length} \u25B8`;
+      return `${next.step.text}${reward} \u00B7 ${done}/${zone.steps.length} \u25B8`;
     }
     return "All tasks complete \u00B7 enter next zone";
   }
