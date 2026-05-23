@@ -2838,34 +2838,29 @@ kbd {
   gap: 0;
 }
 
-.compact-collapsed {
+.compact-strip.is-campaign > div:first-child {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-  min-height: 38px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
   padding: 0 12px;
+  min-height: 38px;
   box-sizing: border-box;
 }
 
-.compact-collapsed span {
-  color: #f7d6d8;
-  font-size: 12px;
-  font-weight: 800;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.compact-strip.is-campaign > div:first-child span {
+  cursor: pointer;
 }
 
-.compact-collapsed strong {
-  color: var(--gold-bright);
-  font-size: 10px;
-  font-weight: 700;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex-shrink: 0;
+.compact-strip.is-campaign > div:first-child strong {
+  color: #e0705a;
+  transition: color 0.3s, text-shadow 0.3s;
+}
+
+.compact-strip.is-campaign > div:first-child strong.timer-running {
+  color: #6ee07a;
+  text-shadow: 0 0 8px rgba(100, 240, 120, 0.4);
+  animation: timer-glow 2s ease-in-out infinite alternate;
 }
 
 .compact-checklist {
@@ -2873,14 +2868,14 @@ kbd {
   overflow-y: auto;
   width: 100%;
   max-height: 280px;
-  padding: 0 8px;
+  padding: 6px 8px;
   box-sizing: border-box;
+  border-top: 1px solid hsl(var(--accent-hue, 355) 70% 58% / 0.14);
+  border-bottom: 1px solid hsl(var(--accent-hue, 355) 70% 58% / 0.14);
 }
 
 .compact-checklist.is-expanded {
   display: block;
-  border-top: 1px solid hsl(var(--accent-hue, 355) 70% 58% / 0.14);
-  border-bottom: 1px solid hsl(var(--accent-hue, 355) 70% 58% / 0.14);
 }
 
 .checklist-step {
@@ -2916,45 +2911,14 @@ kbd {
   margin: 0 !important;
 }
 
-.compact-campaign-bar {
-  display: none;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  min-height: 26px;
-  padding: 2px 12px;
-  box-sizing: border-box;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--vellum-dim);
-  border-top: 1px solid hsl(var(--accent-hue, 355) 70% 58% / 0.14);
-}
-
-.step-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 1px 8px;
-  border-radius: 8px;
-  font-size: 10px;
-  font-weight: 800;
-  color: var(--gold-bright);
-  background: rgba(255, 255, 255, 0.06);
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.15s, color 0.15s;
-}
-
-.step-badge:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-}
-
 .compact-strip.is-campaign .compact-difficulty-bar {
   display: none;
 }
 
-.compact-strip.is-campaign .chrome-button {
-  position: static;
+.compact-strip.is-campaign > button {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 

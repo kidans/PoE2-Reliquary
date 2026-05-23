@@ -382,9 +382,9 @@ function startCampaignTimer() {
     const actIdx = Math.max(0, campaignGuideAct - 1);
     campaignActTimes[actIdx] += 1000;
     campaignTotalMs += 1000;
-    const compact = root?.querySelector<HTMLElement>("[data-compact-title]");
+    const compact = root?.querySelector<HTMLElement>("[data-compact-meta]");
     if (compact && campaignGuideAct > 0) {
-      compact.textContent = compactTitleText(state.scanned_item);
+      compact.textContent = compactMetaText("");
     }
   }, 1000);
 }
@@ -455,15 +455,11 @@ root.innerHTML = isListingPreviewWindow
         </header>
 
         <div class="compact-strip" data-drag-handle>
-          <div class="compact-collapsed">
+          <div>
             <span data-compact-title>Reliquary ready</span>
             <strong data-compact-meta>Ctrl+C scan | Alt+D trade</strong>
           </div>
           <div class="compact-checklist" data-compat-checklist></div>
-          <div class="compact-campaign-bar" data-compact-campaign-bar style="display:none">
-            <span data-compact-campaign-timer></span>
-            <span class="step-badge" data-expand-campaign></span>
-          </div>
           <div class="compact-difficulty-bar" aria-hidden="true"></div>
           <button class="chrome-button" data-toggle-compact type="button">Open</button>
         </div>
@@ -510,9 +506,6 @@ const hudElement = isListingPreviewWindow ? null : root.querySelector<HTMLElemen
 const compactTitleElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-title]");
 const compactMetaElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-meta]");
 const checklistElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compat-checklist]");
-const campaignBarElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-campaign-bar]");
-const campaignTimerElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-campaign-timer]");
-const campaignBadgeElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-expand-campaign]");
 const tabButtons = isListingPreviewWindow
   ? []
   : Array.from(root.querySelectorAll<HTMLButtonElement>("[data-tab]"));
@@ -543,6 +536,7 @@ function render() {
 
   compactTitleElement!.textContent = compactTitleText(state.scanned_item);
   compactMetaElement!.innerHTML = compactMetaText(lastStatus);
+  compactMetaElement!.classList.toggle("timer-running", campaignTimerRunning && campaignGuideAct > 0);
   renderCampaignChecklist();
 
   const compactStrip = root?.querySelector<HTMLElement>(".compact-strip");
@@ -695,11 +689,17 @@ function remapCampaignAct(raw: number): number {
 
 function compactTitleText(item: ScannedItem | null) {
   if (campaignGuideAct > 0) {
-    const actTime = formatCampaignTime(campaignActTimes[Math.max(0, campaignGuideAct - 1)] ?? 0);
-    const total = formatCampaignTime(campaignTotalMs);
-    const area = state.current_area;
-    const zoneName = area?.name ?? "";
-    return `${actDisplayName(campaignGuideAct)} \u00B7 ${zoneName} \u00B7 ${actTime} / ${total}`;
+    const next = findNextIncompleteStep();
+    if (next) {
+      const zone = next.zone;
+      const tagStr = next.step.tags.length ? next.step.tags.map(t => `[${t}]`).join(" ") + " " : "";
+      const reward = next.step.reward ? ` \u00B7 ${next.step.reward}` : "";
+      const done = zone.steps.filter((_, i) =>
+        campaignCompletedSteps.has(stepKey(campaignGuideAct, zone.name, i))
+      ).length;
+      return `${tagStr}${next.step.text}${reward} \u00B7 ${done}/${zone.steps.length} \u25B8`;
+    }
+    return "All tasks complete \u00B7 enter next zone";
   }
 
   if (state.current_area?.area_type === "map") {
@@ -727,18 +727,12 @@ function compactTitleText(item: ScannedItem | null) {
 
 function compactMetaText(status: string) {
   if (campaignGuideAct > 0) {
-    const next = findNextIncompleteStep();
-    if (next) {
-      const zone = next.zone;
-      const done = zone.steps.filter((_, i) =>
-        campaignCompletedSteps.has(stepKey(campaignGuideAct, zone.name, i))
-      ).length;
-      const total = zone.steps.length;
-      const tagStr = next.step.tags.length ? `${next.step.tags.map(t => `[${t}]`).join(" ")} ` : "";
-      const reward = next.step.reward ? ` \u00B7 ${next.step.reward}` : "";
-      return `${tagStr}${escapeHtml(next.step.text)}${reward} \u00B7 ${done}/${total}`;
-    }
-    return "All tasks complete — enter next zone";
+    const actTime = formatCampaignTime(campaignActTimes[Math.max(0, campaignGuideAct - 1)] ?? 0);
+    const total = formatCampaignTime(campaignTotalMs);
+    const area = state.current_area;
+    const zoneName = area?.name ?? "";
+    const glow = campaignTimerRunning ? " \u25CF" : " \u25CB";
+    return `${actDisplayName(campaignGuideAct)} \u00B7 ${escapeHtml(zoneName)} \u00B7 ${actTime} / ${total}${glow}`;
   }
 
   if (state.current_area?.area_type === "map") {
@@ -792,11 +786,11 @@ function compactMetaText(status: string) {
 
 function renderCampaignChecklist(): void {
   const zone = findCurrentZoneInGuide();
-  if (!checklistElement || !campaignBarElement || !campaignBadgeElement || !campaignTimerElement) return;
+  if (!checklistElement) return;
 
   if (!zone || campaignGuideAct <= 0) {
     checklistElement.innerHTML = "";
-    campaignBarElement.style.display = "none";
+    checklistElement.classList.remove("is-expanded");
     return;
   }
 
@@ -809,21 +803,8 @@ function renderCampaignChecklist(): void {
     return `<div class="checklist-step${done ? " completed" : ""}" data-campaign-step-key="${key}">${done ? "☑" : "☐"} ${escapeHtml(step.text)}${loc}${reward}${tagLabels}</div>`;
   }).join("");
 
-  const completedCount = zone.steps.filter((_, i) =>
-    campaignCompletedSteps.has(stepKey(campaignGuideAct, zone.name, i))
-  ).length;
-  const totalSteps = zone.steps.length;
-
-  const actTime = formatCampaignTime(campaignActTimes[campaignGuideAct - 1] ?? 0);
-  const total = formatCampaignTime(campaignTotalMs);
-  const actName = actDisplayName(campaignGuideAct);
-  const areaName = escapeHtml(state.current_area?.name ?? "");
-
   checklistElement.innerHTML = stepsHtml;
   checklistElement.classList.toggle("is-expanded", campaignExpanded);
-  campaignTimerElement.textContent = `${actName} · ${areaName} · ${actTime} / ${total}`;
-  campaignBadgeElement.innerHTML = `${completedCount}/${totalSteps} ${campaignExpanded ? "▾" : "▸"}`;
-  campaignBarElement.style.display = "flex";
 }
 
 function compactMapMetaText(area: CurrentAreaInfo) {
@@ -3206,8 +3187,8 @@ if (!isListingPreviewWindow && leagueElement) {
     const resetVisualSettingsButton = target.closest<HTMLButtonElement>("[data-reset-visual-settings]");
     const campaignStepButton = target.closest<HTMLElement>("[data-campaign-step-key]");
     const campaignTimerButton = target.closest<HTMLElement>("[data-campaign-timer]");
-    const expandCampaignBadge = target.closest<HTMLElement>("[data-expand-campaign]");
-    const compactMetaElement = target.closest<HTMLElement>("[data-compact-meta]");
+    const compactMetaClick = target.closest<HTMLElement>("[data-compact-meta]");
+    const compactTitleClick = target.closest<HTMLElement>("[data-compact-title]");
 
     if (resetVisualSettingsButton) {
       appSettings = { ...DEFAULT_APP_SETTINGS };
@@ -3333,25 +3314,10 @@ if (!isListingPreviewWindow && leagueElement) {
       return;
     }
 
-    if (expandCampaignBadge) {
+    if (compactTitleClick && campaignGuideAct > 0) {
       campaignExpanded = !campaignExpanded;
       render();
       syncCompactWindowHeight();
-      return;
-    }
-
-    if (campaignTimerButton) {
-      if (campaignTimerRunning) {
-        stopCampaignTimer();
-      } else {
-        startCampaignTimer();
-      }
-      render();
-    }
-
-    if (compactMetaElement && campaignGuideAct > 0) {
-      toggleCampaignStep();
-      render();
       return;
     }
   });
