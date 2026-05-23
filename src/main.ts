@@ -278,6 +278,33 @@ let campaignCompletedSteps = new Set<string>();
 let campaignCurrentZone = "";
 const CAMPAIGN_STORAGE_KEY = "reliquary.campaign.progress";
 
+const INTERLUDE_ZONE_MAP: Record<string, string> = {
+  "scorched farmlands": "Interlude 5.1 — Ogham, The Refuge",
+  "stones of serle": "Interlude 5.1 — Ogham, The Refuge",
+  "the blackwood": "Interlude 5.1 — Ogham, The Refuge",
+  "holten": "Interlude 5.1 — Ogham, The Refuge",
+  "wolvenhold": "Interlude 5.1 — Ogham, The Refuge",
+  "holten estate": "Interlude 5.1 — Ogham, The Refuge",
+  "the refuge": "Interlude 5.1 — Ogham, The Refuge",
+  "the khari crossing": "Interlude 5.2 — Khari Bazaar",
+  "pools of khatal": "Interlude 5.2 — Khari Bazaar",
+  "sel khari sanctuary": "Interlude 5.2 — Khari Bazaar",
+  "river barrens": "Interlude 5.2 — Khari Bazaar",
+  "the galai gates": "Interlude 5.2 — Khari Bazaar",
+  "qimah": "Interlude 5.2 — Khari Bazaar",
+  "qimah reservoir": "Interlude 5.2 — Khari Bazaar",
+  "the khari bazaar": "Interlude 5.2 — Khari Bazaar",
+  "ashen forest": "Interlude 5.3 — Mount Kriar, The Glade",
+  "kriar village": "Interlude 5.3 — Mount Kriar, The Glade",
+  "glacial tarn": "Interlude 5.3 — Mount Kriar, The Glade",
+  "howling caves": "Interlude 5.3 — Mount Kriar, The Glade",
+  "kriar peaks": "Interlude 5.3 — Mount Kriar, The Glade",
+  "etched ravine": "Interlude 5.3 — Mount Kriar, The Glade",
+  "the cuachic vault": "Interlude 5.3 — Mount Kriar, The Glade",
+  "the glade": "Interlude 5.3 — Mount Kriar, The Glade",
+  "interlude": "Maps / Endgame",
+};
+
 function saveCampaignProgress() {
   try {
     localStorage.setItem(CAMPAIGN_STORAGE_KEY, JSON.stringify({
@@ -310,6 +337,12 @@ function findCurrentZoneInGuide() {
   const act = campaignGuideActs.find(a => a.act === campaignGuideAct);
   if (!act) return null;
   const name = areaName.toLowerCase().trim();
+
+  if (campaignGuideAct === 5) {
+    const mapped = INTERLUDE_ZONE_MAP[name];
+    if (mapped) return act.zones.find(z => z.name === mapped) ?? null;
+  }
+
   return act.zones.find(z => z.name.toLowerCase().trim() === name)
     ?? act.zones.find(z => name.includes(z.name.toLowerCase().trim()))
     ?? act.zones.find(z => z.name.toLowerCase().trim().includes(name))
