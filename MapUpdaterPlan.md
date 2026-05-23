@@ -208,3 +208,72 @@ function compactMetaText(status: string): string {
 | P5 | Integration testing (all 6 acts, persistence, UI) | 1.5h |
 | **Total** | | **10h** |
 
+---
+
+# Time Store Card — Per-Act Timer Auto-Start
+
+## Goal
+Replace the Data tab campaign card with a pure "time store" showing all 5 acts with cumulative per-act times. Timer auto-starts on campaign zone entry, pauses on hideout. Checklist moves out of Data tab (compact strip only + Option B overlay later).
+
+## Design
+
+### Auto-start/stop logic
+```
+Enter Act I zone  → Act I timer auto-starts, card shows ACT I glowing
+Enter Act II zone → Act I stops ticking, Act II resumes, card shows ACT II glowing
+Enter hideout     → All timers pause (you're in endgame)
+Enter INTERLUDE   → All timers pause (act = 0)
+```
+
+### Data tab card (time store)
+```
+┌─────────────────────────────┐
+│ ACT I    ·    2:34    [glow]│
+│ ACT II   ·    0:00          │
+│ ACT III  ·    0:00          │
+│ ACT IV   ·    0:00          │
+│ ACT V    ·    0:00          │
+│                             │
+│           [Reset]           │
+└─────────────────────────────┘
+```
+- Current act row has green pulsing glow (same as timer-glow animation)
+- Other acts show static text in vellum-dim
+- Reset button zeros all act times (new character)
+
+### Data flow
+- `campaignActTimes[]` already exists (8 slots, actIdx = act - 1)
+- Timer interval already ticks `campaignActTimes[actIdx] += 1000`
+- Need: persistence (localStorage), auto-start (area-updated handler), time store card (render)
+- Need: remove manual Start/Pause button, remove checklist from Data tab
+
+### Persistence
+Add to `saveCampaignProgress`/`loadCampaignProgress`:
+```typescript
+{ actTimes: number[], totalMs: number }
+```
+**Note:** `campaignTotalMs` is redundant (sum of all actTimes) but saved for backward compat.
+
+### Edge cases
+- **Already running**: `startCampaignTimer()` guards `if (campaignTimerHandle) return`
+- **Act switch while running**: Timer stays running, next tick hits new `actIdx` — no state change needed
+- **Restart**: All times restored from localStorage on init
+- **Corrupted storage**: `try/catch` with `[]` fallback
+
+### What gets removed
+- Manual Start/Pause button (timer is fully automatic)
+- Campaign checklist `<ul>` from Data tab (guide steps stay in compact strip only)
+- `campaignTimerRunning` no longer user-toggled — driven by zone entry only
+
+### Implementation tasks
+
+| # | Task | Est. |
+|---|------|:---:|
+| T1 | Persist `actTimes` + `totalMs` to localStorage | 30m |
+| T2 | Auto-start timer in `area-updated` handler, stop on hideout | 15m |
+| T3 | Time store card UI (all 5 acts, glow on current) | 1h |
+| T4 | Reset button | 15m |
+| T5 | Remove manual Start/Pause, checklist from Data tab | 15m |
+| T6 | Integration test (act switching, persistence, restart) | 30m |
+| **Total** | | **~3h** |
+
