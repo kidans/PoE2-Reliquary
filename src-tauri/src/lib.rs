@@ -1481,11 +1481,12 @@ fn handle_global_input_event(
 }
 
 fn active_window_allows_overlay_visibility() -> bool {
-    is_poe2_running() || is_overlay_window_title(&active_window_title())
+    let title = active_window_title();
+    (is_poe2_running() && is_poe_window_title(&title)) || is_overlay_window_title(&title)
 }
 
 fn active_window_is_poe2() -> bool {
-    is_poe_window_title(&active_window_title())
+    is_poe2_running() && is_poe_window_title(&active_window_title())
 }
 
 #[cfg(target_os = "windows")]
