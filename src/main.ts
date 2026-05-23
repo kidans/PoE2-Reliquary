@@ -25,7 +25,31 @@ import {
   type ScannedItem,
   type TradeRateLimit,
 } from "./evaluate";
+import guideData from "./campaign-guide.json";
 import "./styles.css";
+
+type GuideStep = {
+  text: string;
+  loc?: string | null;
+  reward?: string | null;
+  tags: string[];
+};
+
+type GuideZone = {
+  name: string;
+  level: string;
+  waypoint: boolean;
+  town: boolean;
+  steps: GuideStep[];
+};
+
+type GuideAct = {
+  act: number;
+  name: string;
+  level_range: string;
+  rewards: string[];
+  zones: GuideZone[];
+};
 
 type TabId = "scan" | "trade" | "data" | "settings";
 
@@ -243,165 +267,99 @@ let previewPollHandle = 0;
 let latestRequestedFilterSignature: string | null = null;
 let activeFilterPushTimer = 0;
 
-const campaignGuide: string[][][] = [
-  [
-    ["kill the Bloated Miller", "enter area: Clearfell Encampment"],
-    ["Renly: skill gem option", "(optional rewards available)", "enter area: Clearfell"],
-    ["optional: skill gem + transmute", "kill Beira", "enter area: The Grelwood"],
-    ["optional: flasks + supports", "get waypoint", "enter area: The Red Vale"],
-    ["clear 3 obelisks for 3 runes", "portal to Clearfell Encampment"],
-    ["Renly: Runed Spikes", "waypoint to The Grelwood"],
-    ["break 3 runic seals", "portal to Clearfell Encampment"],
-    ["Una: quest", "waypoint to The Grim Tangle"],
-    ["enter Cemetery of the Eternals"],
-    ["activate waypoint", "enter Tomb of the Consort"],
-    ["optional: amulet", "kill Asinia for key piece", "return to Cemetery"],
-    ["enter Mausoleum of the Praetor"],
-    ["kill Draven for key piece", "return to Cemetery"],
-    ["open gate, kill Lachlann for ring", "portal to Clearfell Encampment"],
-    ["Una: Hooded One", "waypoint to Hunting Grounds"],
-    ["optional: exalt + support", "kill Crowbell for book", "enter Freythorn for waypoint", "enter Ogham Farmlands"],
-    ["optional: skill gem + crop circle", "find hut for lute", "enter Ogham Village"],
-    ["waypoint to Clearfell Encampment", "waypoint to Freythorn"],
-    ["clear 4 rituals", "portal to Clearfell Encampment"],
-    ["Finn: elemental resistance charm", "waypoint to Ogham Village"],
-    ["find workshop tools", "kill Executioner", "enter Manor Ramparts"],
-    ["enter Ogham Manor"],
-    ["kill Candlemass (floor 1)", "kill Geonor (floor 3)", "enter Act 2"],
-    ["Hooded One: Vastiri Outskirts"]
-  ],
-  [
-    ["find Rathbreaker", "Zarka: skill gem", "enter Ardura Caravan"],
-    ["Hooded One + Asala", "enter Mawdun Quarry"],
-    ["reach Mawdun Mine"],
-    ["kill Rudja", "Risu: quest", "portal to Ardura Caravan"],
-    ["desert map: Halani Gates (blocked)"],
-    ["Asala: quest", "portal to caravan"],
-    ["Risu + Asala", "enter Traitor's Passage"],
-    ["kill Balbala (early ascension)", "enter Halani Gates"],
-    ["kill Jamanra (arena)", "portal to caravan"],
-    ["Zarka: skill + Asala", "enter Keth"],
-    ["kill 2 snakes (relic) + Kabala (book)", "enter The Lost City"],
-    ["find bridge to Buried Shrines"],
-    ["kill Azarian", "Halani: cinders + essence", "portal to caravan"],
-    ["Zarka: support gem", "enter Mastodon Badlands"],
-    ["get waypoint via Lightless Passage", "enter The Bone Pits"],
-    ["kill hyenas (relic) + Ekbab (tusks)", "portal to caravan"],
-    ["enter Valley of the Titans"],
-    ["activate 3 seals, get waypoint with relics", "enter Titan Grotto"],
-    ["kill Zalmarath for ruby", "portal to caravan"],
-    ["sound the horn in Traitor's Passage", "enter Deshar"],
-    ["optional: late ascension", "find letter on Fallen Dekhara", "enter Path of Mourning"],
-    ["reach Spires of Deshar"],
-    ["sisters statue + Tor Gul", "portal to caravan"],
-    ["enter The Dreadnought"],
-    ["reach Dreadnought Vanguard"],
-    ["kill Jamanra", "portal to caravan"],
-    ["go through waypoint, wait for transformation", "Asala: Sandswept Marsh"]
-  ],
-  [
-    ["optional: Rootdredge + ring", "reach Ziggurat Encampment"],
-    ["Oswald: quest", "enter Jungle Ruins"],
-    ["find waypoint + Silverfist (book)", "enter Infested Barrens"],
-    ["get waypoint", "waypoint to Jungle Ruins"],
-    ["enter Venom Crypts"],
-    ["find corpse for venom", "portal to camp"],
-    ["Servi: permanent buff + artificer", "waypoint to Azak Bog"],
-    ["kill Ignagduk for 2 items", "portal to camp"],
-    ["Servi: ailment charm", "waypoint to Chimeral Wetlands"],
-    ["find Temple of Chaos airlock + Chimera (trial key)", "enter Jiquani's Machinarium"],
-    ["find core for altar (or 2 cores)", "enter Jiquani's Sanctum"],
-    ["find 2nd core, start 2 generators", "kill Zicoatl for soul core", "waypoint to Infested Barrens"],
-    ["activate stone altar", "enter Matlan Waterways"],
-    ["reach reservoir mechanism", "portal to camp"],
-    ["ascension: Temple of Chaos (optional)", "Alva: enter Drowned City"],
-    ["enter Molten Vault for waypoint", "reach Apex of Filth"],
-    ["find 3 mushrooms, kill Queen of Filth for idol", "portal to camp"],
-    ["kill Mektul in Molten Vault", "enter Temple of Kopec"],
-    ["kill Ketzuli", "Alva: return to camp"],
-    ["enter the Gateway to Utzaal"],
-    ["kill goliaths + Napuatzi", "enter Aggorat"],
-    ["find sacrifice altar, use heart", "enter The Black Chambers"],
-    ["kill Doryani", "portal to camp"],
-    ["Doryani: cut-scene", "Alva: travel to Kingsmarch"]
-  ],
-  [
-    ["Doryani + Alva: charter", "Makoru (ship): Isle of Kin"],
-    ["optional: support + jeweller", "reach Volcanic Warrens"],
-    ["kill Krutog", "Makoru: Kedge Bay"],
-    ["enter Journey's End"],
-    ["activate waypoint, kill Hartlin", "portal to Kingsmarch"],
-    ["Dannig: Verisium Spikes", "waypoint to Journey's End"],
-    ["Freya: kill Omniphobia", "Makoru: Whakapanu Island"],
-    ["Tujen: book + skill gem", "enter Whakapanu Island"],
-    ["reach Singing Caverns"],
-    ["find clam for pearl, kill Diamora", "Makoru: Abandoned Prison"],
-    ["free prisoners (30% flask recovery)", "enter Solitary Confinement"],
-    ["kill The Prisoner", "Makoru: Shrike Island"],
-    ["kill Scourge of the Skies, free Matiki", "portal to Kingsmarch"],
-    ["Hooded One", "Makoru: Eye of Hinekora"],
-    ["Matiki: complete 3 tests", "enter Halls of the Dead"],
-    ["complete 3 tests for tattoos", "defeat Yama for silver coin", "enter Trial of the Ancestors"],
-    ["Navali: Tattoo of Hinekora", "Makoru: Arastas (hostile)"],
-    ["follow Lorandis, kill Torvian", "enter The Excavation"],
-    ["kill Benedictus, enter site", "portal to Kingsmarch"],
-    ["Rhodri (ship): Ngakanu"],
-    ["greater jeweller", "reach Heart of the Tribe"],
-    ["defeat Tavakai", "portal to Kingsmarch"],
-    ["Hooded One: travel to Ogham", "enter The Refuge"]
-  ],
-  [
-    ["travel to The Khari Crossing"],
-    ["get gift at stairway", "enter Galai Gates"],
-    ["activate waypoint", "go back to Khari Crossing"],
-    ["kill Anundr & Akthi", "portal to Khari Bazaar"],
-    ["Risu: book", "enter Khari Crossing"],
-    ["enter Pools of Khatal"],
-    ["waypoint to Khari Bazaar", "Hooded One: travel to Kriar", "enter The Glade"],
-    ["enter Ashen Forest"],
-    ["reach Kriar Village"],
-    ["kill Lythara for skull", "enter Glacial Tarn"],
-    ["enter Howling Caves"],
-    ["kill Yeti (tusks)", "portal to The Glade"],
-    ["Hilda: book", "waypoint to Glacial Tarn"],
-    ["kill Rakkar", "enter Kriar Peaks"],
-    ["passage marked by owls", "reach Etched Ravine"],
-    ["reach The Cuachic Vault"],
-    ["kill Zolin & Zelina", "portal to The Glade"],
-    ["waypoint to Pools of Khatal"]
-  ],
-  [
-    ["reach Sel Khari Sanctuary"],
-    ["loot 2 baryas, kill Elzarah", "portal to Khari Bazaar"],
-    ["waypoint to Galai Gates"],
-    ["kill Vornas", "enter Qimah"],
-    ["follow edge to exit or start", "enter Qimah Reservoir"],
-    ["kill Azmadi", "portal to Khari Bazaar"],
-    ["Hooded One: travel to Ogham", "waypoint to The Refuge"]
-  ],
-  [
-    ["enter Scorched Farmlands"],
-    ["get checkpoint near wall of darkness", "enter Stones of Serle"],
-    ["find 6 megaliths, kill Siora", "return to Scorched Farmlands"],
-    ["enter The Blackwood"],
-    ["reach Holten"],
-    ["enter Wolvenhold"],
-    ["kill Oswin for book", "return to Holten"],
-    ["enter Holten Estate"],
-    ["kill Elswyth & Wulfric", "portal to The Refuge"],
-    ["Renly: quest", "waypoint to Kingsmarch"],
-    ["Hooded One: book, travel to Oriath", "enter The Ziggurat Refuge"],
-    ["Alva + Doryani", "use the map device: endgame"]
-  ]
-];
-
+const campaignGuideActs = guideData.acts;
 let campaignTimerRunning = false;
 let campaignGuidePage = 0;
 let campaignGuideAct = 0;
-let campaignActEnteredMs = 0;
+let campaignActTimes: number[] = [0, 0, 0, 0, 0, 0, 0, 0];
 let campaignTotalMs = 0;
-let campaignActTimes: number[] = [0,0,0,0,0,0,0,0];
-let campaignGuideVisible = false;
+let campaignTimerHandle = 0;
+let campaignCompletedSteps = new Set<string>();
+let campaignCurrentZone = "";
+const CAMPAIGN_STORAGE_KEY = "reliquary.campaign.progress";
+
+function saveCampaignProgress() {
+  try {
+    localStorage.setItem(CAMPAIGN_STORAGE_KEY, JSON.stringify({
+      completedSteps: [...campaignCompletedSteps],
+      currentZone: campaignCurrentZone,
+      guidePage: campaignGuidePage,
+    }));
+  } catch { /* ignore */ }
+}
+
+function loadCampaignProgress() {
+  try {
+    const raw = localStorage.getItem(CAMPAIGN_STORAGE_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      campaignCompletedSteps = new Set(data.completedSteps ?? []);
+      campaignCurrentZone = data.currentZone ?? "";
+      campaignGuidePage = data.guidePage ?? 0;
+    }
+  } catch { /* ignore */ }
+}
+
+function stepKey(act: number, zoneName: string, stepIndex: number) {
+  return `${act}:${zoneName}:${stepIndex}`;
+}
+
+function findCurrentZoneInGuide() {
+  const areaName = state.current_area?.name ?? "";
+  if (!areaName) return null;
+  const act = campaignGuideActs.find(a => a.act === campaignGuideAct);
+  if (!act) return null;
+  const name = areaName.toLowerCase().trim();
+  return act.zones.find(z => z.name.toLowerCase().trim() === name)
+    ?? act.zones.find(z => name.includes(z.name.toLowerCase().trim()))
+    ?? act.zones.find(z => z.name.toLowerCase().trim().includes(name))
+    ?? null;
+}
+
+function findNextIncompleteStep() {
+  const zone = findCurrentZoneInGuide();
+  if (!zone || !zone.steps.length) return null;
+  for (let i = 0; i < zone.steps.length; i++) {
+    const key = stepKey(campaignGuideAct, zone.name, i);
+    if (!campaignCompletedSteps.has(key)) {
+      return { step: zone.steps[i], index: i, zone };
+    }
+  }
+  return null;
+}
+
+function toggleCampaignStep() {
+  const next = findNextIncompleteStep();
+  if (!next) return;
+  const key = stepKey(campaignGuideAct, next.zone.name, next.index);
+  if (campaignCompletedSteps.has(key)) {
+    campaignCompletedSteps.delete(key);
+  } else {
+    campaignCompletedSteps.add(key);
+  }
+  saveCampaignProgress();
+}
+
+function startCampaignTimer() {
+  if (campaignTimerHandle) return;
+  campaignTimerRunning = true;
+  campaignTimerHandle = window.setInterval(() => {
+    if (!campaignTimerRunning) return;
+    const actIdx = Math.max(0, campaignGuideAct - 1);
+    campaignActTimes[actIdx] += 1000;
+    campaignTotalMs += 1000;
+    const compact = root?.querySelector<HTMLElement>("[data-compact-title]");
+    if (compact && campaignGuideAct > 0) {
+      compact.textContent = compactTitleText(state.scanned_item);
+    }
+  }, 1000);
+}
+
+function stopCampaignTimer() {
+  campaignTimerRunning = false;
+  window.clearInterval(campaignTimerHandle);
+  campaignTimerHandle = 0;
+}
 let requestedScanWindowHeight = 0;
 const PRICE_REQUEST_COOLDOWN_MS = 10_000;
 const recentPriceRequestSignatures = new Map<string, number>();
@@ -413,6 +371,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
 };
 let appSettings = readAppSettings();
 applyAppSettings(appSettings);
+loadCampaignProgress();
 
 const LOCAL_CURRENCY_ICONS: Record<string, string> = {
   exalted: "/currency/exalted.webp",
@@ -540,7 +499,7 @@ function render() {
     "Ctrl+C scans items. Alt+D opens the latest trade search.";
 
   compactTitleElement!.textContent = compactTitleText(state.scanned_item);
-  compactMetaElement!.textContent = compactMetaText(lastStatus);
+  compactMetaElement!.innerHTML = compactMetaText(lastStatus);
 
   const compactStrip = root?.querySelector<HTMLElement>(".compact-strip");
   if (compactStrip) {
@@ -679,10 +638,10 @@ function renderListingPreviewWindow(preview: ListingPreviewRequest | null) {
 let compactRuntimeHandle = 0;
 
 function compactTitleText(item: ScannedItem | null) {
-  if (campaignGuideAct > 0 && campaignTimerRunning) {
-    const actTime = formatCampaignTime(campaignActTimes[campaignGuideAct - 1] ?? 0);
+  if (campaignGuideAct > 0) {
+    const actTime = formatCampaignTime(campaignActTimes[Math.max(0, campaignGuideAct - 1)] ?? 0);
     const total = formatCampaignTime(campaignTotalMs);
-    return `A${campaignGuideAct} · ${actTime} / ${total}`;
+    return `A${campaignGuideAct} \u00B7 ${actTime} / ${total}`;
   }
 
   if (state.current_area?.area_type === "map") {
@@ -709,6 +668,21 @@ function compactTitleText(item: ScannedItem | null) {
 }
 
 function compactMetaText(status: string) {
+  if (campaignGuideAct > 0) {
+    const next = findNextIncompleteStep();
+    if (next) {
+      const zone = next.zone;
+      const done = zone.steps.filter((_, i) =>
+        campaignCompletedSteps.has(stepKey(campaignGuideAct, zone.name, i))
+      ).length;
+      const total = zone.steps.length;
+      const tagStr = next.step.tags.length ? `${next.step.tags.map(t => `[${t}]`).join(" ")} ` : "";
+      const reward = next.step.reward ? ` \u00B7 ${next.step.reward}` : "";
+      return `${tagStr}${next.step.text}${reward} \u00B7 ${done}/${total}`;
+    }
+    return "All tasks complete — enter next zone";
+  }
+
   if (state.current_area?.area_type === "map") {
     const area = state.current_area;
     const parts: string[] = [];
@@ -2205,21 +2179,60 @@ function renderCampaignSection() {
   const total = formatCampaignTime(campaignTotalMs);
   const actTime = formatCampaignTime(campaignActTimes[campaignGuideAct - 1] ?? 0);
   const actLabel = campaignGuideAct > 0 ? `A${campaignGuideAct}` : "A?";
-  const page = campaignGuide[campaignGuideAct]?.[campaignGuidePage] ?? [];
-  const lines = page.length
-    ? `<ul class="guide-list">${page.map((l: string) => `<li>${escapeHtml(l)}</li>`).join("")}</ul>`
-    : "<small>Guide not started. Enter a campaign zone to begin.</small>";
+  const zone = findCurrentZoneInGuide();
+  const act = campaignGuideActs.find(a => a.act === campaignGuideAct);
+
+  if (!zone && campaignGuideAct > 0) {
+    return `
+      <div>
+        <span>Campaign</span>
+        <strong>${actLabel} · ${total} total · ${actTime} this act</strong>
+        <small>
+          <button class="chrome-button" data-campaign-timer type="button">${campaignTimerRunning ? "Pause" : "Start"}</button>
+        </small>
+        <small>No guide data matched for "${escapeHtml(state.current_area?.name ?? "")}" in Act ${campaignGuideAct}.</small>
+      </div>
+    `;
+  }
+
+  if (!zone) {
+    return `
+      <div>
+        <span>Campaign</span>
+        <strong>${actLabel} · ${total} total · ${actTime} this act</strong>
+        <small>
+          <button class="chrome-button" data-campaign-timer type="button">${campaignTimerRunning ? "Pause" : "Start"}</button>
+        </small>
+        <small>Enter a campaign zone to see the guide.</small>
+      </div>
+    `;
+  }
+
+  const completedCount = zone.steps.filter((_, i) =>
+    campaignCompletedSteps.has(stepKey(campaignGuideAct, zone.name, i))
+  ).length;
+  const totalSteps = zone.steps.length;
+  const levelInfo = act ? `${act.name} · Lvl ${act.level_range}` : "";
+
+  const stepsHtml = zone.steps.map((step, i) => {
+    const key = stepKey(campaignGuideAct, zone.name, i);
+    const done = campaignCompletedSteps.has(key);
+    const tagLabels = step.tags.length ? ` <small>${step.tags.join(" · ")}</small>` : "";
+    const reward = step.reward ? ` · ${escapeHtml(step.reward)}` : "";
+    const loc = step.loc ? ` (${escapeHtml(step.loc)})` : "";
+    return `<li class="${done ? "completed" : ""}" data-campaign-step-key="${key}">${done ? "☑" : "☐"} ${escapeHtml(step.text)}${loc}${reward}${tagLabels}</li>`;
+  }).join("");
 
   return `
     <div>
       <span>Campaign</span>
       <strong>${actLabel} · ${total} total · ${actTime} this act</strong>
+      <small>${zone.name} · Lvl ${zone.level}${zone.waypoint ? " · WP" : ""}${zone.town ? " · Town" : ""} · ${completedCount}/${totalSteps}</small>
       <small>
-        <button class="chrome-button" data-campaign-prev type="button">&lt;</button>
-        <button class="chrome-button" data-campaign-next type="button">&gt;</button>
         <button class="chrome-button" data-campaign-timer type="button">${campaignTimerRunning ? "Pause" : "Start"}</button>
+        <small>${escapeHtml(levelInfo)}</small>
       </small>
-      ${lines}
+      <ul class="guide-list">${stepsHtml}</ul>
     </div>
   `;
 }
@@ -3099,9 +3112,9 @@ if (!isListingPreviewWindow && leagueElement) {
     const exchangeQuoteButton = target.closest<HTMLButtonElement>("[data-exchange-quote]");
     const stashNoteButton = target.closest<HTMLButtonElement>("[data-copy-stash-note]");
     const resetVisualSettingsButton = target.closest<HTMLButtonElement>("[data-reset-visual-settings]");
-    const campaignPrevButton = target.closest<HTMLButtonElement>("[data-campaign-prev]");
-    const campaignNextButton = target.closest<HTMLButtonElement>("[data-campaign-next]");
+    const campaignStepButton = target.closest<HTMLElement>("[data-campaign-step-key]");
     const campaignTimerButton = target.closest<HTMLButtonElement>("[data-campaign-timer]");
+    const compactMetaElement = target.closest<HTMLElement>("[data-compact-meta]");
 
     if (resetVisualSettingsButton) {
       appSettings = { ...DEFAULT_APP_SETTINGS };
@@ -3215,23 +3228,31 @@ if (!isListingPreviewWindow && leagueElement) {
       }
     }
 
-    if (campaignPrevButton) {
-      campaignGuidePage = Math.max(0, campaignGuidePage - 1);
+    if (campaignStepButton?.dataset.campaignStepKey) {
+      const key = campaignStepButton.dataset.campaignStepKey;
+      if (campaignCompletedSteps.has(key)) {
+        campaignCompletedSteps.delete(key);
+      } else {
+        campaignCompletedSteps.add(key);
+      }
+      saveCampaignProgress();
       render();
-    }
-
-    if (campaignNextButton) {
-      const act = campaignGuide[campaignGuideAct];
-      if (act) campaignGuidePage = Math.min(campaignGuidePage + 1, act.length - 1);
-      render();
+      return;
     }
 
     if (campaignTimerButton) {
-      campaignTimerRunning = !campaignTimerRunning;
       if (campaignTimerRunning) {
-        campaignActEnteredMs = Date.now();
+        stopCampaignTimer();
+      } else {
+        startCampaignTimer();
       }
       render();
+    }
+
+    if (compactMetaElement && campaignGuideAct > 0) {
+      toggleCampaignStep();
+      render();
+      return;
     }
   });
 
@@ -3482,21 +3503,11 @@ if (!isListingPreviewWindow && leagueElement) {
     state.current_area = event.payload;
     const newAct = event.payload.act ?? 0;
     if (newAct > 0 && newAct !== campaignGuideAct) {
-      if (campaignTimerRunning && campaignGuideAct > 0) {
-        const now = Date.now();
-        const actTime = now - campaignActEnteredMs;
-        campaignActTimes[campaignGuideAct - 1] += actTime;
-        campaignTotalMs += actTime;
-      }
       campaignGuideAct = newAct;
       campaignGuidePage = 0;
-      campaignActEnteredMs = Date.now();
-      if (campaignTimerRunning) {
-        campaignActTimes[campaignGuideAct - 1] = 0;
-      }
     }
-    if (event.payload.area_type === "hideout") {
-      campaignTimerRunning = false;
+    if (event.payload.area_type === "hideout" && campaignTimerRunning) {
+      stopCampaignTimer();
     }
     render();
   });

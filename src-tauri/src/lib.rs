@@ -1653,9 +1653,11 @@ async fn process_log_line(
                     })
                 };
 
-                let display_name = internal_id_to_display(&internal_id);
                 let areas = read_world_areas();
                 let area_meta = areas.and_then(|map| map.get(&internal_id));
+                let display_name = area_meta
+                    .and_then(|m| m.name.clone())
+                    .unwrap_or_else(|| internal_id_to_display(&internal_id));
                 debug_log::append(
                     "client-log.area-meta-lookup",
                     serde_json::json!({
@@ -2045,6 +2047,7 @@ struct AreaMeta {
     biome: Option<String>,
     boss: Option<String>,
     act: Option<u32>,
+    name: Option<String>,
 }
 
 fn init_world_areas() {
@@ -2130,12 +2133,15 @@ fn parse_world_areas(data: &str) -> Option<HashMap<String, AreaMeta>> {
             .filter(|a| *a > 0)
             .map(|a| a as u32);
 
+        let area_name = entry.get("name").and_then(|n| n.as_str()).map(String::from);
+
         map.insert(
             id.clone(),
             AreaMeta {
                 biome: biome.filter(|b| !b.is_empty()),
                 boss: boss_path,
                 act,
+                name: area_name,
             },
         );
     }
