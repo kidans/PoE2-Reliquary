@@ -1481,27 +1481,66 @@ fn handle_global_input_event(
 }
 
 fn active_window_allows_overlay_visibility() -> bool {
-    let title = active_window_title();
-    (is_poe2_running() && is_poe_window_title(&title)) || is_overlay_window_title(&title)
+    foreground_window_is_poe2() || is_overlay_window_title(&active_window_title())
 }
 
 fn active_window_is_poe2() -> bool {
-    is_poe2_running() && is_poe_window_title(&active_window_title())
+    foreground_window_is_poe2()
+}
+
+fn is_overlay_window_title(title: &str) -> bool {
+    let normalized = title.to_ascii_lowercase();
+    normalized.contains("reliquary")
 }
 
 #[cfg(target_os = "windows")]
-fn is_poe2_running() -> bool {
+fn foreground_window_is_poe2() -> bool {
+    let (running, pid) = get_poe2_pid_cache();
+    if !running || pid == 0 {
+        return false;
+    }
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return false;
+        }
+        let mut proc_id: u32 = 0;
+        GetWindowThreadProcessId(hwnd as isize, &mut proc_id);
+        proc_id == pid
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn foreground_window_is_poe2() -> bool {
+    true
+}
+
+#[cfg(target_os = "windows")]
+fn get_poe2_pid_cache() -> (bool, u32) {
     use std::sync::Mutex as StdMutex;
-    static CACHE: once_cell::sync::Lazy<StdMutex<(bool, std::time::Instant)>> =
-        once_cell::sync::Lazy::new(|| StdMutex::new((false, std::time::Instant::now())));
+    static CACHE: once_cell::sync::Lazy<StdMutex<(bool, u32, std::time::Instant)>> =
+        once_cell::sync::Lazy::new(|| StdMutex::new((false, 0, std::time::Instant::now())));
 
     {
         let cached = CACHE.lock().unwrap();
-        if cached.1.elapsed() < Duration::from_secs(3) {
-            return cached.0;
+        if cached.2.elapsed() < Duration::from_secs(3) {
+            return (cached.0, cached.1);
         }
     }
 
+    let result = find_poe2_process();
+    let mut cached = CACHE.lock().unwrap();
+    *cached = (result.is_some(), result.unwrap_or(0), std::time::Instant::now());
+    (result.is_some(), result.unwrap_or(0))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_poe2_pid_cache() -> (bool, u32) {
+    (true, 0)
+}
+
+#[cfg(target_os = "windows")]
+fn find_poe2_process() -> Option<u32> {
     unsafe extern "system" {
         fn CreateToolhelp32Snapshot(dwFlags: u32, th32ProcessID: u32) -> isize;
         fn Process32FirstW(hSnapshot: isize, lppe: *mut PROCESSENTRY32W) -> i32;
@@ -1527,22 +1566,22 @@ fn is_poe2_running() -> bool {
     const TH32CS_SNAPPROCESS: u32 = 0x00000002;
     const INVALID_HANDLE_VALUE: isize = -1;
 
-    let found = unsafe {
+    unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot == INVALID_HANDLE_VALUE as isize {
-            return true;
+            return None;
         }
 
         let mut pe = std::mem::zeroed::<PROCESSENTRY32W>();
         pe.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
 
-        let mut found = false;
+        let mut pid = None;
         if Process32FirstW(snapshot, &mut pe) != 0 {
             loop {
                 let end = pe.szExeFile.iter().position(|&c| c == 0).unwrap_or(pe.szExeFile.len());
                 let name = String::from_utf16_lossy(&pe.szExeFile[..end]).to_ascii_lowercase();
                 if name.contains("pathofexilesteam") || name.contains("pathofexile") {
-                    found = true;
+                    pid = Some(pe.th32ProcessID);
                     break;
                 }
                 if Process32NextW(snapshot, &mut pe) == 0 {
@@ -1551,28 +1590,15 @@ fn is_poe2_running() -> bool {
             }
         }
         CloseHandle(snapshot);
-        found
-    };
-
-    let mut cached = CACHE.lock().unwrap();
-    *cached = (found, std::time::Instant::now());
-    found
+        pid
+    }
 }
 
-#[cfg(not(target_os = "windows"))]
-fn is_poe2_running() -> bool {
-    true
+#[cfg(target_os = "windows")]
+unsafe extern "system" {
+    fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
 }
 
-fn is_poe_window_title(title: &str) -> bool {
-    let normalized = title.to_ascii_lowercase();
-    normalized.contains("path of exile 2") || normalized.contains("path of exile")
-}
-
-fn is_overlay_window_title(title: &str) -> bool {
-    let normalized = title.to_ascii_lowercase();
-    normalized.contains("reliquary")
-}
 
 #[cfg(target_os = "windows")]
 fn active_window_title() -> String {
