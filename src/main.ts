@@ -129,6 +129,11 @@ type WorkerStatus = {
 type AppSettings = {
   accentHue: number;
   panelAlpha: number;
+  saturation: number;
+  scanMod: "Ctrl" | "Alt";
+  scanKey: string;
+  tradeMod: "Ctrl" | "Alt";
+  tradeKey: string;
 };
 
 type TradeLeague = {
@@ -413,6 +418,11 @@ const SETTINGS_STORAGE_KEY = "reliquary.ui.settings";
 const DEFAULT_APP_SETTINGS: AppSettings = {
   accentHue: 355,
   panelAlpha: 0.98,
+  saturation: 100,
+  scanMod: "Ctrl",
+  scanKey: "C",
+  tradeMod: "Alt",
+  tradeKey: "D",
 };
 let appSettings = readAppSettings();
 applyAppSettings(appSettings);
@@ -2327,7 +2337,7 @@ function renderSettingsPanel() {
       <div class="settings-hero">
         <p class="section-label">Settings</p>
         <h2>Overlay feel</h2>
-        <p>Visual controls apply instantly and stay local to this machine. Shortcut rebinding is next because it needs the Rust input listener to read the saved chord map safely.</p>
+        <p>Visual controls apply instantly and stay local to this machine.</p>
       </div>
 
       <div class="settings-grid">
@@ -2363,22 +2373,65 @@ function renderSettingsPanel() {
           <output data-setting-output="panelAlpha">${escapeHtml(String(transparencyPercent))}%</output>
         </label>
 
-        <div class="settings-field settings-field-static">
+        <label class="settings-field">
           <span>
-            <strong>Shortcut Chords</strong>
-            <small>Single-key shortcuts stay disabled so search fields cannot accidentally collapse or trigger the overlay.</small>
+            <strong>Saturation</strong>
+            <small>Full color at 100%. Slide to 0% for pure grayscale, or push past 100% for vivid colorways.</small>
           </span>
-          <div class="shortcut-chips" aria-label="Current shortcuts">
-            <span>Ctrl + C <small>Scan copied item</small></span>
-            <span>Alt + D <small>Open latest trade</small></span>
+          <input
+            data-setting="saturation"
+            type="range"
+            min="0"
+            max="200"
+            step="5"
+            value="${escapeAttribute(String(appSettings.saturation))}"
+          />
+          <output data-setting-output="saturation">${escapeHtml(String(appSettings.saturation))}%</output>
+        </label>
+
+        <div class="settings-field">
+          <span>
+            <strong>Scan Hotkey</strong>
+            <small>Copies the hovered item into Reliquary for pricing.</small>
+          </span>
+          <div class="keybind-row">
+            <select data-setting="scanMod">
+              <option value="Ctrl"${appSettings.scanMod === "Ctrl" ? " selected" : ""}>Ctrl</option>
+              <option value="Alt"${appSettings.scanMod === "Alt" ? " selected" : ""}>Alt</option>
+            </select>
+            <span>+</span>
+            <input
+              data-setting="scanKey"
+              type="text"
+              maxlength="1"
+              class="keybind-letter"
+              value="${escapeAttribute(appSettings.scanKey)}"
+            />
+          </div>
+        </div>
+
+        <div class="settings-field">
+          <span>
+            <strong>Trade Hotkey</strong>
+            <small>Opens the latest generated trade URL in your browser.</small>
+          </span>
+          <div class="keybind-row">
+            <select data-setting="tradeMod">
+              <option value="Ctrl"${appSettings.tradeMod === "Ctrl" ? " selected" : ""}>Ctrl</option>
+              <option value="Alt"${appSettings.tradeMod === "Alt" ? " selected" : ""}>Alt</option>
+            </select>
+            <span>+</span>
+            <input
+              data-setting="tradeKey"
+              type="text"
+              maxlength="1"
+              class="keybind-letter"
+              value="${escapeAttribute(appSettings.tradeKey)}"
+            />
           </div>
         </div>
 
         <div class="settings-field settings-field-static">
-          <span>
-            <strong>Next Wiring Pass</strong>
-            <small>Persist editable chords, feed them into Rust, and keep the PoE 2-only window gate intact.</small>
-          </span>
           <button class="action-button" data-reset-visual-settings type="button">Reset visuals</button>
         </div>
       </div>
@@ -2768,6 +2821,11 @@ function readAppSettings(): AppSettings {
     return {
       accentHue: clampNumber(Number(parsed.accentHue), 0, 359, DEFAULT_APP_SETTINGS.accentHue),
       panelAlpha: clampNumber(Number(parsed.panelAlpha), 0, 1, DEFAULT_APP_SETTINGS.panelAlpha),
+      saturation: clampNumber(Number(parsed.saturation), 0, 200, DEFAULT_APP_SETTINGS.saturation),
+      scanMod: parsed.scanMod === "Ctrl" || parsed.scanMod === "Alt" ? parsed.scanMod : DEFAULT_APP_SETTINGS.scanMod,
+      scanKey: (typeof parsed.scanKey === "string" && parsed.scanKey.length === 1) ? parsed.scanKey.toUpperCase() : DEFAULT_APP_SETTINGS.scanKey,
+      tradeMod: parsed.tradeMod === "Ctrl" || parsed.tradeMod === "Alt" ? parsed.tradeMod : DEFAULT_APP_SETTINGS.tradeMod,
+      tradeKey: (typeof parsed.tradeKey === "string" && parsed.tradeKey.length === 1) ? parsed.tradeKey.toUpperCase() : DEFAULT_APP_SETTINGS.tradeKey,
     };
   } catch {
     return { ...DEFAULT_APP_SETTINGS };
@@ -2792,8 +2850,15 @@ function applyAppSettings(settings: AppSettings) {
   rootStyle.setProperty("--accent-hue", String(hue));
   rootStyle.setProperty("--line", `hsl(${hue} 70% 58% / 0.26)`);
   rootStyle.setProperty("--line-strong", `hsl(${hue} 70% 58% / 0.56)`);
+  rootStyle.setProperty("--saturation", settings.saturation.toFixed(0) + "%");
   rootStyle.setProperty("--surface-alpha", settings.panelAlpha.toFixed(2));
   rootStyle.setProperty("--surface-glow-alpha", (settings.panelAlpha * 0.16).toFixed(3));
+  void invoke("set_keybinds", {
+    scanMod: settings.scanMod,
+    scanKey: settings.scanKey,
+    tradeMod: settings.tradeMod,
+    tradeKey: settings.tradeKey,
+  }).catch(() => {});
 }
 
 function updateSettingOutput(settingName: keyof AppSettings) {
@@ -2802,10 +2867,13 @@ function updateSettingOutput(settingName: keyof AppSettings) {
     return;
   }
 
-  output.textContent =
-    settingName === "panelAlpha"
-      ? `${Math.round((1 - appSettings.panelAlpha) * 100)}%`
-      : `${Math.round(appSettings.accentHue)} deg`;
+  if (settingName === "panelAlpha") {
+    output.textContent = `${Math.round((1 - appSettings.panelAlpha) * 100)}%`;
+  } else if (settingName === "saturation") {
+    output.textContent = `${appSettings.saturation}%`;
+  } else {
+    output.textContent = `${Math.round(appSettings.accentHue)} deg`;
+  }
 }
 
 function fallbackCurrencies(): CurrencyMeta[] {
@@ -3344,9 +3412,24 @@ if (!isListingPreviewWindow && leagueElement) {
 
   root.addEventListener("change", async (event) => {
     const target = event.target as HTMLElement;
+    const settingInput = target.closest<HTMLElement>("[data-setting]");
     const priceProfileInput = target.closest<HTMLInputElement>("[data-price-profile]");
     const priceOptionSelect = target.closest<HTMLSelectElement>("[data-price-option]");
     const currencySelect = target.closest<HTMLSelectElement>("[data-price-currency]");
+
+    if (settingInput?.dataset.setting) {
+      const el = settingInput as HTMLInputElement | HTMLSelectElement;
+      const name = el.dataset.setting!;
+      if (name === "scanMod" || name === "tradeMod") {
+        const val = el.value as "Ctrl" | "Alt";
+        if (val === "Ctrl" || val === "Alt") {
+          appSettings[name] = val;
+        }
+      }
+      applyAppSettings(appSettings);
+      saveAppSettings();
+      return;
+    }
 
     if (priceProfileInput?.dataset.priceProfile) {
       selectedPriceProfile = priceProfileInput.dataset.priceProfile as PriceProfileId;
@@ -3400,14 +3483,29 @@ if (!isListingPreviewWindow && leagueElement) {
     const settingInput = target.closest<HTMLInputElement>("[data-setting]");
 
     if (settingInput?.dataset.setting) {
-      if (settingInput.dataset.setting === "accentHue") {
+      const name = settingInput.dataset.setting;
+      if (name === "accentHue") {
         appSettings.accentHue = clampNumber(Number(settingInput.value), 0, 359, DEFAULT_APP_SETTINGS.accentHue);
         updateSettingOutput("accentHue");
       }
-
-      if (settingInput.dataset.setting === "panelAlpha") {
+      if (name === "panelAlpha") {
         appSettings.panelAlpha = clampNumber(1 - Number(settingInput.value) / 100, 0, 1, DEFAULT_APP_SETTINGS.panelAlpha);
         updateSettingOutput("panelAlpha");
+      }
+      if (name === "saturation") {
+        appSettings.saturation = clampNumber(Number(settingInput.value), 0, 200, DEFAULT_APP_SETTINGS.saturation);
+        updateSettingOutput("saturation");
+      }
+      if (name === "scanMod" || name === "tradeMod") {
+        const val = settingInput.value as "Ctrl" | "Alt";
+        if (val === "Ctrl" || val === "Alt") {
+          appSettings[name] = val;
+        }
+      }
+      if (name === "scanKey" || name === "tradeKey") {
+        const v = settingInput.value.toUpperCase().replace(/[^A-Z]/, "").slice(0, 1);
+        if (v) appSettings[name] = v;
+        settingInput.value = appSettings[name];
       }
 
       applyAppSettings(appSettings);

@@ -10,7 +10,7 @@ use std::{
 };
 
 use arboard::Clipboard;
-use rdev::{listen, Event, EventType, Key};
+use rdev::{listen, EventType, Key};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -115,6 +115,14 @@ pub struct AppState {
     price_check_fetch_in_flight: bool,
     #[serde(skip)]
     current_listing_preview: Option<ListingPreviewRequest>,
+    #[serde(skip)]
+    scan_key: char,
+    #[serde(skip)]
+    scan_mod: String,
+    #[serde(skip)]
+    trade_key: char,
+    #[serde(skip)]
+    trade_mod: String,
 }
 
 impl AppState {
@@ -129,6 +137,10 @@ impl AppState {
             price_currency: "exalted".to_string(),
             price_option: "equivalent".to_string(),
             trade_league_locked: configured_league.is_some(),
+            scan_key: 'C',
+            scan_mod: "Ctrl".to_string(),
+            trade_key: 'D',
+            trade_mod: "Alt".to_string(),
             ..Self::default()
         }
     }
@@ -404,6 +416,22 @@ fn set_window_layout(window: tauri::Window, layout: String) -> Result<(), String
     window
         .set_position(Position::Logical(position))
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn set_keybinds(
+    state: tauri::State<'_, SharedAppState>,
+    scan_mod: String,
+    scan_key: String,
+    trade_mod: String,
+    trade_key: String,
+) -> Result<(), String> {
+    let mut locked = state.lock().await;
+    locked.scan_mod = scan_mod;
+    locked.scan_key = scan_key.chars().next().unwrap_or('C');
+    locked.trade_mod = trade_mod;
+    locked.trade_key = trade_key.chars().next().unwrap_or('D');
+    Ok(())
 }
 
 #[tauri::command]
@@ -958,6 +986,7 @@ pub fn run() {
             set_trade_league,
             set_compact_mode,
             set_window_layout,
+            set_keybinds,
             set_compact_window_height,
             set_scan_window_height,
             set_click_passthrough,
@@ -994,7 +1023,7 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
         let (input_tx, mut input_rx) = mpsc::unbounded_channel::<InputAction>();
         let listener_handle = app_handle.clone();
 
-        if let Err(error) = start_rdev_listener(input_tx) {
+        if let Err(error) = start_rdev_listener(input_tx, state.clone()) {
             emit_worker_error(&listener_handle, WorkerError::InputListener(error));
             return;
         }
@@ -1421,7 +1450,7 @@ fn configured_trade_league() -> Option<String> {
         .filter(|league| !league.is_empty())
 }
 
-fn start_rdev_listener(input_tx: mpsc::UnboundedSender<InputAction>) -> Result<(), String> {
+fn start_rdev_listener(input_tx: mpsc::UnboundedSender<InputAction>, state: SharedAppState) -> Result<(), String> {
     thread::Builder::new()
         .name("reliquary-global-input".to_string())
         .spawn(move || {
@@ -1429,9 +1458,10 @@ fn start_rdev_listener(input_tx: mpsc::UnboundedSender<InputAction>) -> Result<(
             let alt_down = Arc::new(AtomicBool::new(false));
             let callback_ctrl = ctrl_down.clone();
             let callback_alt = alt_down.clone();
+            let callback_state = state.clone();
 
             if let Err(error) = listen(move |event| {
-                handle_global_input_event(event, &callback_ctrl, &callback_alt, &input_tx);
+                handle_global_input_event(event, &callback_ctrl, &callback_alt, &input_tx, &callback_state);
             }) {
                 eprintln!("failed to run global input listener: {error:?}");
             }
@@ -1441,10 +1471,11 @@ fn start_rdev_listener(input_tx: mpsc::UnboundedSender<InputAction>) -> Result<(
 }
 
 fn handle_global_input_event(
-    event: Event,
+    event: rdev::Event,
     ctrl_down: &Arc<AtomicBool>,
     alt_down: &Arc<AtomicBool>,
     input_tx: &mpsc::UnboundedSender<InputAction>,
+    state: &SharedAppState,
 ) {
     match event.event_type {
         EventType::KeyPress(Key::ControlLeft) | EventType::KeyPress(Key::ControlRight) => {
@@ -1459,22 +1490,51 @@ fn handle_global_input_event(
         EventType::KeyRelease(Key::Alt) | EventType::KeyRelease(Key::AltGr) => {
             alt_down.store(false, Ordering::SeqCst);
         }
-        EventType::KeyPress(Key::KeyC)
-            if ctrl_down.load(Ordering::SeqCst) && active_window_is_poe2() =>
-        {
-            thread::sleep(Duration::from_millis(20));
-            match read_clipboard_text() {
-                Ok(text) if !text.trim().is_empty() => {
-                    let _ = input_tx.send(InputAction::ClipboardScan(text));
+        EventType::KeyPress(ref key) if active_window_is_poe2() => {
+            let locked = state.blocking_lock();
+            let scan_key = match locked.scan_key {
+                'A' => Key::KeyA, 'B' => Key::KeyB, 'C' => Key::KeyC, 'D' => Key::KeyD,
+                'E' => Key::KeyE, 'F' => Key::KeyF, 'G' => Key::KeyG, 'H' => Key::KeyH,
+                'I' => Key::KeyI, 'J' => Key::KeyJ, 'K' => Key::KeyK, 'L' => Key::KeyL,
+                'M' => Key::KeyM, 'N' => Key::KeyN, 'O' => Key::KeyO, 'P' => Key::KeyP,
+                'Q' => Key::KeyQ, 'R' => Key::KeyR, 'S' => Key::KeyS, 'T' => Key::KeyT,
+                'U' => Key::KeyU, 'V' => Key::KeyV, 'W' => Key::KeyW, 'X' => Key::KeyX,
+                'Y' => Key::KeyY, 'Z' => Key::KeyZ,
+                '1' => Key::Num1, '2' => Key::Num2, '3' => Key::Num3, '4' => Key::Num4,
+                '5' => Key::Num5, '6' => Key::Num6, '7' => Key::Num7, '8' => Key::Num8,
+                '9' => Key::Num9, '0' => Key::Num0,
+                _ => return,
+            };
+            let trade_key = match locked.trade_key {
+                'A' => Key::KeyA, 'B' => Key::KeyB, 'C' => Key::KeyC, 'D' => Key::KeyD,
+                'E' => Key::KeyE, 'F' => Key::KeyF, 'G' => Key::KeyG, 'H' => Key::KeyH,
+                'I' => Key::KeyI, 'J' => Key::KeyJ, 'K' => Key::KeyK, 'L' => Key::KeyL,
+                'M' => Key::KeyM, 'N' => Key::KeyN, 'O' => Key::KeyO, 'P' => Key::KeyP,
+                'Q' => Key::KeyQ, 'R' => Key::KeyR, 'S' => Key::KeyS, 'T' => Key::KeyT,
+                'U' => Key::KeyU, 'V' => Key::KeyV, 'W' => Key::KeyW, 'X' => Key::KeyX,
+                'Y' => Key::KeyY, 'Z' => Key::KeyZ,
+                '1' => Key::Num1, '2' => Key::Num2, '3' => Key::Num3, '4' => Key::Num4,
+                '5' => Key::Num5, '6' => Key::Num6, '7' => Key::Num7, '8' => Key::Num8,
+                '9' => Key::Num9, '0' => Key::Num0,
+                _ => return,
+            };
+            let is_scan = key == &scan_key && ((locked.scan_mod == "Ctrl" && ctrl_down.load(Ordering::SeqCst)) || (locked.scan_mod == "Alt" && alt_down.load(Ordering::SeqCst)));
+            let is_trade = key == &trade_key && ((locked.trade_mod == "Ctrl" && ctrl_down.load(Ordering::SeqCst)) || (locked.trade_mod == "Alt" && alt_down.load(Ordering::SeqCst)));
+            std::mem::drop(locked);
+
+            if is_scan {
+                thread::sleep(Duration::from_millis(20));
+                match read_clipboard_text() {
+                    Ok(text) if !text.trim().is_empty() => {
+                        let _ = input_tx.send(InputAction::ClipboardScan(text));
+                    }
+                    Ok(_) => {}
+                    Err(error) => eprintln!("{error}"),
                 }
-                Ok(_) => {}
-                Err(error) => eprintln!("{error}"),
             }
-        }
-        EventType::KeyPress(Key::KeyD)
-            if alt_down.load(Ordering::SeqCst) && active_window_is_poe2() =>
-        {
-            let _ = input_tx.send(InputAction::OpenTradeSearch);
+            if is_trade {
+                let _ = input_tx.send(InputAction::OpenTradeSearch);
+            }
         }
         _ => {}
     }
