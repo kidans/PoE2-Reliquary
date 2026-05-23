@@ -1580,6 +1580,31 @@ async fn stream_client_log(
         .map(|m| m.len())
         .unwrap_or(0);
 
+    if last_size > 0 {
+        let catch_up_start = if last_size > 8192 { last_size - 8192 } else { 0 };
+        debug_log::append(
+            "client-log.catch-up",
+            serde_json::json!({ "total_size": last_size, "catch_up_start": catch_up_start }),
+        );
+        if let Ok(mut file) = File::open(&client_log_path).await {
+            use tokio::io::AsyncSeekExt;
+            let _ = file.seek(std::io::SeekFrom::Start(catch_up_start)).await;
+            let mut reader = BufReader::new(file);
+            let mut line_buf = String::new();
+            loop {
+                line_buf.clear();
+                match reader.read_line(&mut line_buf).await {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let content = line_buf.trim_end().to_string();
+                        process_log_line(&content, &generating_re, &app_handle, &state).await;
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+
     loop {
         if let Ok(meta) = tokio::fs::metadata(&client_log_path).await {
             let current_size = meta.len();
