@@ -715,7 +715,7 @@ function renderListingPreviewWindow(preview: ListingPreviewRequest | null) {
     : "";
 
   return `
-    <section class="listing-preview-card evaluate-card ${rarityClass}">
+    <section class="listing-preview-card ${rarityClass}">
       <div class="poe-item-banner">
         <div class="banner-corner banner-corner-left" aria-hidden="true"></div>
         <div class="banner-center">
@@ -3233,11 +3233,12 @@ function syncEvaluateLayout() {
   const listingHeaderHeight = listingHeader?.offsetHeight ?? 0;
   const listingRowHeight = Math.max(28, listingRow?.offsetHeight ?? 28);
   const desiredVisibleRows = 5;
-  const listingChrome = 18;
+  const listingChrome = 16;
   const minimumResultsHeight =
     metaHeight + listingHeaderHeight + desiredVisibleRows * listingRowHeight + listingChrome;
-  const minimumItemHeight = 260;
-  const maximumResultsHeight = Math.max(260, panelHeight - minimumItemHeight - sectionGap);
+  const minimumItemHeight = 430;
+  const minimumResultsFloor = 220;
+  const maximumResultsHeight = Math.max(minimumResultsFloor, panelHeight - minimumItemHeight - sectionGap);
   const resultsHeight = Math.min(minimumResultsHeight, maximumResultsHeight);
   evaluate.style.setProperty("--results-height", `${resultsHeight}px`);
 
