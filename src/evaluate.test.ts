@@ -3,6 +3,7 @@ import {
   activeFilterSignature,
   activePriceFiltersForSelection,
   classifySelectedSpecForSearch,
+  filteredListingRanks,
   filteredListings,
   hardPriceFiltersForSelection,
   itemSpecs,
@@ -641,5 +642,36 @@ describe("soft listing ranking", () => {
 
     const visible = filteredListings(check, baseItem, selected, poe2dbSnapshot);
     expect(visible.length).toBeGreaterThan(0);
+  });
+
+  it("keeps soft-missed official rows visible with ranking penalties for UI disclosure", () => {
+    const check = priceCheck({
+      listings: [
+        listing({
+          explicit_mods: [
+            "158% increased Physical Damage",
+            "+5 to Level of all Attack Skills",
+          ],
+        }),
+      ],
+    });
+
+    const specs = itemSpecs(baseItem, undefined, poe2dbSnapshot);
+    const selected = new Set(
+      specs
+        .filter((s) =>
+          s.label.includes("158% increased Physical Damage")
+          || s.label.includes("Gain 28% of Damage as Extra Physical Damage"),
+        )
+        .map((s) => s.key),
+    );
+
+    const ranked = filteredListingRanks(check, baseItem, selected, poe2dbSnapshot);
+
+    expect(ranked).toHaveLength(1);
+    expect(ranked[0].score).toBeLessThan(ranked[0].maxScore);
+    expect(ranked[0].penalties).toEqual(
+      expect.arrayContaining([expect.stringContaining("score filter missed")]),
+    );
   });
 });

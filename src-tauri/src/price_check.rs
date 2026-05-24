@@ -1240,26 +1240,28 @@ fn listing_from_fetch_result(
     currencies: &[CurrencyMeta],
     rates: &CurrencyRates,
 ) -> Option<PriceListing> {
-    let explicit_mods: Vec<String> = result
-        .item
-        .all_searchable_mods()
-        .into_iter()
-        .map(clean_trade_text)
+    let searchable_mods = result.item.all_searchable_mods_with_categories();
+    let explicit_mods: Vec<String> = searchable_mods
+        .iter()
+        .map(|(modifier, _category)| clean_trade_text(modifier.clone()))
         .collect();
 
-    // Extract tier/affix info from extended.mods for each mod (by index position)
+    // Extract tier/affix info only when category + stat template identifies a
+    // single extended mod. A missing tier badge is safer than a wrong one.
     let mod_tier_infos: Vec<Option<ModTierInfo>> = {
         let ext_mods = result
             .item
             .extended
             .as_ref()
             .and_then(|ext| ext.mods.as_object())
-            .cloned()
-            .unwrap_or_default();
-        explicit_mods
+            .cloned();
+        searchable_mods
             .iter()
-            .enumerate()
-            .map(|(idx, _)| resolve_mod_tier_from_index(idx, &ext_mods))
+            .map(|(modifier, category)| {
+                ext_mods
+                    .as_ref()
+                    .and_then(|mods| resolve_mod_tier_for_modifier(modifier, category, mods))
+            })
             .collect()
     };
     let direct_source_url = trade_listing_url(
@@ -2032,9 +2034,15 @@ impl FetchItem {
             .and_then(FetchItemProperty::first_numeric_value)
     }
 
-    fn all_searchable_mods(&self) -> Vec<String> {
+    fn all_searchable_mods_with_categories(&self) -> Vec<(String, &'static str)> {
         let mut mods = Vec::new();
-        mods.extend(self.explicit_mods.clone().unwrap_or_default());
+        mods.extend(
+            self.explicit_mods
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|modifier| (modifier, "explicit")),
+        );
         mods.extend(suffixed_mods(self.implicit_mods.as_ref(), "implicit"));
         mods.extend(suffixed_mods(self.rune_mods.as_ref(), "rune"));
         mods.extend(suffixed_mods(self.desecrated_mods.as_ref(), "desecrated"));
@@ -2044,18 +2052,19 @@ impl FetchItem {
     }
 }
 
-fn suffixed_mods(mods: Option<&Vec<String>>, suffix: &str) -> Vec<String> {
+fn suffixed_mods(mods: Option<&Vec<String>>, suffix: &'static str) -> Vec<(String, &'static str)> {
     mods.into_iter()
         .flatten()
         .map(|modifier| {
-            if modifier
+            let labelled = if modifier
                 .to_ascii_lowercase()
                 .contains(&format!("({suffix})"))
             {
                 modifier.clone()
             } else {
                 format!("{modifier} ({suffix})")
-            }
+            };
+            (labelled, suffix)
         })
         .collect()
 }
@@ -2195,36 +2204,62 @@ pub struct ModTierInfo {
     pub tier_code: String,
 }
 
-/// Resolve tier/affix info from `extended.mods` by index position.
-/// The POE2 trade API returns mods in `extended.mods.explicit` indexed by position.
+/// Resolve tier/affix info from `extended.mods` by category and stat template.
+/// This intentionally omits uncertain matches instead of guessing by flat index.
 /// Each entry has a `tier` field like "P6" → Prefix Tier 6, "S4" → Suffix Tier 4.
-fn resolve_mod_tier_from_index(
-    idx: usize,
+fn resolve_mod_tier_for_modifier(
+    modifier: &str,
+    category: &str,
     ext_mods: &serde_json::Map<String, serde_json::Value>,
 ) -> Option<ModTierInfo> {
-    // Walk through all categories (explicit, implicit, rune, desecrated, etc.)
-    // and accumulate entries, then index into the flat list.
-    // The extended.mods are returned in the same order as all_searchable_mods()
-    // with explicit first, then implicit, rune, desecrated, fractured, crafted.
-    let mut flat_entries: Vec<&serde_json::Value> = Vec::new();
-    for category in &[
-        "explicit",
-        "implicit",
-        "rune",
-        "desecrated",
-        "fractured",
-        "crafted",
-    ] {
-        if let Some(arr) = ext_mods.get(*category).and_then(|v| v.as_array()) {
-            flat_entries.extend(arr.iter());
-        }
-    }
-    let entry = flat_entries.get(idx)?;
-    let tier_str = entry.get("tier")?.as_str()?;
-    if tier_str.is_empty() || tier_str.len() < 2 {
+    let modifier_template = spec_template(modifier);
+    if modifier_template.is_empty() {
         return None;
     }
-    let chars: Vec<char> = tier_str.chars().collect();
+
+    let mut matches = Vec::new();
+    for category_key in extended_mod_category_keys(category) {
+        let Some(value) = ext_mods.get(*category_key) else {
+            continue;
+        };
+        let Ok(entries) = serde_json::from_value::<Vec<ExtendedMod>>(value.clone()) else {
+            continue;
+        };
+
+        for entry in entries {
+            let Some(name) = entry.name.as_deref() else {
+                continue;
+            };
+            let entry_template = spec_template(name);
+            if templates_compatible(&entry_template, &modifier_template) {
+                matches.push(entry);
+            }
+        }
+    }
+
+    if matches.len() != 1 {
+        return None;
+    }
+
+    mod_tier_info_from_code(matches.first()?.tier.as_deref()?)
+}
+
+fn extended_mod_category_keys(category: &str) -> &'static [&'static str] {
+    match category {
+        "rune" => &["rune", "socketable"],
+        "crafted" => &["crafted", "craftedMods"],
+        "fractured" => &["fractured", "fracturedMods"],
+        "desecrated" => &["desecrated"],
+        "implicit" => &["implicit"],
+        _ => &["explicit"],
+    }
+}
+
+fn mod_tier_info_from_code(tier_code: &str) -> Option<ModTierInfo> {
+    if tier_code.is_empty() || tier_code.len() < 2 {
+        return None;
+    }
+    let chars: Vec<char> = tier_code.chars().collect();
     let affix_char = chars[0];
     let tier_number: String = chars[1..].iter().collect();
     let affix_kind = match affix_char {
@@ -2235,7 +2270,7 @@ fn resolve_mod_tier_from_index(
     Some(ModTierInfo {
         affix_kind: affix_kind.to_string(),
         tier_number,
-        tier_code: tier_str.to_string(),
+        tier_code: tier_code.to_string(),
     })
 }
 
@@ -2247,9 +2282,10 @@ mod tests {
 
     use super::{
         build_trade_request, filters_for_item, listing_from_fetch_result, price_check_cache_key,
-        spec_template, CurrencyRates, FetchAccount, FetchItem, FetchItemProperty, FetchListing,
-        FetchPrice, FetchResult, TradeStatEntry,
+        spec_template, CurrencyRates, ExtendedData, FetchAccount, FetchItem, FetchItemProperty,
+        FetchListing, FetchPrice, FetchResult, TradeStatEntry,
     };
+    use serde_json::json;
 
     #[test]
     fn builds_trade_request_with_type_and_item_level() {
@@ -2542,5 +2578,203 @@ mod tests {
             listing.source_url,
             "https://www.pathofexile.com/trade2/search/poe2/Standard/query123#deadbeef"
         );
+    }
+
+    #[test]
+    fn listing_tier_info_matches_extended_mods_by_category_and_name() {
+        let listing = listing_from_fetch_result(
+            FetchResult {
+                id: Some("deadbeef".to_string()),
+                item: FetchItem {
+                    name: Some("Test Item".to_string()),
+                    type_line: Some("Test Base".to_string()),
+                    base_type: Some("Test Base".to_string()),
+                    icon: None,
+                    frame_type: Some(2),
+                    item_class: Some("Talismans".to_string()),
+                    description: None,
+                    id: None,
+                    ilvl: Some(82),
+                    properties: Vec::new(),
+                    requirements: Vec::new(),
+                    explicit_mods: Some(vec![
+                        "+50 to Maximum Life".to_string(),
+                        "+5 to Level of all Attack Skills".to_string(),
+                    ]),
+                    implicit_mods: Some(vec!["+8 to Maximum Rage".to_string()]),
+                    rune_mods: None,
+                    desecrated_mods: None,
+                    fractured_mods: None,
+                    crafted_mods: None,
+                    extended: Some(test_extended_data(json!({
+                        "explicit": [
+                            { "name": "+# to Maximum Life", "tier": "P2" }
+                        ],
+                        "implicit": [
+                            { "name": "+# to Maximum Rage", "tier": "P1" }
+                        ]
+                    }))),
+                },
+                listing: priced_listing(),
+            },
+            "https://www.pathofexile.com/trade2/search/poe2/Standard/query123",
+            &[],
+            &test_currency_rates(),
+        )
+        .expect("listing");
+
+        assert_eq!(listing.mod_tier_infos.len(), 3);
+        assert_eq!(
+            listing.mod_tier_infos[0]
+                .as_ref()
+                .map(|info| info.tier_code.as_str()),
+            Some("P2")
+        );
+        assert!(
+            listing.mod_tier_infos[1].is_none(),
+            "second explicit mod must not inherit implicit tier metadata"
+        );
+        assert_eq!(
+            listing.mod_tier_infos[2]
+                .as_ref()
+                .map(|info| info.tier_code.as_str()),
+            Some("P1")
+        );
+    }
+
+    #[test]
+    fn listing_tier_info_omits_ambiguous_extended_mod_matches() {
+        let listing = listing_from_fetch_result(
+            FetchResult {
+                id: Some("deadbeef".to_string()),
+                item: FetchItem {
+                    name: Some("Test Item".to_string()),
+                    type_line: Some("Test Base".to_string()),
+                    base_type: Some("Test Base".to_string()),
+                    icon: None,
+                    frame_type: Some(2),
+                    item_class: Some("Talismans".to_string()),
+                    description: None,
+                    id: None,
+                    ilvl: Some(82),
+                    properties: Vec::new(),
+                    requirements: Vec::new(),
+                    explicit_mods: Some(vec!["+50 to Maximum Life".to_string()]),
+                    implicit_mods: None,
+                    rune_mods: None,
+                    desecrated_mods: None,
+                    fractured_mods: None,
+                    crafted_mods: None,
+                    extended: Some(test_extended_data(json!({
+                        "explicit": [
+                            { "name": "+# to Maximum Life", "tier": "P2" },
+                            { "name": "+# to Maximum Life", "tier": "P3" }
+                        ]
+                    }))),
+                },
+                listing: priced_listing(),
+            },
+            "https://www.pathofexile.com/trade2/search/poe2/Standard/query123",
+            &[],
+            &test_currency_rates(),
+        )
+        .expect("listing");
+
+        assert_eq!(listing.mod_tier_infos.len(), 1);
+        assert!(listing.mod_tier_infos[0].is_none());
+    }
+
+    #[test]
+    fn listing_tier_info_matches_rune_and_desecrated_categories_without_crosswire() {
+        let listing = listing_from_fetch_result(
+            FetchResult {
+                id: Some("deadbeef".to_string()),
+                item: FetchItem {
+                    name: Some("Test Item".to_string()),
+                    type_line: Some("Test Base".to_string()),
+                    base_type: Some("Test Base".to_string()),
+                    icon: None,
+                    frame_type: Some(2),
+                    item_class: Some("Talismans".to_string()),
+                    description: None,
+                    id: None,
+                    ilvl: Some(82),
+                    properties: Vec::new(),
+                    requirements: Vec::new(),
+                    explicit_mods: None,
+                    implicit_mods: None,
+                    rune_mods: Some(vec!["+14% to Cold Resistance".to_string()]),
+                    desecrated_mods: Some(vec!["15% increased Attack Speed".to_string()]),
+                    fractured_mods: None,
+                    crafted_mods: None,
+                    extended: Some(test_extended_data(json!({
+                        "rune": [
+                            { "name": "+#% to Cold Resistance", "tier": "S3" }
+                        ],
+                        "desecrated": [
+                            { "name": "#% increased Attack Speed", "tier": "S1" }
+                        ],
+                        "explicit": [
+                            { "name": "+#% to Cold Resistance", "tier": "P9" }
+                        ]
+                    }))),
+                },
+                listing: priced_listing(),
+            },
+            "https://www.pathofexile.com/trade2/search/poe2/Standard/query123",
+            &[],
+            &test_currency_rates(),
+        )
+        .expect("listing");
+
+        assert_eq!(listing.mod_tier_infos.len(), 2);
+        assert_eq!(
+            listing.mod_tier_infos[0]
+                .as_ref()
+                .map(|info| info.tier_code.as_str()),
+            Some("S3")
+        );
+        assert_eq!(
+            listing.mod_tier_infos[1]
+                .as_ref()
+                .map(|info| info.tier_code.as_str()),
+            Some("S1")
+        );
+    }
+
+    fn priced_listing() -> FetchListing {
+        FetchListing {
+            indexed: Some("2026-05-20T12:00:00Z".to_string()),
+            price: Some(FetchPrice {
+                amount: 1.0,
+                currency: "divine".to_string(),
+            }),
+            account: Some(FetchAccount {
+                name: "seller#1234".to_string(),
+                online: None,
+            }),
+        }
+    }
+
+    fn test_currency_rates() -> CurrencyRates {
+        CurrencyRates {
+            selected_currency: "divine".to_string(),
+            per_selected: HashMap::new(),
+            source: "test".to_string(),
+        }
+    }
+
+    fn test_extended_data(mods: serde_json::Value) -> ExtendedData {
+        ExtendedData {
+            mods,
+            hashes: json!({}),
+            text: None,
+            ar: None,
+            es: None,
+            ev: None,
+            dps: None,
+            pdps: None,
+            edps: None,
+        }
     }
 }

@@ -544,16 +544,22 @@ export function filteredListings(
   selectedSpecKeys: Set<string>,
   sourceTruth: Poe2DbDataSnapshot | null = null,
 ) {
-  const ranked = rankListings(priceCheck, item, selectedSpecKeys, sourceTruth);
+  return filteredListingRanks(priceCheck, item, selectedSpecKeys, sourceTruth).map((entry) => entry.listing);
+}
 
-  return ranked
+export function filteredListingRanks(
+  priceCheck: PriceCheck,
+  item: ScannedItem | undefined,
+  selectedSpecKeys: Set<string>,
+  sourceTruth: Poe2DbDataSnapshot | null = null,
+) {
+  return rankListings(priceCheck, item, selectedSpecKeys, sourceTruth)
     .filter((entry) => entry.score >= 0)
     .sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score;
       if (left.penalties.length !== right.penalties.length) return left.penalties.length - right.penalties.length;
       return 0;
-    })
-    .map((entry) => entry.listing);
+    });
 }
 
 export function listingMatchesSelectedPriceOption(priceCheck: PriceCheck, listing: PriceListing) {

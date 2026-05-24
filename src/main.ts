@@ -6,7 +6,7 @@ import {
   activePriceFiltersForSelection,
   appliedSpecKeySet,
   cleanTradeMarkup,
-  filteredListings,
+  filteredListingRanks,
   hardPriceFiltersForSelection,
   isItemValueModifier,
   itemProfile,
@@ -17,6 +17,7 @@ import {
   specTemplate,
   type CurrencyMeta,
   type ItemSpec,
+  type ListingRank,
   type Poe2DbDataSnapshot,
   type PriceCheck,
   type PriceFilter,
@@ -1656,7 +1657,8 @@ function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedIt
     return renderExchangeModePanel(priceCheck, item);
   }
 
-  const visibleListings = filteredListings(priceCheck, item, selectedSpecKeys, state.source_truth_snapshot);
+  const visibleListingRanks = filteredListingRanks(priceCheck, item, selectedSpecKeys, state.source_truth_snapshot);
+  const visibleListings = visibleListingRanks.map((entry) => entry.listing);
   const estimate = estimatePriceFromListings(priceCheck, visibleListings);
   const selectedCurrency = currencyById(priceCheck, priceCheck.selected_currency);
   const filters = priceCheck.filters.length
@@ -1665,7 +1667,7 @@ function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedIt
         .join("")
     : `<div class="price-filter muted">No editable filters parsed yet.</div>`;
   const listings = visibleListings.length
-    ? visibleListings.map((listing, index) => renderListingRow(listing, item, index)).join("")
+    ? visibleListingRanks.map((entry, index) => renderListingRow(entry.listing, item, index, entry)).join("")
     : `<button class="listing-row empty-listing" type="button">${escapeHtml(emptyListingMessage(priceCheck, selectedCurrency))}</button>`;
 
   return `
@@ -1975,7 +1977,12 @@ function renderTradeRateLimit(rateLimit: TradeRateLimit | null) {
   `;
 }
 
-function renderListingRow(listing: PriceListing, item: ScannedItem | undefined, index: number) {
+function renderListingRow(
+  listing: PriceListing,
+  item: ScannedItem | undefined,
+  index: number,
+  rank?: ListingRank,
+) {
   const priceCheck = state.price_check;
   const useEquivalentDisplay = !!priceCheck && priceCheck.selected_price_option === "equivalent";
   const showNormalizedDisplay = useEquivalentDisplay && !!listing.normalized_price;
@@ -1991,15 +1998,24 @@ function renderListingRow(listing: PriceListing, item: ScannedItem | undefined, 
   const seller = listing.seller ?? "Unknown";
   const quality = listing.quality ?? (item ? itemProfile(item).quality ?? 0 : 0);
   const itemLevel = listing.item_level ?? item?.item_level ?? 0;
-  const title = showNormalizedDisplay && listing.price !== priceText ? ` title="${escapeAttribute(`Listed as ${listing.price}`)}"` : "";
+  const softMiss = !!rank && rank.score >= 0 && rank.score < rank.maxScore && rank.penalties.length > 0;
+  const titleParts = [
+    showNormalizedDisplay && listing.price !== priceText ? `Listed as ${listing.price}` : "",
+    softMiss ? `Official row, local match ${rank!.score}/${rank!.maxScore}: ${rank!.penalties.join("; ")}` : "",
+  ].filter(Boolean);
+  const title = titleParts.length ? ` title="${escapeAttribute(titleParts.join(" | "))}"` : "";
+  const rowClass = softMiss ? "listing-row is-soft-miss" : "listing-row";
+  const matchNote = softMiss
+    ? `<small class="listing-match-note">partial ${rank!.score}/${rank!.maxScore}</small>`
+    : "";
 
   return `
-    <div class="listing-row"${title}>
+    <div class="${rowClass}"${title}>
       <button class="inspect-eye ${pinnedListingPreviewIndex === index ? "is-active" : ""}" data-preview-listing="${index}" type="button" title="Click to inspect this exact listing">View</button>
       <span class="listing-price">${priceIcon}${escapeHtml(priceText)}${listing.online ? '<i class="online-dot"></i>' : ""}</span>
       <span>${itemLevel}</span>
       <span>${quality}%</span>
-      <span class="seller-name">${escapeHtml(shortSeller(seller))}</span>
+      <span class="seller-name">${escapeHtml(shortSeller(seller))}${matchNote}</span>
       <span>${escapeHtml(formatListed(listing.listed))}</span>
     </div>
   `;

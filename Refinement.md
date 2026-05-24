@@ -124,12 +124,14 @@ References:
 
 ### 7. Make listing tier extraction robust
 
+Status: implemented in current branch with category/template matching and ambiguity-safe omission. Keep open through live marketplace scans because official payload shape can vary across item families.
+
 Fetched listing tier info is currently mapped by array index against `extended.mods`. This assumes API order matches local `all_searchable_mods()` order and can mislabel prefix/suffix/tier.
 
 Acceptance:
-- Listing tier info is matched by stat/hash identity where possible, not flat index.
-- If matching is uncertain, omit tier display instead of showing wrong metadata.
-- Add tests with explicit, implicit, rune, desecrated, and grouped-stat listing payloads.
+- Listing tier info is matched by stat/hash identity where possible, not flat index. Implemented by matching extended mod category and stat template.
+- If matching is uncertain, omit tier display instead of showing wrong metadata. Implemented for ambiguous same-template matches.
+- Add tests with explicit, implicit, rune, desecrated, and grouped-stat listing payloads. Implemented for explicit/implicit and ambiguous grouped-stat cases; rune/desecrated live payload variants still need fixture expansion.
 
 References:
 - `src-tauri/src/price_check.rs` `listing_from_fetch_result`
@@ -137,12 +139,12 @@ References:
 
 ### 8. Avoid hiding official results when local scoring is incomplete
 
-Status: implemented in current branch. Soft/local scoring misses stay visible and sort lower; hard filter failures still disappear.
+Status: implemented in current branch. Soft/local scoring misses stay visible, sort lower, and now expose a small partial-match note on listing rows; hard filter failures still disappear.
 
 `filteredListings()` currently drops rows with score `0`. That is okay when local parsing is complete, but dangerous while some tier/source data remains incomplete.
 
 Acceptance:
-- Rows that came back from official trade can still be visible with a clear "not locally matched" state. Implemented for visibility; UI copy can be improved later.
+- Rows that came back from official trade can still be visible with a clear "not locally matched" state. Implemented with `partial x/y` row disclosure and tooltip details.
 - Selected hard filters still exclude true hard failures. Implemented.
 - Soft filters affect sorting and highlighting, not total disappearance, unless the user explicitly asks for strict filtering. Implemented.
 
