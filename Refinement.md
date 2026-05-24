@@ -89,12 +89,14 @@ References:
 
 ### 5. Separate true tier confidence from template-only matches
 
+Status: implemented in current branch for the TypeScript scan/evaluate UI. Template-only tier hints now render as uncertain labels such as `T3?` and validated roll-band matches stay as normal tier labels.
+
 The current source-truth cache has many tier rows with empty `roll_bands`. The UI can show a tier label even when the numeric roll was not validated.
 
 Acceptance:
-- Tier UI distinguishes validated numeric tiers from template-only tier guesses.
-- Template-only matches are not used as hard official trade filters.
-- Marketplace filtering never claims exact tier confidence when `roll_bands` are empty.
+- Tier UI distinguishes validated numeric tiers from template-only tier guesses. Implemented.
+- Template-only matches are not used as hard official trade filters. Already enforced by `min === null` scoring classification.
+- Marketplace filtering never claims exact tier confidence when `roll_bands` are empty. Implemented visually as uncertain tier labels.
 - Data tab reports source-truth health: total tiers, empty roll-band count, unknown affix count.
 
 References:

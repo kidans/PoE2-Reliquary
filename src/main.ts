@@ -1308,6 +1308,7 @@ type ModifierChipMeta = {
   tierTitle: string;
   affixLabel: string;
   affixTone: "prefix" | "suffix" | "unique" | "special" | "unknown";
+  tierConfidence: "validated" | "template" | "unknown";
 };
 
 function modifierChipMetas(specs: ItemSpec[], rarity: string): ModifierChipMeta[] {
@@ -1318,30 +1319,35 @@ function modifierChipMetas(specs: ItemSpec[], rarity: string): ModifierChipMeta[
     const affix = spec.tier_match?.affix ?? null;
     const sourceKind = spec.tier_match?.source_kind ?? null;
     const isUnique = rarity.toLowerCase() === "unique";
-    const tierLabel = spec.tier_match?.tier ?? sourceKindLabel(sourceKind);
+    const tierConfidence = spec.tier_match?.confidence ?? "unknown";
+    const tierLabel = spec.tier_match
+      ? `${spec.tier_match.tier}${tierConfidence === "template" ? "?" : ""}`
+      : sourceKindLabel(sourceKind);
     const tierTitle = spec.tier_match
-      ? `${spec.tier_match.tier} ${spec.tier_match.tier_name} (${sourceKindLabel(sourceKind)})`
+      ? `${spec.tier_match.tier} ${spec.tier_match.tier_name} (${sourceKindLabel(sourceKind)}) - ${
+          tierConfidence === "validated" ? "validated roll band" : "template-only tier hint"
+        }`
       : "Tier unknown until PoE2DB data matches this modifier";
 
     if (isUnique) {
-      return { tierLabel, tierTitle, affixLabel: "U", affixTone: "unique" };
+      return { tierLabel, tierTitle, affixLabel: "U", affixTone: "unique", tierConfidence };
     }
 
     if (affix === "prefix") {
       prefixCount += 1;
-      return { tierLabel, tierTitle, affixLabel: `P${prefixCount}`, affixTone: "prefix" };
+      return { tierLabel, tierTitle, affixLabel: `P${prefixCount}`, affixTone: "prefix", tierConfidence };
     }
 
     if (affix === "suffix") {
       suffixCount += 1;
-      return { tierLabel, tierTitle, affixLabel: `S${suffixCount}`, affixTone: "suffix" };
+      return { tierLabel, tierTitle, affixLabel: `S${suffixCount}`, affixTone: "suffix", tierConfidence };
     }
 
     if (sourceKind && sourceKind !== "normal" && sourceKind !== "table") {
-      return { tierLabel, tierTitle, affixLabel: sourceKindLabel(sourceKind), affixTone: "special" };
+      return { tierLabel, tierTitle, affixLabel: sourceKindLabel(sourceKind), affixTone: "special", tierConfidence };
     }
 
-    return { tierLabel, tierTitle, affixLabel: "?", affixTone: "unknown" };
+    return { tierLabel, tierTitle, affixLabel: "?", affixTone: "unknown", tierConfidence };
   });
 }
 
@@ -1381,7 +1387,7 @@ function renderSpecButton(spec: ItemSpec, className: string, meta?: ModifierChip
   const sideMeta = meta
     ? `
       <small class="mod-side-label" title="${escapeAttribute(meta.tierTitle)}">
-        <span class="mod-tier-label">${escapeHtml(meta.tierLabel)}</span>
+        <span class="mod-tier-label is-${escapeAttribute(meta.tierConfidence)}">${escapeHtml(meta.tierLabel)}</span>
         <span class="mod-affix-label is-${escapeAttribute(meta.affixTone)}">${escapeHtml(meta.affixLabel)}</span>
       </small>
     `

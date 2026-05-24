@@ -262,6 +262,7 @@ describe("PoE2DB tier matching", () => {
         min: 26,
         max: 39,
         affix: "prefix",
+        confidence: "validated",
       }),
     );
   });
@@ -318,6 +319,7 @@ describe("tier matching with empty roll_bands", () => {
     expect(match!.affix).toBe("suffix");
     expect(match!.min).toBeNull();
     expect(match!.max).toBeNull();
+    expect(match!.confidence).toBe("template");
   });
 
   it("still prefers tiers with populated roll_bands when they match", () => {

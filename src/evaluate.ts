@@ -140,6 +140,7 @@ export type TierMatch = {
   min: number | null;
   max: number | null;
   template: string;
+  confidence: "validated" | "template";
 };
 
 export type PriceListing = {
@@ -626,6 +627,7 @@ export function resolveTierMatch(
         min: null,
         max: null,
         template: specTemplate(modifierLabel),
+        confidence: "template",
       };
     }
   }
@@ -683,6 +685,7 @@ export function resolveTierMatch(
   if (!best) return null;
 
   const firstBand = best.tier.roll_bands[0];
+  const confidence = firstBand ? "validated" : "template";
   return {
     source: best.page.slug.startsWith("repoe-") ? "repoe" : "poe2db",
     page_slug: best.page.slug,
@@ -694,6 +697,7 @@ export function resolveTierMatch(
     min: firstBand?.min ?? null,
     max: firstBand?.max ?? null,
     template,
+    confidence,
   };
 }
 

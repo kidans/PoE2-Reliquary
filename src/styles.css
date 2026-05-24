@@ -1431,6 +1431,12 @@ kbd {
   color: #e6d8bd;
 }
 
+.mod-tier-label.is-template,
+.mod-tier-label.is-unknown {
+  color: #a99f90;
+  font-style: italic;
+}
+
 .mod-affix-label.is-prefix {
   color: #ffd45e;
 }
@@ -3021,4 +3027,3 @@ kbd {
   border-color: var(--gold-bright);
   box-shadow: 0 0 6px hsl(var(--accent-hue, 355) 70% 58% / 0.3);
 }
-
