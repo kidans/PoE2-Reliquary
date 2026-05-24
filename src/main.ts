@@ -192,6 +192,15 @@ type Poe2DbAdapterStatus = {
   pages_cached: number;
   pages_failed: number;
   failed_pages: string[];
+  quality?: {
+    total_tiers: number;
+    empty_roll_band_tiers: number;
+    normal_affix_tiers: number;
+    normal_unknown_affix_tiers: number;
+    non_affix_tiers: number;
+    unknown_affix_tiers: number;
+    source_kind_counts: Record<string, number>;
+  };
 };
 
 type ExchangeCategory = {
@@ -1347,7 +1356,7 @@ function modifierChipMetas(specs: ItemSpec[], rarity: string): ModifierChipMeta[
       return { tierLabel, tierTitle, affixLabel: sourceKindLabel(sourceKind), affixTone: "special", tierConfidence };
     }
 
-    return { tierLabel, tierTitle, affixLabel: "?", affixTone: "unknown", tierConfidence };
+    return { tierLabel, tierTitle, affixLabel: "", affixTone: "unknown", tierConfidence };
   });
 }
 
@@ -2308,6 +2317,10 @@ function renderDataPanel() {
   const sourceFreshness = sourceTruth
     ? `${sourceTruth.mod_pages.reduce((count, page) => count + page.tiers.length, 0)} tiers · ${sourceTruth.families.length} families · ${formatRelativeAge(sourceTruth.fetched_at_epoch_ms)}`
     : "No cached snapshot loaded yet.";
+  const sourceQuality = sourceTruth?.status.quality;
+  const sourceQualityText = sourceQuality
+    ? `${sourceQuality.total_tiers} tiers · ${sourceQuality.empty_roll_band_tiers} empty bands · ${sourceQuality.normal_unknown_affix_tiers} normal affix gaps`
+    : "Quality summary waiting for source-truth refresh.";
   const failedPages = sourceTruth?.status.failed_pages.length
     ? `<small>${escapeHtml(sourceTruth.status.failed_pages.slice(0, 3).join(" | "))}</small>`
     : `<small>${escapeHtml(sourceTruth?.cache_path ?? "Cache path appears once the adapter writes its snapshot.")}</small>`;
@@ -2332,6 +2345,7 @@ function renderDataPanel() {
       <div><span>World Areas</span><strong>${escapeHtml(worldAreas.state)}</strong><small>${escapeHtml(worldAreaDetail)}</small></div>
       <div><span>PoE2DB Adapter</span><strong>${escapeHtml(sourceTruth?.status.state ?? "warming")}</strong><small>${escapeHtml(sourceStatus)}</small></div>
       <div><span>Source Freshness</span><strong>${escapeHtml(sourceFreshness)}</strong>${failedPages}</div>
+      <div><span>Tier Data Quality</span><strong>${escapeHtml(sourceQualityText)}</strong><small>Prefix/suffix labels only show when source data proves them.</small></div>
       <div><span>Debug Log</span><strong>Trade diagnostics</strong><small>${escapeHtml(state.debug_log_path ?? "Log path loading...")}</small></div>
       <div><span>League Catalog</span><strong>${escapeHtml(state.trade_league)}</strong><ul class="feed-list">${catalogRows}</ul></div>
       <div><span>PoE2DB Data Feed</span><strong>Early league/item signal</strong><ul class="feed-list">${dataLeagueRows}</ul></div>

@@ -56,7 +56,8 @@ static COMMON_CURRENCIES: &[(&str, &str, &str)] = &[
 static PRICE_CHECK_CACHE: Lazy<Mutex<HashMap<String, CachedPriceCheck>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 static TRADE_STATS_CACHE: Lazy<Mutex<Option<Vec<TradeStatEntry>>>> = Lazy::new(|| Mutex::new(None));
-static CURRENCY_META_CACHE: Lazy<Mutex<Option<CachedCurrencyMeta>>> = Lazy::new(|| Mutex::new(None));
+static CURRENCY_META_CACHE: Lazy<Mutex<Option<CachedCurrencyMeta>>> =
+    Lazy::new(|| Mutex::new(None));
 static EXCHANGE_RATES_CACHE: Lazy<Mutex<HashMap<String, CachedCurrencyRates>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 const PRICE_CHECK_CACHE_SCHEMA_VERSION: u8 = 2;
@@ -346,13 +347,12 @@ async fn request_price_check(
             message: logged_transport_error("price_check.search.transport_error", error),
             rate_limit: None,
         })?;
-    let (search, mut rate_limit) =
-        parse_json_response::<TradeSearchResponse>(
-            "price_check.search.response",
-            search_response,
-            search_started,
-        )
-            .await?;
+    let (search, mut rate_limit) = parse_json_response::<TradeSearchResponse>(
+        "price_check.search.response",
+        search_response,
+        search_started,
+    )
+    .await?;
     debug_log::append(
         "price_check.search.parsed",
         json!({
@@ -524,13 +524,12 @@ async fn fetch_trade_results(
                 message: logged_transport_error("price_check.fetch.transport_error", error),
                 rate_limit: None,
             })?;
-        let (fetched, batch_rate_limit) =
-            parse_json_response::<TradeFetchResponse>(
-                "price_check.fetch.response",
-                fetch_response,
-                fetch_started,
-            )
-                .await?;
+        let (fetched, batch_rate_limit) = parse_json_response::<TradeFetchResponse>(
+            "price_check.fetch.response",
+            fetch_response,
+            fetch_started,
+        )
+        .await?;
         rate_limit = merge_rate_limits(rate_limit, batch_rate_limit);
         debug_log::append(
             "price_check.fetch.parsed",
@@ -740,7 +739,10 @@ fn response_body_kind(body: &str) -> &'static str {
     let trimmed = body.trim_start();
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
         "json"
-    } else if trimmed.starts_with("<!DOCTYPE") || trimmed.starts_with("<html") || trimmed.starts_with("<HTML") {
+    } else if trimmed.starts_with("<!DOCTYPE")
+        || trimmed.starts_with("<html")
+        || trimmed.starts_with("<HTML")
+    {
         "html"
     } else if trimmed.is_empty() {
         "empty"
@@ -1286,7 +1288,14 @@ fn listing_from_fetch_result(
     let normalized_price =
         normalized_amount.map(|amount| format_price(amount, &rates.selected_currency));
 
-    let (hashes_explicit, hashes_implicit, hashes_rune, hashes_desecrated, hashes_enchant, hash_count) = result
+    let (
+        hashes_explicit,
+        hashes_implicit,
+        hashes_rune,
+        hashes_desecrated,
+        hashes_enchant,
+        hash_count,
+    ) = result
         .item
         .extended
         .as_ref()
@@ -1583,7 +1592,11 @@ async fn cached_exchange_rates(cache_key: &str, ttl: Duration) -> Option<Currenc
 }
 
 fn exchange_rates_cache_key(league: &str, selected_currency: &str) -> String {
-    format!("{}|{}", league.trim(), selected_currency.trim().to_ascii_lowercase())
+    format!(
+        "{}|{}",
+        league.trim(),
+        selected_currency.trim().to_ascii_lowercase()
+    )
 }
 
 async fn fetch_exchange_rates_live(
@@ -1629,16 +1642,15 @@ async fn fetch_exchange_rates_live(
         .post(url)
         .json(&request)
         .send()
-            .await
-            .map_err(|error| logged_transport_error("currency.exchange.transport_error", error))?;
-    let (exchange, _) =
-        parse_json_response::<TradeExchangeResponse>(
-            "currency.exchange.response",
-            response,
-            exchange_started,
-        )
-            .await
-            .map_err(|error| error.message)?;
+        .await
+        .map_err(|error| logged_transport_error("currency.exchange.transport_error", error))?;
+    let (exchange, _) = parse_json_response::<TradeExchangeResponse>(
+        "currency.exchange.response",
+        response,
+        exchange_started,
+    )
+    .await
+    .map_err(|error| error.message)?;
 
     Ok(CurrencyRates::from_exchange(selected_currency, exchange))
 }
@@ -1706,19 +1718,15 @@ fn clean_html(value: &str) -> String {
 fn clean_trade_text(value: String) -> String {
     static TAG_RE: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"\[([^|\]]+\|)?([^\]]+)\]").expect("valid trade text tag regex"));
-    static ENVELOPE_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^\{\s*[^}]*\}\s*").expect("valid envelope regex")
-    });
+    static ENVELOPE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^\{\s*[^}]*\}\s*").expect("valid envelope regex"));
     // Strip PoE1-style [Tag|text] markers
     let cleaned = TAG_RE.replace_all(&value, "$2");
     // Strip PoE2 envelope prefix: { Prefix "Name" (Tier: N) — Tags }
     // Envelope is metadata for tier/affix labels, not display text.
     let stripped = ENVELOPE_RE.replace(&cleaned, "");
     let trimmed = stripped.trim();
-    trimmed
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    trimmed.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn spec_template(value: &str) -> String {
@@ -2190,13 +2198,23 @@ pub struct ModTierInfo {
 /// Resolve tier/affix info from `extended.mods` by index position.
 /// The POE2 trade API returns mods in `extended.mods.explicit` indexed by position.
 /// Each entry has a `tier` field like "P6" → Prefix Tier 6, "S4" → Suffix Tier 4.
-fn resolve_mod_tier_from_index(idx: usize, ext_mods: &serde_json::Map<String, serde_json::Value>) -> Option<ModTierInfo> {
+fn resolve_mod_tier_from_index(
+    idx: usize,
+    ext_mods: &serde_json::Map<String, serde_json::Value>,
+) -> Option<ModTierInfo> {
     // Walk through all categories (explicit, implicit, rune, desecrated, etc.)
     // and accumulate entries, then index into the flat list.
     // The extended.mods are returned in the same order as all_searchable_mods()
     // with explicit first, then implicit, rune, desecrated, fractured, crafted.
     let mut flat_entries: Vec<&serde_json::Value> = Vec::new();
-    for category in &["explicit", "implicit", "rune", "desecrated", "fractured", "crafted"] {
+    for category in &[
+        "explicit",
+        "implicit",
+        "rune",
+        "desecrated",
+        "fractured",
+        "crafted",
+    ] {
         if let Some(arr) = ext_mods.get(*category).and_then(|v| v.as_array()) {
             flat_entries.extend(arr.iter());
         }

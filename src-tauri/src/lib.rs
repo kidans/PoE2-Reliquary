@@ -9,17 +9,17 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::price_check::ModTierInfo;
 use arboard::Clipboard;
 use rdev::{listen, EventType, Key};
-use crate::price_check::ModTierInfo;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
     Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl,
     WebviewWindowBuilder,
 };
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use thiserror::Error;
 use tokio::sync::{mpsc, Mutex};
 #[cfg(target_os = "windows")]
@@ -556,13 +556,13 @@ fn set_scan_window_height(window: tauri::Window, content_height: f64) -> Result<
 
 #[tauri::command]
 fn set_compact_window_height(window: tauri::Window, content_height: f64) -> Result<(), String> {
-    let height = content_height
-        .ceil()
-        .max(COMPACT_WINDOW_HEIGHT)
-        .min(600.0);
+    let height = content_height.ceil().max(COMPACT_WINDOW_HEIGHT).min(600.0);
     let position = snapped_window_position(&window, "compact", COMPACT_WINDOW_WIDTH, height)?;
     window
-        .set_size(Size::Logical(LogicalSize::new(COMPACT_WINDOW_WIDTH, height)))
+        .set_size(Size::Logical(LogicalSize::new(
+            COMPACT_WINDOW_WIDTH,
+            height,
+        )))
         .map_err(|error| error.to_string())?;
     window
         .set_position(Position::Logical(position))
@@ -1092,7 +1092,9 @@ pub fn run() {
             let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
             let hide = MenuItemBuilder::with_id("hide", "Hide").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-            let menu = MenuBuilder::new(app).items(&[&show, &hide, &quit]).build()?;
+            let menu = MenuBuilder::new(app)
+                .items(&[&show, &hide, &quit])
+                .build()?;
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Reliquary")
@@ -1103,17 +1105,25 @@ pub fn run() {
                         None => return,
                     };
                     match event.id.as_ref() {
-                        "show" => { let _ = window.show(); }
-                        "hide" => { let _ = window.hide(); }
-                        "quit" => { app.exit(0); }
+                        "show" => {
+                            let _ = window.show();
+                        }
+                        "hide" => {
+                            let _ = window.hide();
+                        }
+                        "quit" => {
+                            app.exit(0);
+                        }
                         _ => {}
                     }
                 })
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
-                        button_state: MouseButtonState::Up, ..
-                    } = event {
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
                         let window = match tray.app_handle().get_webview_window("main") {
                             Some(w) => w,
                             None => return,
@@ -1579,7 +1589,10 @@ fn configured_trade_league() -> Option<String> {
         .filter(|league| !league.is_empty())
 }
 
-fn start_rdev_listener(input_tx: mpsc::UnboundedSender<InputAction>, _state: SharedAppState) -> Result<(), String> {
+fn start_rdev_listener(
+    input_tx: mpsc::UnboundedSender<InputAction>,
+    _state: SharedAppState,
+) -> Result<(), String> {
     thread::Builder::new()
         .name("reliquary-global-input".to_string())
         .spawn(move || {
@@ -1617,7 +1630,8 @@ fn handle_global_input_event(
             alt_down.store(false, Ordering::SeqCst);
         }
         EventType::KeyPress(ref key) if active_window_is_poe2() => {
-            static SIMULATING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            static SIMULATING: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
             if SIMULATING.load(Ordering::SeqCst) {
                 return;
             }
@@ -1628,8 +1642,10 @@ fn handle_global_input_event(
             let Some(trade_key) = shortcut_key_to_rdev(hotkeys.trade_key) else {
                 return;
             };
-            let is_scan = key == &scan_key && modifier_is_down(&hotkeys.scan_mod, ctrl_down, alt_down);
-            let is_trade = key == &trade_key && modifier_is_down(&hotkeys.trade_mod, ctrl_down, alt_down);
+            let is_scan =
+                key == &scan_key && modifier_is_down(&hotkeys.scan_mod, ctrl_down, alt_down);
+            let is_trade =
+                key == &trade_key && modifier_is_down(&hotkeys.trade_mod, ctrl_down, alt_down);
             let needs_simulate = is_scan && (scan_key != Key::KeyC || hotkeys.scan_mod != "Ctrl");
 
             if needs_simulate {
@@ -1780,7 +1796,11 @@ fn get_poe2_pid_cache() -> (bool, u32) {
 
     let result = find_poe2_process();
     let mut cached = CACHE.lock().unwrap();
-    *cached = (result.is_some(), result.unwrap_or(0), std::time::Instant::now());
+    *cached = (
+        result.is_some(),
+        result.unwrap_or(0),
+        std::time::Instant::now(),
+    );
     (result.is_some(), result.unwrap_or(0))
 }
 
@@ -1828,7 +1848,11 @@ fn find_poe2_process() -> Option<u32> {
         let mut pid = None;
         if Process32FirstW(snapshot, &mut pe) != 0 {
             loop {
-                let end = pe.szExeFile.iter().position(|&c| c == 0).unwrap_or(pe.szExeFile.len());
+                let end = pe
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(pe.szExeFile.len());
                 let name = String::from_utf16_lossy(&pe.szExeFile[..end]).to_ascii_lowercase();
                 if name.contains("pathofexilesteam") || name.contains("pathofexile") {
                     pid = Some(pe.th32ProcessID);
@@ -1848,7 +1872,6 @@ fn find_poe2_process() -> Option<u32> {
 unsafe extern "system" {
     fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
 }
-
 
 #[cfg(target_os = "windows")]
 fn active_window_title() -> String {
@@ -2463,7 +2486,11 @@ fn init_world_areas() -> WorldAreaStatus {
         });
     let map = data.unwrap_or_default();
     let status = WorldAreaStatus {
-        state: if map.is_empty() { "missing".to_string() } else { "ready".to_string() },
+        state: if map.is_empty() {
+            "missing".to_string()
+        } else {
+            "ready".to_string()
+        },
         source: source.to_string(),
         count: map.len(),
         cache_path: path.display().to_string(),
@@ -2508,7 +2535,9 @@ fn fetch_world_areas_cache(path: &PathBuf) -> Result<HashMap<String, AreaMeta>, 
         .map_err(|error| error.to_string())?;
     let map = parse_world_areas(&text)
         .filter(|map| !map.is_empty())
-        .ok_or_else(|| "RePoE world_areas response did not parse into usable area metadata".to_string())?;
+        .ok_or_else(|| {
+            "RePoE world_areas response did not parse into usable area metadata".to_string()
+        })?;
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -2552,25 +2581,30 @@ fn parse_world_areas(data: &str) -> Option<HashMap<String, AreaMeta>> {
 
         let is_map = tags.contains(&"map".to_string());
 
-        let biome = is_map.then(|| {
-            tags.iter()
-                .find(|t| t.ends_with("_biome"))
-                .map(|t| t.trim_end_matches("_biome").replace('_', " "))
-        }).flatten();
+        let biome = is_map
+            .then(|| {
+                tags.iter()
+                    .find(|t| t.ends_with("_biome"))
+                    .map(|t| t.trim_end_matches("_biome").replace('_', " "))
+            })
+            .flatten();
 
-        let boss_path = is_map.then(|| {
-            entry.get("bosses")
-                .and_then(|b| {
-                    b.as_str().map(|s| s.to_string()).or_else(|| {
-                        b.as_array()
-                            .and_then(|arr| arr.first())
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
+        let boss_path = is_map
+            .then(|| {
+                entry
+                    .get("bosses")
+                    .and_then(|b| {
+                        b.as_str().map(|s| s.to_string()).or_else(|| {
+                            b.as_array()
+                                .and_then(|arr| arr.first())
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                        })
                     })
-                })
-                .filter(|s| !s.is_empty())
-                .map(|s| extract_boss_name(&s))
-        }).flatten();
+                    .filter(|s| !s.is_empty())
+                    .map(|s| extract_boss_name(&s))
+            })
+            .flatten();
 
         let act = entry
             .get("act")

@@ -126,6 +126,15 @@ export type Poe2DbDataSnapshot = {
     pages_cached: number;
     pages_failed: number;
     failed_pages: string[];
+    quality?: {
+      total_tiers: number;
+      empty_roll_band_tiers: number;
+      normal_affix_tiers: number;
+      normal_unknown_affix_tiers: number;
+      non_affix_tiers: number;
+      unknown_affix_tiers: number;
+      source_kind_counts: Record<string, number>;
+    };
   };
 };
 

@@ -106,13 +106,15 @@ References:
 
 ### 6. Improve prefix/suffix/source-kind completeness
 
+Status: implemented in current branch for source-truth generation, scan metadata honesty, and Data tab quality visibility. Keep open through real scan testing so we can confirm RePoE/PoE2DB live data stays within the new quality thresholds.
+
 The current cache has a high number of `affix: unknown`, mostly from RePoE/global, implicit, corrupted, and special sources. This blocks the goal of always showing reliable `P1/P2/P3`, `S1/S2/S3`, or special markers.
 
 Acceptance:
-- Normal explicit mods stay near complete for prefix/suffix.
-- Unknown affix entries are expected only for sources where prefix/suffix does not apply.
-- UI does not show prefix/suffix placeholders for unknown data.
-- Source-truth generation emits a quality summary and fails loudly when important categories regress.
+- Normal explicit mods stay near complete for prefix/suffix. Implemented with quality counts and threshold warnings.
+- Unknown affix entries are expected only for sources where prefix/suffix does not apply. Implemented by normalizing non-affix source kinds to `null`.
+- UI does not show prefix/suffix placeholders for unknown data. Implemented by rendering no `?` affix placeholder.
+- Source-truth generation emits a quality summary and fails loudly when important categories regress. Implemented through `status.quality` and adapter warnings.
 
 References:
 - `src-tauri/src/source_truth.rs`

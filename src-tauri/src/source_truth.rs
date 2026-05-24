@@ -317,6 +317,19 @@ pub struct Poe2DbAdapterStatus {
     pub pages_cached: usize,
     pub pages_failed: usize,
     pub failed_pages: Vec<String>,
+    #[serde(default)]
+    pub quality: SourceTruthQuality,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourceTruthQuality {
+    pub total_tiers: usize,
+    pub empty_roll_band_tiers: usize,
+    pub normal_affix_tiers: usize,
+    pub normal_unknown_affix_tiers: usize,
+    pub non_affix_tiers: usize,
+    pub unknown_affix_tiers: usize,
+    pub source_kind_counts: HashMap<String, usize>,
 }
 
 static ITEM_FAMILY_MANIFEST: &[ItemFamilyManifestEntry] = &[
@@ -628,6 +641,11 @@ pub async fn refresh_poe2db_data_snapshot(force: bool) -> Result<Poe2DbDataSnaps
         }
     }
 
+    let quality = summarize_mod_tier_quality(&mod_pages);
+    if let Some(warning) = source_truth_quality_warning(&quality) {
+        failed_pages.push(format!("Quality: {warning}"));
+    }
+
     let pages_failed = failed_pages.len();
     let fetched_at_epoch_ms = now_epoch_ms();
     let state = if pages_failed == 0 {
@@ -662,6 +680,7 @@ pub async fn refresh_poe2db_data_snapshot(force: bool) -> Result<Poe2DbDataSnaps
             pages_cached,
             pages_failed,
             failed_pages,
+            quality,
         },
     };
 
@@ -1368,8 +1387,9 @@ fn repoe_modifier_page_tags(
 }
 
 fn repoe_mod_tier(id: &str, modifier: &RePoeMod, text: &str) -> Poe2DbModTier {
-    let affix = affix_kind(Some(&modifier.generation_type));
     let source_kind = repoe_source_kind(id, modifier);
+    let affix =
+        normalize_affix_for_source_kind(&source_kind, affix_kind(Some(&modifier.generation_type)));
     let template = modifier_template(text);
     let name = clean_cell(&modifier.name);
 
@@ -1503,7 +1523,10 @@ fn mods_view_modifier_tier(
         .level
         .as_deref()
         .and_then(|level| clean_cell(level).parse::<u16>().ok())?;
-    let affix = mods_view_affix_kind(modifier.generation_type_id.as_deref(), generation_map);
+    let affix = normalize_affix_for_source_kind(
+        source_kind,
+        mods_view_affix_kind(modifier.generation_type_id.as_deref(), generation_map),
+    );
     let text = modifier_text(&modifier.str);
     let template = modifier_template(&text);
 
@@ -1618,6 +1641,71 @@ fn assign_tier_labels(rows: &mut [Poe2DbModTier]) {
             rows[*row_index].tier = format!("T{}", tier_index + 1);
         }
     }
+}
+
+fn normalize_affix_for_source_kind(
+    source_kind: &str,
+    affix: Option<AffixKind>,
+) -> Option<AffixKind> {
+    match affix {
+        Some(AffixKind::Prefix) | Some(AffixKind::Suffix) if is_affix_source_kind(source_kind) => {
+            affix
+        }
+        _ => None,
+    }
+}
+
+fn is_affix_source_kind(source_kind: &str) -> bool {
+    matches!(source_kind, "normal" | "table")
+}
+
+fn summarize_mod_tier_quality(pages: &[Poe2DbModTierPage]) -> SourceTruthQuality {
+    let mut quality = SourceTruthQuality::default();
+
+    for tier in pages.iter().flat_map(|page| page.tiers.iter()) {
+        quality.total_tiers += 1;
+        if tier.roll_bands.is_empty() {
+            quality.empty_roll_band_tiers += 1;
+        }
+        *quality
+            .source_kind_counts
+            .entry(tier.source_kind.clone())
+            .or_default() += 1;
+
+        if is_affix_source_kind(&tier.source_kind) {
+            match tier.affix {
+                Some(AffixKind::Prefix) | Some(AffixKind::Suffix) => {
+                    quality.normal_affix_tiers += 1;
+                }
+                Some(AffixKind::Unknown) | None => {
+                    quality.normal_unknown_affix_tiers += 1;
+                }
+            }
+        } else {
+            quality.non_affix_tiers += 1;
+            if matches!(tier.affix, Some(AffixKind::Unknown)) {
+                quality.unknown_affix_tiers += 1;
+            }
+        }
+    }
+
+    quality
+}
+
+fn source_truth_quality_warning(quality: &SourceTruthQuality) -> Option<String> {
+    if quality.normal_unknown_affix_tiers == 0 && quality.unknown_affix_tiers == 0 {
+        return None;
+    }
+
+    let tolerated_unknowns = (quality.normal_affix_tiers / 100).max(5);
+    if quality.normal_unknown_affix_tiers > tolerated_unknowns || quality.unknown_affix_tiers > 0 {
+        return Some(format!(
+            "{} normal affixes lack prefix/suffix data; {} non-affix tiers still carry unknown affix markers",
+            quality.normal_unknown_affix_tiers, quality.unknown_affix_tiers
+        ));
+    }
+
+    None
 }
 
 fn modifier_text(modifier_html: &str) -> String {
@@ -2202,12 +2290,69 @@ mod tests {
             .find(|tier| tier.source_kind == "socketable")
             .expect("socketable rune tier parsed");
         assert_eq!(rune.roll_bands[0].min, 5.0);
+        assert_eq!(rune.affix, None);
 
         let desecrated = tiers
             .iter()
             .find(|tier| tier.source_kind == "desecrated")
             .expect("desecrated tier parsed");
         assert_eq!(desecrated.template, "# % increased Attack Speed");
+        assert_eq!(desecrated.affix, None);
+    }
+
+    #[test]
+    fn summarizes_mod_tier_quality_without_penalizing_non_affix_sources() {
+        let pages = vec![super::Poe2DbModTierPage {
+            slug: "test".to_string(),
+            source_url: "test".to_string(),
+            tiers: vec![
+                test_tier(
+                    "normal",
+                    Some(AffixKind::Prefix),
+                    vec![super::RollBand { min: 1.0, max: 2.0 }],
+                ),
+                test_tier(
+                    "normal",
+                    Some(AffixKind::Suffix),
+                    vec![super::RollBand { min: 3.0, max: 4.0 }],
+                ),
+                test_tier("normal", None, vec![super::RollBand { min: 5.0, max: 6.0 }]),
+                test_tier("rune", None, Vec::new()),
+                test_tier(
+                    "desecrated",
+                    None,
+                    vec![super::RollBand { min: 7.0, max: 8.0 }],
+                ),
+            ],
+        }];
+
+        let quality = super::summarize_mod_tier_quality(&pages);
+
+        assert_eq!(quality.total_tiers, 5);
+        assert_eq!(quality.empty_roll_band_tiers, 1);
+        assert_eq!(quality.normal_affix_tiers, 2);
+        assert_eq!(quality.normal_unknown_affix_tiers, 1);
+        assert_eq!(quality.non_affix_tiers, 2);
+    }
+
+    fn test_tier(
+        source_kind: &str,
+        affix: Option<AffixKind>,
+        roll_bands: Vec<super::RollBand>,
+    ) -> super::Poe2DbModTier {
+        super::Poe2DbModTier {
+            id: format!("{source_kind}:test"),
+            tier: "T1".to_string(),
+            name: "Test".to_string(),
+            source_kind: source_kind.to_string(),
+            required_level: 1,
+            affix,
+            text: "+1 Test".to_string(),
+            template: "+# Test".to_string(),
+            roll_bands,
+            tags: Vec::new(),
+            weights: Vec::new(),
+        }
     }
 
     #[test]
@@ -2249,6 +2394,7 @@ mod tests {
                 pages_cached: 0,
                 pages_failed: 0,
                 failed_pages: Vec::new(),
+                quality: super::SourceTruthQuality::default(),
             },
         };
 
