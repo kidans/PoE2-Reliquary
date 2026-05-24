@@ -240,14 +240,29 @@ describe("evaluate listing matching", () => {
     expect(listingMatchesSelectedPriceOption(check, listing({ currency: "regal" }))).toBe(false);
   });
 
-  it("locally narrows listings by selected item specs", () => {
+  it("keeps official rows visible while ranking selected soft specs first", () => {
+    const specs = itemSpecs(baseItem);
+    const selected = new Set([
+      specs.find((spec) => spec.label === "+5 to Level of all Attack Skills")?.key,
+    ].filter((key): key is string => Boolean(key)));
+
+    const visible = filteredListings(priceCheck(), baseItem, selected);
+
+    expect(visible).toHaveLength(2);
+    expect(visible[0].explicit_mods).toContain("+5 to Level of all Attack Skills");
+  });
+
+  it("still removes rows that fail hard selected specs", () => {
     const specs = itemSpecs(baseItem);
     const selected = new Set([
       specs.find((spec) => spec.kind === "item_level")?.key,
       specs.find((spec) => spec.label === "+5 to Level of all Attack Skills")?.key,
     ].filter((key): key is string => Boolean(key)));
 
-    expect(filteredListings(priceCheck(), baseItem, selected)).toHaveLength(1);
+    const visible = filteredListings(priceCheck(), baseItem, selected);
+
+    expect(visible).toHaveLength(1);
+    expect(visible[0].item_level).toBe(81);
   });
 });
 

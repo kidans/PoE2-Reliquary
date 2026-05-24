@@ -135,12 +135,14 @@ References:
 
 ### 8. Avoid hiding official results when local scoring is incomplete
 
+Status: implemented in current branch. Soft/local scoring misses stay visible and sort lower; hard filter failures still disappear.
+
 `filteredListings()` currently drops rows with score `0`. That is okay when local parsing is complete, but dangerous while some tier/source data remains incomplete.
 
 Acceptance:
-- Rows that came back from official trade can still be visible with a clear "not locally matched" state.
-- Selected hard filters still exclude true hard failures.
-- Soft filters affect sorting and highlighting, not total disappearance, unless the user explicitly asks for strict filtering.
+- Rows that came back from official trade can still be visible with a clear "not locally matched" state. Implemented for visibility; UI copy can be improved later.
+- Selected hard filters still exclude true hard failures. Implemented.
+- Soft filters affect sorting and highlighting, not total disappearance, unless the user explicitly asks for strict filtering. Implemented.
 
 References:
 - `src/evaluate.ts` `filteredListings`

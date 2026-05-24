@@ -538,7 +538,7 @@ export function filteredListings(
   const ranked = rankListings(priceCheck, item, selectedSpecKeys, sourceTruth);
 
   return ranked
-    .filter((entry) => entry.score > 0 || (entry.score === 1 && entry.maxScore <= 1))
+    .filter((entry) => entry.score >= 0)
     .sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score;
       if (left.penalties.length !== right.penalties.length) return left.penalties.length - right.penalties.length;
