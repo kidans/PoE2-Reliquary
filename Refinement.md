@@ -177,12 +177,14 @@ References:
 
 ### 11. Align shortcut UI and backend behavior
 
+Status: implemented in current branch for A-Z and 0-9 shortcut keys with frontend/backend normalization.
+
 Rust supports letter and digit shortcut keys, but the settings UI only accepts A-Z. The backend also relies on frontend localStorage to push keybinds at startup.
 
 Acceptance:
-- UI and backend support the same key set.
+- UI and backend support the same key set. Implemented for A-Z and 0-9.
 - Persisted shortcuts are loaded reliably before the global listener handles user input.
-- Invalid shortcut settings recover to safe defaults.
+- Invalid shortcut settings recover to safe defaults. Implemented.
 
 References:
 - `src/main.ts` settings keydown handler

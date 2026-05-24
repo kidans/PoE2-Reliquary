@@ -461,10 +461,22 @@ async fn set_keybinds(
 ) -> Result<(), String> {
     let mut locked = state.lock().await;
     locked.scan_mod = scan_mod.clone();
-    locked.scan_key = scan_key.chars().next().unwrap_or('C');
+    locked.scan_key = normalize_shortcut_key(&scan_key, 'C');
     locked.trade_mod = trade_mod.clone();
-    locked.trade_key = trade_key.chars().next().unwrap_or('D');
+    locked.trade_key = normalize_shortcut_key(&trade_key, 'D');
     Ok(())
+}
+
+fn normalize_shortcut_key(value: &str, fallback: char) -> char {
+    let Some(key) = value.chars().next().map(|key| key.to_ascii_uppercase()) else {
+        return fallback;
+    };
+
+    if key.is_ascii_alphanumeric() {
+        key
+    } else {
+        fallback
+    }
 }
 
 #[tauri::command]

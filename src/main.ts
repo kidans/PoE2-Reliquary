@@ -2858,13 +2858,26 @@ function readAppSettings(): AppSettings {
       panelAlpha: clampNumber(Number(parsed.panelAlpha), 0, 1, DEFAULT_APP_SETTINGS.panelAlpha),
       saturation: clampNumber(Number(parsed.saturation), 0, 200, DEFAULT_APP_SETTINGS.saturation),
       scanMod: parsed.scanMod === "Ctrl" || parsed.scanMod === "Alt" ? parsed.scanMod : DEFAULT_APP_SETTINGS.scanMod,
-      scanKey: (typeof parsed.scanKey === "string" && parsed.scanKey.length === 1) ? parsed.scanKey.toUpperCase() : DEFAULT_APP_SETTINGS.scanKey,
+      scanKey: normalizeShortcutKey(parsed.scanKey, DEFAULT_APP_SETTINGS.scanKey),
       tradeMod: parsed.tradeMod === "Ctrl" || parsed.tradeMod === "Alt" ? parsed.tradeMod : DEFAULT_APP_SETTINGS.tradeMod,
-      tradeKey: (typeof parsed.tradeKey === "string" && parsed.tradeKey.length === 1) ? parsed.tradeKey.toUpperCase() : DEFAULT_APP_SETTINGS.tradeKey,
+      tradeKey: normalizeShortcutKey(parsed.tradeKey, DEFAULT_APP_SETTINGS.tradeKey),
     };
   } catch {
     return { ...DEFAULT_APP_SETTINGS };
   }
+}
+
+function normalizeShortcutKey(value: unknown, fallback: string) {
+  if (typeof value !== "string" || value.length !== 1) {
+    return fallback;
+  }
+
+  const key = value.toUpperCase();
+  return isSupportedShortcutKey(key) ? key : fallback;
+}
+
+function isSupportedShortcutKey(key: string) {
+  return key.length === 1 && ((key >= "A" && key <= "Z") || (key >= "0" && key <= "9"));
 }
 
 function saveAppSettings() {
@@ -3565,7 +3578,7 @@ if (!isListingPreviewWindow && leagueElement) {
     if (name !== "scanKey" && name !== "tradeKey") return;
 
     const key = event.key.toUpperCase();
-    if (key.length === 1 && key >= "A" && key <= "Z") {
+    if (isSupportedShortcutKey(key)) {
       event.preventDefault();
       appSettings[name] = key;
       keyInput.value = key;
