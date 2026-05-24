@@ -69,6 +69,12 @@ body,
   font-family: "Segoe UI", Aptos, system-ui, sans-serif;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 button,
 input,
 textarea,
@@ -371,10 +377,11 @@ kbd {
   z-index: 8;
   flex-direction: column;
   gap: 7px;
-  width: 30px;
+  width: 34px;
   padding: 8px 0;
   border-bottom: 0;
-  transform: translate(-68%, -50%);
+  overflow: visible;
+  transform: translate(-62%, -50%);
   transition:
     transform 180ms ease,
     filter 180ms ease;
@@ -382,7 +389,7 @@ kbd {
 
 .tab-row:hover,
 .tab-row:focus-within {
-  transform: translate(-12%, -50%);
+  transform: translate(-8%, -50%);
   filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.72));
 }
 
@@ -407,7 +414,7 @@ kbd {
   position: relative;
   align-items: center;
   justify-content: center;
-  width: 30px;
+  width: 32px;
   height: 42px;
   min-height: 42px;
   padding: 0;
@@ -1859,6 +1866,7 @@ kbd {
   width: 100%;
   height: 100%;
   background: transparent;
+  padding: 1px;
 }
 
 .listing-preview-card {
