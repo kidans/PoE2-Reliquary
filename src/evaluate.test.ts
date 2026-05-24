@@ -283,6 +283,197 @@ describe("PoE2DB tier matching", () => {
   });
 });
 
+describe("tier matching with empty roll_bands", () => {
+  it("returns a match when template matches but roll_bands are empty (PoE2DB scraping gap)", () => {
+    const snapshot: Poe2DbDataSnapshot = {
+      ...poe2dbSnapshot,
+      mod_pages: [
+        {
+          slug: "Talismans",
+          source_url: "https://poe2db.tw/us/Talismans",
+          tiers: [
+            {
+              id: "crit-chance-t1",
+              tier: "T1",
+              name: "of Unmaking",
+              source_kind: "normal",
+              required_level: 82,
+              affix: "suffix",
+              text: "+1% to Critical Hit Chance",
+              template: "+# % to Critical Hit Chance",
+              roll_bands: [], // PoE2DB scraping failed here
+              tags: [],
+            },
+          ],
+        },
+      ],
+      status: { ...poe2dbSnapshot.status },
+    };
+
+    const match = resolveTierMatch("+2.43% to Critical Hit Chance", snapshot);
+
+    expect(match).toBeDefined();
+    expect(match!.tier).toBe("T1");
+    expect(match!.tier_name).toBe("of Unmaking");
+    expect(match!.affix).toBe("suffix");
+    expect(match!.min).toBeNull();
+    expect(match!.max).toBeNull();
+  });
+
+  it("still prefers tiers with populated roll_bands when they match", () => {
+    const snapshot: Poe2DbDataSnapshot = {
+      ...poe2dbSnapshot,
+      mod_pages: [
+        {
+          slug: "Physical_damage",
+          source_url: "https://poe2db.tw/us/Physical_damage",
+          tiers: [
+            {
+              id: "adds-physical-tempered",
+              tier: "T2",
+              name: "Tempered",
+              source_kind: "normal",
+              required_level: 65,
+              affix: "prefix",
+              text: "Adds (21-31) to (36-53) Physical Damage",
+              template: "Adds # to # Physical Damage",
+              roll_bands: [
+                { min: 21, max: 31 },
+                { min: 36, max: 53 },
+              ],
+              tags: [],
+            },
+            {
+              id: "adds-physical-flaring",
+              tier: "T1",
+              name: "Flaring",
+              source_kind: "normal",
+              required_level: 75,
+              affix: "prefix",
+              text: "Adds (26-39) to (44-66) Physical Damage",
+              template: "Adds # to # Physical Damage",
+              roll_bands: [
+                { min: 26, max: 39 },
+                { min: 44, max: 66 },
+              ],
+              tags: [],
+            },
+            // Empty-bands copy — lower req level so lower score, should NOT beat exact band match
+            {
+              id: "adds-physical-empty",
+              tier: "T0",
+              name: "Empty Bands",
+              source_kind: "normal",
+              required_level: 20,
+              affix: "prefix",
+              text: "Adds (0-0) to (0-0) Physical Damage",
+              template: "Adds # to # Physical Damage",
+              roll_bands: [],
+              tags: [],
+            },
+          ],
+        },
+      ],
+      status: { ...poe2dbSnapshot.status },
+    };
+
+    // "Adds 30 to 50 Physical Damage" should match T1 (Flaring) via roll_bands, not T0 (empty bands)
+    const match = resolveTierMatch("Adds 30 to 50 Physical Damage", snapshot);
+    expect(match).toBeDefined();
+    expect(match!.tier).toBe("T1");
+    expect(match!.tier_name).toBe("Flaring");
+  });
+});
+
+describe("tier matching source_kind priority", () => {
+  it("prefers normal source_kind over repoe (unique) when roll_bands on both pages match", () => {
+    const snapshot: Poe2DbDataSnapshot = {
+      ...poe2dbSnapshot,
+      mod_pages: [
+        {
+          slug: "repoe-global",
+          source_url: "https://repoe.github.io/poe2/data",
+          tiers: [
+            {
+              id: "unique-pierce",
+              tier: "T1",
+              name: "UniquePierceChance",
+              source_kind: "repoe",
+              required_level: 72,
+              affix: "prefix",
+              text: "#% chance to Pierce an Enemy",
+              template: "#% chance to [Pierce|Pierce] an Enemy",
+              roll_bands: [{ min: 15, max: 25 }],
+              tags: [],
+            },
+          ],
+        },
+        {
+          slug: "repoe-dexjewel",
+          source_url: "https://repoe.github.io/poe2/data",
+          tiers: [
+            {
+              id: "normal-pierce",
+              tier: "T1",
+              name: "of Piercing",
+              source_kind: "normal",
+              required_level: 72,
+              affix: "suffix",
+              text: "#% chance to Pierce an Enemy",
+              template: "#% chance to [Pierce|Pierce] an Enemy",
+              roll_bands: [{ min: 10, max: 20 }],
+              tags: [],
+            },
+          ],
+        },
+      ],
+      status: { ...poe2dbSnapshot.status },
+    };
+
+    // 17% pierce chance falls in both bands (15-25 repoe, 10-20 normal)
+    const match = resolveTierMatch("17% chance to Pierce an Enemy", snapshot);
+    expect(match).toBeDefined();
+    expect(match!.tier).toBe("T1");
+    expect(match!.tier_name).toBe("of Piercing");
+    expect(match!.source_kind).toBe("normal");
+    expect(match!.page_slug).toBe("repoe-dexjewel");
+  });
+
+  it("falls through to repoe source_kind when no normal match exists", () => {
+    const snapshot: Poe2DbDataSnapshot = {
+      ...poe2dbSnapshot,
+      mod_pages: [
+        {
+          slug: "repoe-global",
+          source_url: "https://repoe.github.io/poe2/data",
+          tiers: [
+            {
+              id: "unique-poison-on-crit",
+              tier: "T1",
+              name: "CausesPoisonOnCritUniqueDagger",
+              source_kind: "repoe",
+              required_level: 75,
+              affix: "prefix",
+              text: "#% chance to Cause Poison on Critical Hit",
+              template: "#% chance to Cause Poison on [Critical|Critical Hit]",
+              roll_bands: [{ min: 50, max: 50 }],
+              tags: [],
+            },
+          ],
+        },
+      ],
+      status: { ...poe2dbSnapshot.status },
+    };
+
+    // This mod template only exists in repoe-global — no normal page has it
+    const match = resolveTierMatch("50% chance to Cause Poison on Critical Hit", snapshot);
+    expect(match).toBeDefined();
+    expect(match!.tier).toBe("T1");
+    expect(match!.tier_name).toBe("CausesPoisonOnCritUniqueDagger");
+    expect(match!.source_kind).toBe("repoe");
+  });
+});
+
 describe("hard/score filter classification", () => {
   it("classifies stats with trusted tier band matches as hard", () => {
     const specs = itemSpecs(baseItem, undefined, poe2dbSnapshot);

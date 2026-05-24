@@ -579,6 +579,25 @@ export function listingMatchesSpec(listing: PriceListing, spec: ItemSpec) {
   }
 }
 
+const TIER_SOURCE_KIND_RANK: Record<string, number> = {
+  normal: 100,
+  implicit: 90,
+  corrupted: 80,
+  essence: 70,
+  socketable: 60,
+  rune: 50,
+  item_card: 40,
+  perfect_essence: 40,
+  fractured: 30,
+  enchant: 20,
+  // "repoe" (uniques/unclassified) and anything else gets default 10
+};
+
+/** Higher rank = more specific/useful for price checking → preferred. */
+function tierSourceKindRank(sourceKind: string): number {
+  return TIER_SOURCE_KIND_RANK[sourceKind] ?? 10;
+}
+
 export function resolveTierMatch(
   modifierLabel: string,
   sourceTruth: Poe2DbDataSnapshot | null,
@@ -622,33 +641,60 @@ export function resolveTierMatch(
   }
   const sourceHints = sourceKindHints(modifierLabel);
 
+  // Build item-relevance hints once for page scoring
+  const itemHints = [item?.item_class, item?.base_type]
+    .filter((v): v is string => Boolean(v))
+    .map(normalizedPageHint);
+
+  // Collect ALL matching candidates across all pages, then pick the best one.
+  // This prevents repoe-global unique mods from beating normal affixes from
+  // base-type-specific pages when they share the same template.
+  let best: { tier: Poe2DbModTier; page: Poe2DbModTierPage } | null = null;
+  let bestRank = -1;
+  let bestScore = 0;
+
   for (const page of prioritizedModPages(sourceTruth.mod_pages, item)) {
     let sameTemplate = page.tiers.filter((tier) => templatesCompatible(specTemplate(tier.template), template));
+    if (!sameTemplate.length) continue;
+
     if (sourceHints.length) {
       sameTemplate = sameTemplate.filter((tier) => sourceHints.includes(tier.source_kind));
     }
-    sameTemplate.sort((left, right) => sourceKindScore(right.source_kind, sourceHints) - sourceKindScore(left.source_kind, sourceHints));
-    const matchingTier = sameTemplate.find((tier) => tierMatchesValues(tier, values));
-    if (!matchingTier) {
-      continue;
-    }
 
-    const firstBand = matchingTier.roll_bands[0];
-    return {
-      source: page.slug.startsWith("repoe-") ? "repoe" : "poe2db",
-      page_slug: page.slug,
-      tier: matchingTier.tier,
-      tier_name: matchingTier.name,
-      required_level: matchingTier.required_level,
-      affix: matchingTier.affix,
-      source_kind: matchingTier.source_kind,
-      min: firstBand?.min ?? null,
-      max: firstBand?.max ?? null,
-      template,
-    };
+    const pageScore = pageHintScore(page.slug, itemHints);
+
+    for (const tier of sameTemplate) {
+      if (!tierMatchesValues(tier, values)) continue;
+
+      const skRank = tierSourceKindRank(tier.source_kind);
+      // Primary sort: source_kind rank (normal > repoe).
+      // Secondary: page relevance score (base-type page > generic repoe-global).
+      // Tertiary: required_level as tiebreaker (higher = later tier = tighter rolls).
+      const score = skRank * 100000 + pageScore * 100 + (tier.required_level ?? 0);
+
+      if (skRank > bestRank || (skRank === bestRank && score > bestScore)) {
+        bestRank = skRank;
+        bestScore = score;
+        best = { tier, page };
+      }
+    }
   }
 
-  return null;
+  if (!best) return null;
+
+  const firstBand = best.tier.roll_bands[0];
+  return {
+    source: best.page.slug.startsWith("repoe-") ? "repoe" : "poe2db",
+    page_slug: best.page.slug,
+    tier: best.tier.tier,
+    tier_name: best.tier.name,
+    required_level: best.tier.required_level,
+    affix: best.tier.affix,
+    source_kind: best.tier.source_kind,
+    min: firstBand?.min ?? null,
+    max: firstBand?.max ?? null,
+    template,
+  };
 }
 
 function prioritizedModPages(
@@ -961,8 +1007,10 @@ function listingModifierMatchesSpec(modifier: string, spec: ItemSpec) {
 }
 
 function tierMatchesValues(tier: Poe2DbModTier, values: number[]) {
+  // If the mod has no roll bands at all, accept template match without value validation.
+  // This handles PoE2DB pages where roll range scraping failed (11.9% of tiers).
   if (!tier.roll_bands.length) {
-    return false;
+    return true;
   }
 
   return values.every((value, index) => {
