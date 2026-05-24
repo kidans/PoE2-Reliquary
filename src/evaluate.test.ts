@@ -139,6 +139,13 @@ function listing(overrides: Partial<PriceListing> = {}): PriceListing {
     preview_icon_url: null,
     preview_property_lines: [],
     preview_description: null,
+    hashes_explicit: [],
+    hashes_implicit: [],
+    hashes_rune: [],
+    hashes_desecrated: [],
+    hashes_enchant: [],
+    hash_count: 0,
+    mod_tier_infos: [],
     ...overrides,
   };
 }

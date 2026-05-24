@@ -11,6 +11,7 @@ use std::{
 
 use arboard::Clipboard;
 use rdev::{listen, EventType, Key};
+use crate::price_check::ModTierInfo;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -263,6 +264,13 @@ pub struct PriceListing {
     pub preview_icon_url: Option<String>,
     pub preview_property_lines: Vec<String>,
     pub preview_description: Option<String>,
+    pub hashes_explicit: Vec<String>,
+    pub hashes_implicit: Vec<String>,
+    pub hashes_rune: Vec<String>,
+    pub hashes_desecrated: Vec<String>,
+    pub hashes_enchant: Vec<String>,
+    pub hash_count: usize,
+    pub mod_tier_infos: Vec<Option<ModTierInfo>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1806,14 +1814,14 @@ async fn stream_client_log(
         .unwrap_or(0);
 
     if last_size > 0 {
-        let catch_up_start = if last_size > 8192 { last_size - 8192 } else { 0 };
         debug_log::append(
             "client-log.catch-up",
-            serde_json::json!({ "total_size": last_size, "catch_up_start": catch_up_start }),
+            serde_json::json!({ "total_size": last_size, "catch_up_start": 0 }),
         );
         if let Ok(mut file) = File::open(&client_log_path).await {
+            // Read from start to find the current zone — the last "Generating level" entry wins
             use tokio::io::AsyncSeekExt;
-            let _ = file.seek(std::io::SeekFrom::Start(catch_up_start)).await;
+            let _ = file.seek(std::io::SeekFrom::Start(0)).await;
             let mut reader = BufReader::new(file);
             let mut line_buf = String::new();
             loop {

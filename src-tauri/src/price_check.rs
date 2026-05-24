@@ -1,6 +1,6 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -1113,8 +1113,21 @@ fn stat_template_for_match(template: &str) -> String {
 }
 
 fn templates_compatible(left: &str, right: &str) -> bool {
-    let left = stat_template_for_match(left);
-    let right = stat_template_for_match(right);
+    let normalize = |s: &str| -> String {
+        stat_template_for_match(s)
+            .split_whitespace()
+            .map(|word| {
+                if word == "#" || word.eq_ignore_ascii_case("n") || word == "#%" {
+                    "#"
+                } else {
+                    word
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let left = normalize(left);
+    let right = normalize(right);
     left == right || left.contains(&right) || right.contains(&left)
 }
 
@@ -1124,12 +1137,28 @@ fn listing_from_fetch_result(
     currencies: &[CurrencyMeta],
     rates: &CurrencyRates,
 ) -> Option<PriceListing> {
-    let explicit_mods = result
+    let explicit_mods: Vec<String> = result
         .item
         .all_searchable_mods()
         .into_iter()
         .map(clean_trade_text)
         .collect();
+
+    // Extract tier/affix info from extended.mods for each mod (by index position)
+    let mod_tier_infos: Vec<Option<ModTierInfo>> = {
+        let ext_mods = result
+            .item
+            .extended
+            .as_ref()
+            .and_then(|ext| ext.mods.as_object())
+            .cloned()
+            .unwrap_or_default();
+        explicit_mods
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| resolve_mod_tier_from_index(idx, &ext_mods))
+            .collect()
+    };
     let direct_source_url = trade_listing_url(
         source_url,
         result
@@ -1155,6 +1184,22 @@ fn listing_from_fetch_result(
     let normalized_currency_icon_url = currency_icon_url(currencies, &rates.selected_currency);
     let normalized_price =
         normalized_amount.map(|amount| format_price(amount, &rates.selected_currency));
+
+    let (hashes_explicit, hashes_implicit, hashes_rune, hashes_desecrated, hashes_enchant, hash_count) = result
+        .item
+        .extended
+        .as_ref()
+        .map(|ext| {
+            (
+                ext.hashes_for("explicit"),
+                ext.hashes_for("implicit"),
+                ext.hashes_for("rune"),
+                ext.hashes_for("desecrated"),
+                ext.hashes_for("enchant"),
+                ext.hash_count(),
+            )
+        })
+        .unwrap_or_default();
 
     Some(PriceListing {
         price,
@@ -1190,6 +1235,13 @@ fn listing_from_fetch_result(
         preview_icon_url: result.item.icon.clone(),
         preview_property_lines: preview_property_lines(&result.item),
         preview_description: result.item.description.map(clean_trade_text),
+        hashes_explicit,
+        hashes_implicit,
+        hashes_rune,
+        hashes_desecrated,
+        hashes_enchant,
+        hash_count,
+        mod_tier_infos,
     })
 }
 
@@ -1470,9 +1522,16 @@ fn clean_html(value: &str) -> String {
 fn clean_trade_text(value: String) -> String {
     static TAG_RE: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"\[([^|\]]+\|)?([^\]]+)\]").expect("valid trade text tag regex"));
-
-    TAG_RE
-        .replace_all(&value, "$2")
+    static ENVELOPE_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^\{\s*[^}]*\}\s*").expect("valid envelope regex")
+    });
+    // Strip PoE1-style [Tag|text] markers
+    let cleaned = TAG_RE.replace_all(&value, "$2");
+    // Strip PoE2 envelope prefix: { Prefix "Name" (Tier: N) — Tags }
+    // Envelope is metadata for tier/affix labels, not display text.
+    let stripped = ENVELOPE_RE.replace(&cleaned, "");
+    let trimmed = stripped.trim();
+    trimmed
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -1756,6 +1815,8 @@ struct FetchItem {
     fractured_mods: Option<Vec<String>>,
     #[serde(rename = "craftedMods", default)]
     crafted_mods: Option<Vec<String>>,
+    #[serde(default)]
+    extended: Option<ExtendedData>,
 }
 
 impl FetchItem {
@@ -1835,6 +1896,140 @@ struct FetchPrice {
 struct FetchAccount {
     name: String,
     online: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+struct ExtendedMod {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    tier: Option<String>,
+    #[serde(default)]
+    magnitudes: Option<Vec<ExtendedMagnitude>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+struct ExtendedMagnitude {
+    #[serde(default)]
+    hash: Option<String>,
+    #[serde(default)]
+    min: Option<f64>,
+    #[serde(default)]
+    max: Option<f64>,
+    #[serde(default)]
+    value: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct ExtendedData {
+    #[serde(default)]
+    mods: serde_json::Value,
+    #[serde(default)]
+    hashes: serde_json::Value,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    ar: Option<f64>,
+    #[serde(default)]
+    es: Option<f64>,
+    #[serde(default)]
+    ev: Option<f64>,
+    #[serde(default)]
+    dps: Option<f64>,
+    #[serde(default)]
+    pdps: Option<f64>,
+    #[serde(default)]
+    edps: Option<f64>,
+}
+
+impl ExtendedData {
+    fn flatten_hashes(&self) -> Vec<String> {
+        let mut flat = Vec::new();
+        if let Some(obj) = self.hashes.as_object() {
+            for (_mod_type, entries) in obj {
+                if let Some(arr) = entries.as_array() {
+                    for entry in arr {
+                        if let Some(tuple) = entry.as_array() {
+                            if let Some(hash) = tuple.first().and_then(|v| v.as_str()) {
+                                flat.push(hash.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        flat.sort();
+        flat.dedup();
+        flat
+    }
+
+    fn hash_count(&self) -> usize {
+        self.flatten_hashes().len()
+    }
+
+    fn hashes_for(&self, key: &str) -> Vec<String> {
+        let mut hashes = Vec::new();
+        if let Some(arr) = self.hashes.get(key).and_then(|v| v.as_array()) {
+            for entry in arr {
+                if let Some(tuple) = entry.as_array() {
+                    if let Some(hash) = tuple.first().and_then(|v| v.as_str()) {
+                        hashes.push(hash.to_string());
+                    }
+                }
+            }
+        }
+        hashes.sort();
+        hashes.dedup();
+        hashes
+    }
+}
+
+/// Structured tier info extracted from extended.mods for a single modifier.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ModTierInfo {
+    /// "prefix" or "suffix"
+    pub affix_kind: String,
+    /// Tier number as integer string (e.g., "6" from P6)
+    pub tier_number: String,
+    /// Full tier code from API (e.g., "P6", "S4")
+    pub tier_code: String,
+}
+
+/// Resolve tier/affix info from `extended.mods` by index position.
+/// The POE2 trade API returns mods in `extended.mods.explicit` indexed by position.
+/// Each entry has a `tier` field like "P6" → Prefix Tier 6, "S4" → Suffix Tier 4.
+fn resolve_mod_tier_from_index(idx: usize, ext_mods: &serde_json::Map<String, serde_json::Value>) -> Option<ModTierInfo> {
+    // Walk through all categories (explicit, implicit, rune, desecrated, etc.)
+    // and accumulate entries, then index into the flat list.
+    // The extended.mods are returned in the same order as all_searchable_mods()
+    // with explicit first, then implicit, rune, desecrated, fractured, crafted.
+    let mut flat_entries: Vec<&serde_json::Value> = Vec::new();
+    for category in &["explicit", "implicit", "rune", "desecrated", "fractured", "crafted"] {
+        if let Some(arr) = ext_mods.get(*category).and_then(|v| v.as_array()) {
+            flat_entries.extend(arr.iter());
+        }
+    }
+    let entry = flat_entries.get(idx)?;
+    let tier_str = entry.get("tier")?.as_str()?;
+    if tier_str.is_empty() || tier_str.len() < 2 {
+        return None;
+    }
+    let chars: Vec<char> = tier_str.chars().collect();
+    let affix_char = chars[0];
+    let tier_number: String = chars[1..].iter().collect();
+    let affix_kind = match affix_char {
+        'P' => "prefix",
+        'S' => "suffix",
+        _ => return None,
+    };
+    Some(ModTierInfo {
+        affix_kind: affix_kind.to_string(),
+        tier_number,
+        tier_code: tier_str.to_string(),
+    })
 }
 
 #[cfg(test)]

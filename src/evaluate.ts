@@ -130,11 +130,11 @@ export type Poe2DbDataSnapshot = {
 };
 
 export type TierMatch = {
-  source: "repoe" | "poe2db";
+  source: "repoe" | "poe2db" | "envelope";
   page_slug: string;
   tier: string;
   tier_name: string;
-  required_level: number;
+  required_level: number | null;
   affix: AffixKind | null;
   source_kind: string;
   min: number | null;
@@ -169,6 +169,19 @@ export type PriceListing = {
   preview_icon_url: string | null;
   preview_property_lines: string[];
   preview_description: string | null;
+  hashes_explicit: string[];
+  hashes_implicit: string[];
+  hashes_rune: string[];
+  hashes_desecrated: string[];
+  hashes_enchant: string[];
+  hash_count: number;
+  mod_tier_infos: (ModTierInfo | null)[];
+};
+
+export type ModTierInfo = {
+  affix_kind: "prefix" | "suffix";
+  tier_number: string;
+  tier_code: string;
 };
 
 export type PriceCheck = {
@@ -264,6 +277,8 @@ export function itemSpecs(
   }
 
   const specs: ItemSpec[] = [];
+  let specIndex = 0;
+  let pendingTier: TierMatch | null = null;
 
   addNumericSpec(specs, "item_level", "Item Level", item.item_level);
   addNumericSpec(specs, "required_level", "Requires Level", profile.requiredLevel);
@@ -276,14 +291,27 @@ export function itemSpecs(
 
   item.explicit_mods.forEach((modifier, index) => {
     const label = cleanTradeMarkup(modifier);
+    const tierMatch = resolveTierMatch(modifier, sourceTruth, item);
+
+    // Pure envelope entries carry tier metadata but no display text.
+    // Skip the entry and defer its tier info to the next real modifier.
+    if (!label || !label.trim()) {
+      if (tierMatch) {
+        pendingTier = tierMatch;
+      }
+      return;
+    }
+
     specs.push({
-      key: `explicit:${index}:${specTemplate(label)}`,
+      key: `explicit:${specIndex}:${specTemplate(label)}`,
       label,
       kind: "explicit",
       value: firstNumber(label),
       template: specTemplate(label),
-      tier_match: resolveTierMatch(label, sourceTruth, item),
+      tier_match: pendingTier ?? tierMatch,
     });
+    specIndex += 1;
+    pendingTier = null;
   });
 
   itemSpecsCache = {
@@ -556,6 +584,33 @@ export function resolveTierMatch(
   sourceTruth: Poe2DbDataSnapshot | null,
   item?: Pick<ScannedItem, "item_class" | "base_type"> | null,
 ): TierMatch | null {
+  // Try direct extraction from PoE2 envelope format first:
+  // { Prefix Modifier "ModName" (Tier: N) — Tag1, Tag2 }
+  const envelopeMatch = modifierLabel.match(/^\{[^}]*\}/);
+  if (envelopeMatch) {
+    const envelope = envelopeMatch[0];
+    const affix = envelope.includes("Prefix") ? "prefix" : envelope.includes("Suffix") ? "suffix" : null;
+    const tierMatch = envelope.match(/Tier:\s*(\d+)/i);
+    const nameMatch = envelope.match(/"([^"]+)"/);
+    const tier = tierMatch?.[1] ?? null;
+    const name = nameMatch?.[1] ?? null;
+    
+    if (affix && tier) {
+      return {
+        source: "envelope",
+        page_slug: "",
+        tier: `T${tier}`,
+        tier_name: name ?? `Tier ${tier}`,
+        required_level: null,
+        affix,
+        source_kind: "explicit",
+        min: null,
+        max: null,
+        template: specTemplate(modifierLabel),
+      };
+    }
+  }
+
   if (!sourceTruth?.mod_pages?.length) {
     return null;
   }
@@ -660,7 +715,20 @@ function sourceKindScore(sourceKind: string, hints: string[]) {
 }
 
 export function cleanTradeMarkup(value: string) {
-  return value.replace(/\[([^|\]]+\|)?([^\]]+)\]/g, "$2").replace(/\s+/g, " ").trim();
+  // Strip PoE1-style tag markers [Tag|text] -> text
+  let cleaned = value.replace(/\[([^|\]]+\|)?([^\]]+)\]/g, "$2");
+  
+  // Strip PoE2 envelope prefix: { Prefix "Name" (Tier: N) — Tags }
+  // Envelope is metadata for tier/affix labels, not display text.
+  cleaned = cleaned.replace(/^\{\s*[^}]*\}\s*/, "");
+  
+  // Strip em-dash tag lists ( — Tag1, Tag2 )
+  cleaned = cleaned.replace(/\s*—\s*.*$/, "");
+  
+  // Strip remaining em-dashes
+  cleaned = cleaned.replace(/—/g, " ").replace(/\s+/g, " ").trim();
+  
+  return cleaned;
 }
 
 export function specTemplate(value: string) {
