@@ -3,7 +3,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, RwLock,
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -38,6 +38,28 @@ mod trade_search;
 mod whispers;
 
 pub type SharedAppState = Arc<Mutex<AppState>>;
+
+#[derive(Debug, Clone)]
+struct HotkeyConfig {
+    scan_key: char,
+    scan_mod: String,
+    trade_key: char,
+    trade_mod: String,
+}
+
+impl Default for HotkeyConfig {
+    fn default() -> Self {
+        Self {
+            scan_key: 'C',
+            scan_mod: "Ctrl".to_string(),
+            trade_key: 'D',
+            trade_mod: "Alt".to_string(),
+        }
+    }
+}
+
+static HOTKEY_CONFIG: std::sync::LazyLock<RwLock<HotkeyConfig>> =
+    std::sync::LazyLock::new(|| RwLock::new(HotkeyConfig::default()));
 const LEAGUE_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const COMPACT_WINDOW_WIDTH: f64 = 472.0;
 const COMPACT_WINDOW_HEIGHT: f64 = 56.0;
@@ -459,11 +481,24 @@ async fn set_keybinds(
     trade_mod: String,
     trade_key: String,
 ) -> Result<(), String> {
+    let normalized_scan_key = normalize_shortcut_key(&scan_key, 'C');
+    let normalized_trade_key = normalize_shortcut_key(&trade_key, 'D');
+    let normalized_scan_mod = normalize_shortcut_modifier(&scan_mod, "Ctrl");
+    let normalized_trade_mod = normalize_shortcut_modifier(&trade_mod, "Alt");
+
     let mut locked = state.lock().await;
-    locked.scan_mod = scan_mod.clone();
-    locked.scan_key = normalize_shortcut_key(&scan_key, 'C');
-    locked.trade_mod = trade_mod.clone();
-    locked.trade_key = normalize_shortcut_key(&trade_key, 'D');
+    locked.scan_mod = normalized_scan_mod.clone();
+    locked.scan_key = normalized_scan_key;
+    locked.trade_mod = normalized_trade_mod.clone();
+    locked.trade_key = normalized_trade_key;
+    std::mem::drop(locked);
+
+    if let Ok(mut hotkeys) = HOTKEY_CONFIG.write() {
+        hotkeys.scan_mod = normalized_scan_mod;
+        hotkeys.scan_key = normalized_scan_key;
+        hotkeys.trade_mod = normalized_trade_mod;
+        hotkeys.trade_key = normalized_trade_key;
+    }
     Ok(())
 }
 
@@ -476,6 +511,13 @@ fn normalize_shortcut_key(value: &str, fallback: char) -> char {
         key
     } else {
         fallback
+    }
+}
+
+fn normalize_shortcut_modifier(value: &str, fallback: &str) -> String {
+    match value {
+        "Ctrl" | "Alt" => value.to_string(),
+        _ => fallback.to_string(),
     }
 }
 
@@ -1537,7 +1579,7 @@ fn configured_trade_league() -> Option<String> {
         .filter(|league| !league.is_empty())
 }
 
-fn start_rdev_listener(input_tx: mpsc::UnboundedSender<InputAction>, state: SharedAppState) -> Result<(), String> {
+fn start_rdev_listener(input_tx: mpsc::UnboundedSender<InputAction>, _state: SharedAppState) -> Result<(), String> {
     thread::Builder::new()
         .name("reliquary-global-input".to_string())
         .spawn(move || {
@@ -1545,10 +1587,8 @@ fn start_rdev_listener(input_tx: mpsc::UnboundedSender<InputAction>, state: Shar
             let alt_down = Arc::new(AtomicBool::new(false));
             let callback_ctrl = ctrl_down.clone();
             let callback_alt = alt_down.clone();
-            let callback_state = state.clone();
-
             if let Err(error) = listen(move |event| {
-                handle_global_input_event(event, &callback_ctrl, &callback_alt, &input_tx, &callback_state);
+                handle_global_input_event(event, &callback_ctrl, &callback_alt, &input_tx);
             }) {
                 eprintln!("failed to run global input listener: {error:?}");
             }
@@ -1562,7 +1602,6 @@ fn handle_global_input_event(
     ctrl_down: &Arc<AtomicBool>,
     alt_down: &Arc<AtomicBool>,
     input_tx: &mpsc::UnboundedSender<InputAction>,
-    state: &SharedAppState,
 ) {
     match event.event_type {
         EventType::KeyPress(Key::ControlLeft) | EventType::KeyPress(Key::ControlRight) => {
@@ -1582,37 +1621,16 @@ fn handle_global_input_event(
             if SIMULATING.load(Ordering::SeqCst) {
                 return;
             }
-            let locked = state.blocking_lock();
-            let scan_key = match locked.scan_key {
-                'A' => Key::KeyA, 'B' => Key::KeyB, 'C' => Key::KeyC, 'D' => Key::KeyD,
-                'E' => Key::KeyE, 'F' => Key::KeyF, 'G' => Key::KeyG, 'H' => Key::KeyH,
-                'I' => Key::KeyI, 'J' => Key::KeyJ, 'K' => Key::KeyK, 'L' => Key::KeyL,
-                'M' => Key::KeyM, 'N' => Key::KeyN, 'O' => Key::KeyO, 'P' => Key::KeyP,
-                'Q' => Key::KeyQ, 'R' => Key::KeyR, 'S' => Key::KeyS, 'T' => Key::KeyT,
-                'U' => Key::KeyU, 'V' => Key::KeyV, 'W' => Key::KeyW, 'X' => Key::KeyX,
-                'Y' => Key::KeyY, 'Z' => Key::KeyZ,
-                '1' => Key::Num1, '2' => Key::Num2, '3' => Key::Num3, '4' => Key::Num4,
-                '5' => Key::Num5, '6' => Key::Num6, '7' => Key::Num7, '8' => Key::Num8,
-                '9' => Key::Num9, '0' => Key::Num0,
-                _ => return,
+            let hotkeys = hotkey_config_snapshot();
+            let Some(scan_key) = shortcut_key_to_rdev(hotkeys.scan_key) else {
+                return;
             };
-            let trade_key = match locked.trade_key {
-                'A' => Key::KeyA, 'B' => Key::KeyB, 'C' => Key::KeyC, 'D' => Key::KeyD,
-                'E' => Key::KeyE, 'F' => Key::KeyF, 'G' => Key::KeyG, 'H' => Key::KeyH,
-                'I' => Key::KeyI, 'J' => Key::KeyJ, 'K' => Key::KeyK, 'L' => Key::KeyL,
-                'M' => Key::KeyM, 'N' => Key::KeyN, 'O' => Key::KeyO, 'P' => Key::KeyP,
-                'Q' => Key::KeyQ, 'R' => Key::KeyR, 'S' => Key::KeyS, 'T' => Key::KeyT,
-                'U' => Key::KeyU, 'V' => Key::KeyV, 'W' => Key::KeyW, 'X' => Key::KeyX,
-                'Y' => Key::KeyY, 'Z' => Key::KeyZ,
-                '1' => Key::Num1, '2' => Key::Num2, '3' => Key::Num3, '4' => Key::Num4,
-                '5' => Key::Num5, '6' => Key::Num6, '7' => Key::Num7, '8' => Key::Num8,
-                '9' => Key::Num9, '0' => Key::Num0,
-                _ => return,
+            let Some(trade_key) = shortcut_key_to_rdev(hotkeys.trade_key) else {
+                return;
             };
-            let is_scan = key == &scan_key && ((locked.scan_mod == "Ctrl" && ctrl_down.load(Ordering::SeqCst)) || (locked.scan_mod == "Alt" && alt_down.load(Ordering::SeqCst)));
-            let is_trade = key == &trade_key && ((locked.trade_mod == "Ctrl" && ctrl_down.load(Ordering::SeqCst)) || (locked.trade_mod == "Alt" && alt_down.load(Ordering::SeqCst)));
-            let needs_simulate = is_scan && (scan_key != Key::KeyC || locked.scan_mod != "Ctrl");
-            std::mem::drop(locked);
+            let is_scan = key == &scan_key && modifier_is_down(&hotkeys.scan_mod, ctrl_down, alt_down);
+            let is_trade = key == &trade_key && modifier_is_down(&hotkeys.trade_mod, ctrl_down, alt_down);
+            let needs_simulate = is_scan && (scan_key != Key::KeyC || hotkeys.scan_mod != "Ctrl");
 
             if needs_simulate {
                 SIMULATING.store(true, Ordering::SeqCst);
@@ -1648,6 +1666,67 @@ fn handle_global_input_event(
             }
         }
         _ => {}
+    }
+}
+
+fn hotkey_config_snapshot() -> HotkeyConfig {
+    HOTKEY_CONFIG
+        .read()
+        .map(|hotkeys| hotkeys.clone())
+        .unwrap_or_default()
+}
+
+fn modifier_is_down(
+    modifier: &str,
+    ctrl_down: &Arc<AtomicBool>,
+    alt_down: &Arc<AtomicBool>,
+) -> bool {
+    match modifier {
+        "Ctrl" => ctrl_down.load(Ordering::SeqCst),
+        "Alt" => alt_down.load(Ordering::SeqCst),
+        _ => false,
+    }
+}
+
+fn shortcut_key_to_rdev(key: char) -> Option<Key> {
+    match key {
+        'A' => Some(Key::KeyA),
+        'B' => Some(Key::KeyB),
+        'C' => Some(Key::KeyC),
+        'D' => Some(Key::KeyD),
+        'E' => Some(Key::KeyE),
+        'F' => Some(Key::KeyF),
+        'G' => Some(Key::KeyG),
+        'H' => Some(Key::KeyH),
+        'I' => Some(Key::KeyI),
+        'J' => Some(Key::KeyJ),
+        'K' => Some(Key::KeyK),
+        'L' => Some(Key::KeyL),
+        'M' => Some(Key::KeyM),
+        'N' => Some(Key::KeyN),
+        'O' => Some(Key::KeyO),
+        'P' => Some(Key::KeyP),
+        'Q' => Some(Key::KeyQ),
+        'R' => Some(Key::KeyR),
+        'S' => Some(Key::KeyS),
+        'T' => Some(Key::KeyT),
+        'U' => Some(Key::KeyU),
+        'V' => Some(Key::KeyV),
+        'W' => Some(Key::KeyW),
+        'X' => Some(Key::KeyX),
+        'Y' => Some(Key::KeyY),
+        'Z' => Some(Key::KeyZ),
+        '0' => Some(Key::Num0),
+        '1' => Some(Key::Num1),
+        '2' => Some(Key::Num2),
+        '3' => Some(Key::Num3),
+        '4' => Some(Key::Num4),
+        '5' => Some(Key::Num5),
+        '6' => Some(Key::Num6),
+        '7' => Some(Key::Num7),
+        '8' => Some(Key::Num8),
+        '9' => Some(Key::Num9),
+        _ => None,
     }
 }
 

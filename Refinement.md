@@ -165,12 +165,14 @@ References:
 
 ### 10. Reduce global hotkey lock contention
 
+Status: implemented in current branch. The global input callback now reads from a small synchronous hotkey snapshot instead of locking full async app state. The existing 500ms clipboard wait window remains unchanged.
+
 The global input callback uses `state.blocking_lock()`. It is not the same async deadlock that was already fixed, but it can still stall the global hook if another task holds the mutex.
 
 Acceptance:
-- Hotkey state is read from an atomic/snapshot structure or a short-lived non-blocking path.
-- Network/price-check state cannot delay keypress handling.
-- Ctrl+C scan remains reliable in compact mode and full mode.
+- Hotkey state is read from an atomic/snapshot structure or a short-lived non-blocking path. Implemented with `HOTKEY_CONFIG`.
+- Network/price-check state cannot delay keypress handling. Implemented.
+- Ctrl+C scan remains reliable in compact mode and full mode. Clipboard wait behavior preserved.
 
 References:
 - `src-tauri/src/lib.rs` `handle_global_input_event`
