@@ -9,7 +9,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::{DataLeague, LeagueCatalogEntry, TradeLeague};
+use crate::{debug_log, DataLeague, LeagueCatalogEntry, TradeLeague};
 
 pub const POE2DB_SCHEMA_VERSION: u16 = 1;
 const POE2DB_HOME_URL: &str = "https://poe2db.tw/us/";
@@ -17,6 +17,8 @@ const POE2DB_LEAGUE_URL: &str = "https://poe2db.tw/us/League";
 const POE2DB_MODIFIERS_URL: &str = "https://poe2db.tw/us/Modifiers";
 const REPOE_MODS_URL: &str = "https://repoe-fork.github.io/poe2/mods.min.json";
 const REPOE_BASE_ITEMS_URL: &str = "https://repoe-fork.github.io/poe2/base_items.min.json";
+const REPOE_MODS_CACHE_FILE: &str = "mods.min.json";
+const REPOE_BASE_ITEMS_CACHE_FILE: &str = "base_items.min.json";
 const POE_NINJA_INDEX_STATE_URL: &str = "https://poe.ninja/poe2/api/data/index-state";
 const TRADE_API_BASE: &str = "https://www.pathofexile.com/api/trade2";
 const POE2DB_CACHE_FILE: &str = "poe2db-source-truth-v1.json";
@@ -840,6 +842,13 @@ pub fn print_poe2db_snapshot_cli(args: &[String]) -> Result<(), String> {
     if let Some(cache_path) = &snapshot.cache_path {
         println!("  cache: {cache_path}");
     }
+    println!(
+        "  repoe raw cache: {}",
+        repoe_cache_path(REPOE_MODS_CACHE_FILE)
+            .parent()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "(unknown)".to_string())
+    );
 
     Ok(())
 }
@@ -905,17 +914,80 @@ async fn fetch_repoe_mod_pages() -> Result<Vec<Poe2DbModTierPage>, String> {
         .map_err(|error| error.to_string())?;
 
     let (mods_result, base_items_result) = tokio::join!(
-        fetch_repoe_json::<HashMap<String, RePoeMod>>(&client, REPOE_MODS_URL),
-        fetch_repoe_json::<HashMap<String, RePoeBaseItem>>(&client, REPOE_BASE_ITEMS_URL)
+        fetch_repoe_json::<HashMap<String, RePoeMod>>(
+            &client,
+            REPOE_MODS_URL,
+            REPOE_MODS_CACHE_FILE,
+        ),
+        fetch_repoe_json::<HashMap<String, RePoeBaseItem>>(
+            &client,
+            REPOE_BASE_ITEMS_URL,
+            REPOE_BASE_ITEMS_CACHE_FILE,
+        )
     );
 
     Ok(build_repoe_mod_pages(mods_result?, base_items_result?))
 }
 
-async fn fetch_repoe_json<T>(client: &reqwest::Client, url: &str) -> Result<T, String>
+async fn fetch_repoe_json<T>(
+    client: &reqwest::Client,
+    url: &str,
+    cache_file: &str,
+) -> Result<T, String>
 where
     T: for<'de> Deserialize<'de>,
 {
+    let cache_path = repoe_cache_path(cache_file);
+    match fetch_repoe_text(client, url).await {
+        Ok(text) => match serde_json::from_str::<T>(&text) {
+            Ok(parsed) => {
+                if let Err(error) = write_repoe_cache(&cache_path, &text) {
+                    debug_log::append(
+                        "repoe.cache.write_error",
+                        serde_json::json!({
+                            "url": url,
+                            "cache_path": cache_path.display().to_string(),
+                            "error": error,
+                        }),
+                    );
+                }
+                debug_log::append(
+                    "repoe.cache.refresh",
+                    serde_json::json!({
+                        "url": url,
+                        "cache_path": cache_path.display().to_string(),
+                        "bytes": text.len(),
+                    }),
+                );
+                Ok(parsed)
+            }
+            Err(error) => {
+                debug_log::append(
+                    "repoe.cache.live_parse_error",
+                    serde_json::json!({
+                        "url": url,
+                        "cache_path": cache_path.display().to_string(),
+                        "error": error.to_string(),
+                    }),
+                );
+                load_repoe_cache(&cache_path)
+            }
+        },
+        Err(error) => {
+            debug_log::append(
+                "repoe.cache.live_fetch_error",
+                serde_json::json!({
+                    "url": url,
+                    "cache_path": cache_path.display().to_string(),
+                    "error": error,
+                }),
+            );
+            load_repoe_cache(&cache_path)
+        }
+    }
+}
+
+async fn fetch_repoe_text(client: &reqwest::Client, url: &str) -> Result<String, String> {
     client
         .get(url)
         .send()
@@ -923,9 +995,54 @@ where
         .map_err(|error| error.to_string())?
         .error_for_status()
         .map_err(|error| error.to_string())?
-        .json::<T>()
+        .text()
         .await
         .map_err(|error| error.to_string())
+}
+
+fn load_repoe_cache<T>(cache_path: &PathBuf) -> Result<T, String>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let raw = fs::read_to_string(cache_path).map_err(|error| {
+        format!(
+            "RePoE live fetch failed and no usable local cache exists at {}: {error}",
+            cache_path.display()
+        )
+    })?;
+    let parsed = serde_json::from_str::<T>(&raw).map_err(|error| {
+        format!(
+            "RePoE live fetch failed and local cache at {} is invalid: {error}",
+            cache_path.display()
+        )
+    })?;
+    debug_log::append(
+        "repoe.cache.fallback",
+        serde_json::json!({
+            "cache_path": cache_path.display().to_string(),
+            "bytes": raw.len(),
+        }),
+    );
+    Ok(parsed)
+}
+
+fn write_repoe_cache(cache_path: &PathBuf, text: &str) -> Result<(), String> {
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(cache_path, text).map_err(|error| error.to_string())
+}
+
+fn repoe_cache_path(cache_file: &str) -> PathBuf {
+    let root = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
+        .unwrap_or_else(std::env::temp_dir);
+
+    root.join("Reliquary")
+        .join("source-truth")
+        .join("repoe")
+        .join(cache_file)
 }
 
 async fn fetch_trade_leagues() -> Result<Vec<TradeLeague>, String> {

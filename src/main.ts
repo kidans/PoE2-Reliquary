@@ -67,11 +67,20 @@ type CurrentAreaInfo = {
   boss: string | null;
 };
 
+type WorldAreaStatus = {
+  state: string;
+  source: string;
+  count: number;
+  cache_path: string;
+  error: string | null;
+};
+
 type AppState = {
   scanned_item: ScannedItem | null;
   trade_queue: TradeWhisper[];
   current_zone: string;
   current_area: CurrentAreaInfo | null;
+  world_area_status: WorldAreaStatus;
   trade_league: string;
   league_catalog: LeagueCatalogEntry[];
   trade_leagues: TradeLeague[];
@@ -245,6 +254,13 @@ const state: AppState = {
   trade_queue: [],
   current_zone: "Unknown",
   current_area: null,
+  world_area_status: {
+    state: "warming",
+    source: "unknown",
+    count: 0,
+    cache_path: "",
+    error: null,
+  },
   trade_league: "Fate of the Vaal",
   league_catalog: [],
   trade_leagues: [],
@@ -556,7 +572,7 @@ function render() {
     "Ctrl+C scans items. Alt+D opens the latest trade search.";
 
   compactTitleElement!.textContent = compactTitleText(state.scanned_item);
-  compactMetaElement!.innerHTML = compactMetaText(lastStatus);
+  compactMetaElement!.textContent = compactMetaText(lastStatus);
   compactMetaElement!.classList.toggle("timer-running", campaignTimerRunning && campaignGuideAct > 0);
   renderCampaignChecklist();
 
@@ -788,7 +804,7 @@ function compactMetaText(status: string) {
     const area = state.current_area;
     const zoneName = area?.name ?? "";
     const glow = campaignTimerRunning ? " \u25CF" : " \u25CB";
-    return `${actDisplayName(campaignGuideAct)} \u00B7 ${escapeHtml(zoneName)} \u00B7 ${actTime} / ${total}${glow}`;
+    return `${actDisplayName(campaignGuideAct)} \u00B7 ${zoneName} \u00B7 ${actTime} / ${total}${glow}`;
   }
 
   if (state.current_area?.area_type === "map") {
@@ -2278,6 +2294,10 @@ function formatTimestamp(epochMs: number) {
 
 function renderDataPanel() {
   const sourceTruth = state.source_truth_snapshot;
+  const worldAreas = state.world_area_status;
+  const worldAreaDetail = worldAreas.error
+    ? `${worldAreas.error} | ${worldAreas.cache_path || "cache path unavailable"}`
+    : `${worldAreas.count} areas from ${worldAreas.source}${worldAreas.cache_path ? ` | ${worldAreas.cache_path}` : ""}`;
   const sourceStatus = sourceTruth?.status.message ?? "Waiting for PoE2DB source-truth cache...";
   const sourceFreshness = sourceTruth
     ? `${sourceTruth.mod_pages.reduce((count, page) => count + page.tiers.length, 0)} tiers · ${sourceTruth.families.length} families · ${formatRelativeAge(sourceTruth.fetched_at_epoch_ms)}`
@@ -2303,6 +2323,7 @@ function renderDataPanel() {
       <div><span>Waystone Hazard</span><strong>No Regen</strong><small>Unsafe for sustain-dependent builds.</small></div>
       <div><span>Trade Hotkey</span><strong>Alt+D</strong><small>Opens latest generated trade URL.</small></div>
       <div><span>Rates Source</span><strong>poe.ninja</strong><small>Planned CLI feed for exchange-rate normalization.</small></div>
+      <div><span>World Areas</span><strong>${escapeHtml(worldAreas.state)}</strong><small>${escapeHtml(worldAreaDetail)}</small></div>
       <div><span>PoE2DB Adapter</span><strong>${escapeHtml(sourceTruth?.status.state ?? "warming")}</strong><small>${escapeHtml(sourceStatus)}</small></div>
       <div><span>Source Freshness</span><strong>${escapeHtml(sourceFreshness)}</strong>${failedPages}</div>
       <div><span>Debug Log</span><strong>Trade diagnostics</strong><small>${escapeHtml(state.debug_log_path ?? "Log path loading...")}</small></div>
@@ -3078,7 +3099,6 @@ function isExchangeClipboardItem(item: ScannedItem | null) {
     "splinter",
     "abyssal",
     "expedition",
-    "charm",
   ].some((needle) => haystack.includes(needle));
 }
 
@@ -3778,6 +3798,7 @@ if (!isListingPreviewWindow && leagueElement) {
       state.trade_queue = initialState.trade_queue;
       state.current_zone = initialState.current_zone || "Unknown";
       state.current_area = initialState.current_area || null;
+      state.world_area_status = initialState.world_area_status || state.world_area_status;
       if (state.current_area) {
         const rawAct = state.current_area.act ?? 0;
         campaignGuideAct = remapCampaignAct(rawAct);

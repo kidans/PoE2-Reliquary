@@ -3,7 +3,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::hash::{Hash, Hasher};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -24,6 +25,8 @@ const MAX_LISTINGS: usize = 50;
 const MAX_FETCH_BATCH: usize = 10;
 const INITIAL_FETCH_COUNT: usize = 10;
 const PRICE_CHECK_CACHE_TTL: Duration = Duration::from_secs(10);
+const CURRENCY_META_CACHE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+const EXCHANGE_RATES_CACHE_TTL: Duration = Duration::from_secs(60);
 
 static NUMBER_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?P<number>-?\d+(?:\.\d+)?)").expect("valid number regex"));
@@ -53,12 +56,27 @@ static COMMON_CURRENCIES: &[(&str, &str, &str)] = &[
 static PRICE_CHECK_CACHE: Lazy<Mutex<HashMap<String, CachedPriceCheck>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 static TRADE_STATS_CACHE: Lazy<Mutex<Option<Vec<TradeStatEntry>>>> = Lazy::new(|| Mutex::new(None));
+static CURRENCY_META_CACHE: Lazy<Mutex<Option<CachedCurrencyMeta>>> = Lazy::new(|| Mutex::new(None));
+static EXCHANGE_RATES_CACHE: Lazy<Mutex<HashMap<String, CachedCurrencyRates>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 const PRICE_CHECK_CACHE_SCHEMA_VERSION: u8 = 2;
 
 #[derive(Debug, Clone)]
 struct CachedPriceCheck {
     result: PriceCheck,
     continuation: Option<PriceCheckContinuation>,
+    fetched_at_epoch_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+struct CachedCurrencyMeta {
+    currencies: Vec<CurrencyMeta>,
+    fetched_at_epoch_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+struct CachedCurrencyRates {
+    rates: CurrencyRates,
     fetched_at_epoch_ms: u64,
 }
 
@@ -308,15 +326,17 @@ async fn request_price_check(
         json!({
             "league": league,
             "url": search_url,
-            "item": item_debug_payload(item),
+            "item": item_diagnostic_payload(item),
             "selected_currency": selected_currency,
             "selected_price_option": selected_price_option,
-            "active_filters": active_filters,
-            "applied_filters": &applied_filters,
-            "request": request,
+            "active_filters": filter_diagnostics(active_filters),
+            "applied_filters": filter_diagnostics(&applied_filters),
+            "request_hash": hash_json_value(&request),
+            "cache_key_hash": hash_text(&cache_key),
         }),
     );
 
+    let search_started = Instant::now();
     let search_response = client
         .post(search_url)
         .json(&request)
@@ -327,8 +347,23 @@ async fn request_price_check(
             rate_limit: None,
         })?;
     let (search, mut rate_limit) =
-        parse_json_response::<TradeSearchResponse>("price_check.search.response", search_response)
+        parse_json_response::<TradeSearchResponse>(
+            "price_check.search.response",
+            search_response,
+            search_started,
+        )
             .await?;
+    debug_log::append(
+        "price_check.search.parsed",
+        json!({
+            "league": league,
+            "search_id_hash": hash_text(&search.id),
+            "result_count": search.result.len(),
+            "total": search.total,
+            "rate_limit": rate_limit,
+            "cache_key_hash": hash_text(&cache_key),
+        }),
+    );
 
     let source_url = format!(
         "{TRADE_WEB_BASE}/{}/{}",
@@ -480,6 +515,7 @@ async fn fetch_trade_results(
             }),
         );
 
+        let fetch_started = Instant::now();
         let fetch_response = client
             .get(fetch_url)
             .send()
@@ -489,9 +525,23 @@ async fn fetch_trade_results(
                 rate_limit: None,
             })?;
         let (fetched, batch_rate_limit) =
-            parse_json_response::<TradeFetchResponse>("price_check.fetch.response", fetch_response)
+            parse_json_response::<TradeFetchResponse>(
+                "price_check.fetch.response",
+                fetch_response,
+                fetch_started,
+            )
                 .await?;
         rate_limit = merge_rate_limits(rate_limit, batch_rate_limit);
+        debug_log::append(
+            "price_check.fetch.parsed",
+            json!({
+                "league": league,
+                "search_id_hash": hash_text(search_id),
+                "result_count": fetched.result.len(),
+                "batch_index": batch_index,
+                "rate_limit": rate_limit,
+            }),
+        );
 
         combined.extend(fetched.result);
     }
@@ -589,6 +639,7 @@ pub async fn load_more_price_check_results(
 async fn parse_json_response<T: serde::de::DeserializeOwned>(
     event: &str,
     response: reqwest::Response,
+    started: Instant,
 ) -> Result<(T, Option<TradeRateLimit>), TradeApiError> {
     let status = response.status();
     let url = response.url().to_string();
@@ -603,7 +654,12 @@ async fn parse_json_response<T: serde::de::DeserializeOwned>(
         json!({
             "status": status.as_u16(),
             "url": url,
-            "body": body,
+            "endpoint": endpoint_label(&url),
+            "elapsed_ms": started.elapsed().as_millis(),
+            "body_len": body.len(),
+            "body_hash": hash_text(&body),
+            "body_kind": response_body_kind(&body),
+            "rate_limit": rate_limit,
         }),
     );
 
@@ -622,8 +678,11 @@ async fn parse_json_response<T: serde::de::DeserializeOwned>(
                 json!({
                     "url": url,
                     "status": status.as_u16(),
+                    "endpoint": endpoint_label(&url),
                     "error": error.to_string(),
-                    "body": body,
+                    "body_len": body.len(),
+                    "body_hash": hash_text(&body),
+                    "body_kind": response_body_kind(&body),
                 }),
             );
             TradeApiError {
@@ -644,7 +703,7 @@ fn logged_transport_error(event: &str, error: reqwest::Error) -> String {
     error.to_string()
 }
 
-fn item_debug_payload(item: &Item) -> serde_json::Value {
+fn item_diagnostic_payload(item: &Item) -> serde_json::Value {
     json!({
         "name": item.name,
         "rarity": item.rarity,
@@ -653,9 +712,51 @@ fn item_debug_payload(item: &Item) -> serde_json::Value {
         "item_level": item.item_level,
         "sockets": item.sockets,
         "spirit": item.spirit,
-        "explicit_mods": item.explicit_mods,
-        "raw_text": item.raw_text,
+        "explicit_mod_count": item.explicit_mods.len(),
+        "raw_text_hash": hash_text(&item.raw_text),
+        "raw_text_len": item.raw_text.len(),
     })
+}
+
+fn filter_diagnostics(filters: &[ActivePriceFilter]) -> Vec<serde_json::Value> {
+    filters
+        .iter()
+        .map(|filter| {
+            json!({
+                "kind": filter.kind,
+                "template": filter.template,
+                "value": filter.value,
+                "min": filter.min,
+                "max": filter.max,
+                "tier": filter.tier,
+                "affix": filter.affix,
+                "source": filter.source,
+            })
+        })
+        .collect()
+}
+
+fn response_body_kind(body: &str) -> &'static str {
+    let trimmed = body.trim_start();
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        "json"
+    } else if trimmed.starts_with("<!DOCTYPE") || trimmed.starts_with("<html") || trimmed.starts_with("<HTML") {
+        "html"
+    } else if trimmed.is_empty() {
+        "empty"
+    } else {
+        "text"
+    }
+}
+
+fn hash_json_value(value: &serde_json::Value) -> String {
+    hash_text(&value.to_string())
+}
+
+fn hash_text(value: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 fn endpoint_label(url: &str) -> &str {
@@ -1326,6 +1427,26 @@ fn trade_price_option_for_request(price_option: &str) -> Option<&str> {
 }
 
 async fn fetch_currency_meta() -> Result<Vec<CurrencyMeta>, String> {
+    if let Some(cached) = cached_currency_meta().await {
+        return Ok(cached);
+    }
+
+    let currencies = fetch_currency_meta_live().await?;
+    *CURRENCY_META_CACHE.lock().await = Some(CachedCurrencyMeta {
+        currencies: currencies.clone(),
+        fetched_at_epoch_ms: now_epoch_ms(),
+    });
+    Ok(currencies)
+}
+
+async fn cached_currency_meta() -> Option<Vec<CurrencyMeta>> {
+    let cache = CURRENCY_META_CACHE.lock().await;
+    let cached = cache.as_ref()?;
+    let age = now_epoch_ms().saturating_sub(cached.fetched_at_epoch_ms);
+    (age < CURRENCY_META_CACHE_TTL.as_millis() as u64).then(|| cached.currencies.clone())
+}
+
+async fn fetch_currency_meta_live() -> Result<Vec<CurrencyMeta>, String> {
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 poe2db-currency-icons")
         .build()
@@ -1412,6 +1533,63 @@ async fn fetch_exchange_rates(
     league: &str,
     selected_currency: &str,
 ) -> Result<CurrencyRates, String> {
+    let cache_key = exchange_rates_cache_key(league, selected_currency);
+    if let Some(cached) = cached_exchange_rates(&cache_key, EXCHANGE_RATES_CACHE_TTL).await {
+        debug_log::append(
+            "currency.exchange.cache.hit",
+            json!({
+                "league": league,
+                "selected_currency": selected_currency,
+                "cache_key_hash": hash_text(&cache_key),
+            }),
+        );
+        return Ok(cached);
+    }
+
+    match fetch_exchange_rates_live(league, selected_currency).await {
+        Ok(rates) => {
+            EXCHANGE_RATES_CACHE.lock().await.insert(
+                cache_key,
+                CachedCurrencyRates {
+                    rates: rates.clone(),
+                    fetched_at_epoch_ms: now_epoch_ms(),
+                },
+            );
+            Ok(rates)
+        }
+        Err(error) => {
+            if let Some(stale) = cached_exchange_rates(&cache_key, Duration::MAX).await {
+                debug_log::append(
+                    "currency.exchange.cache.stale_fallback",
+                    json!({
+                        "league": league,
+                        "selected_currency": selected_currency,
+                        "cache_key_hash": hash_text(&cache_key),
+                        "error": error,
+                    }),
+                );
+                return Ok(stale.with_source("official trade2 exchange stale cache"));
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn cached_exchange_rates(cache_key: &str, ttl: Duration) -> Option<CurrencyRates> {
+    let cache = EXCHANGE_RATES_CACHE.lock().await;
+    let cached = cache.get(cache_key)?;
+    let age = now_epoch_ms().saturating_sub(cached.fetched_at_epoch_ms);
+    (ttl == Duration::MAX || age < ttl.as_millis() as u64).then(|| cached.rates.clone())
+}
+
+fn exchange_rates_cache_key(league: &str, selected_currency: &str) -> String {
+    format!("{}|{}", league.trim(), selected_currency.trim().to_ascii_lowercase())
+}
+
+async fn fetch_exchange_rates_live(
+    league: &str,
+    selected_currency: &str,
+) -> Result<CurrencyRates, String> {
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 currency-exchange")
         .build()
@@ -1441,18 +1619,24 @@ async fn fetch_exchange_rates(
             "league": league,
             "selected_currency": selected_currency,
             "url": url,
-            "request": request,
+            "have_count": have.len(),
+            "request_hash": hash_json_value(&request),
         }),
     );
 
+    let exchange_started = Instant::now();
     let response = client
         .post(url)
         .json(&request)
         .send()
-        .await
-        .map_err(|error| logged_transport_error("currency.exchange.transport_error", error))?;
+            .await
+            .map_err(|error| logged_transport_error("currency.exchange.transport_error", error))?;
     let (exchange, _) =
-        parse_json_response::<TradeExchangeResponse>("currency.exchange.response", response)
+        parse_json_response::<TradeExchangeResponse>(
+            "currency.exchange.response",
+            response,
+            exchange_started,
+        )
             .await
             .map_err(|error| error.message)?;
 
@@ -1769,6 +1953,11 @@ impl CurrencyRates {
             per_selected,
             source: "official trade2 exchange live offers".to_string(),
         }
+    }
+
+    fn with_source(mut self, source: &str) -> Self {
+        self.source = source.to_string();
+        self
     }
 }
 
@@ -2307,6 +2496,7 @@ mod tests {
                     desecrated_mods: None,
                     fractured_mods: None,
                     crafted_mods: None,
+                    extended: None,
                 },
                 listing: FetchListing {
                     indexed: Some("2026-05-20T12:00:00Z".to_string()),

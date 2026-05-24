@@ -248,7 +248,8 @@ struct PoeNinjaSparkline {
 
 pub fn is_exchange_item(item: &Item) -> bool {
     match item.family.as_str() {
-        "currency" | "charm" => true,
+        "currency" => true,
+        "charm" => false,
         _ => {
             let haystacks = [
                 item.item_class.as_deref().unwrap_or(""),
@@ -885,13 +886,13 @@ mod tests {
     }
 
     #[test]
-    fn treats_charms_as_exchange_items() {
+    fn keeps_charms_in_scan_price_check() {
         let charm = item(
             "Natural Golden Charm of the Distiller",
             "charm",
             Some("Charms"),
         );
-        assert!(is_exchange_item(&charm));
+        assert!(!is_exchange_item(&charm));
     }
 
     #[test]

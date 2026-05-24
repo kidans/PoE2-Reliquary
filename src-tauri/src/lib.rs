@@ -56,6 +56,7 @@ const LISTING_PREVIEW_WINDOW_LABEL: &str = "listing-preview";
 const LISTING_PREVIEW_WIDTH: f64 = 360.0;
 const LISTING_PREVIEW_HEIGHT: f64 = 560.0;
 const LISTING_PREVIEW_GAP: f64 = 12.0;
+const REPOE_WORLD_AREAS_URL: &str = "https://repoe-fork.github.io/poe2/world_areas.min.json";
 const SNAP_MARGIN: f64 = 8.0;
 const FULL_SNAP_LEFT: f64 = 0.0;
 const FULL_SNAP_TOP_RATIO: f64 = 0.09;
@@ -73,6 +74,27 @@ pub struct CurrentAreaInfo {
     pub waystone_pack_size: Option<u32>,
     pub waystone_hazard_count: Option<usize>,
     pub boss: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldAreaStatus {
+    pub state: String,
+    pub source: String,
+    pub count: usize,
+    pub cache_path: String,
+    pub error: Option<String>,
+}
+
+impl Default for WorldAreaStatus {
+    fn default() -> Self {
+        Self {
+            state: "warming".to_string(),
+            source: "unknown".to_string(),
+            count: 0,
+            cache_path: String::new(),
+            error: None,
+        }
+    }
 }
 
 fn classify_area_kind(internal_id: &str) -> &'static str {
@@ -100,6 +122,7 @@ pub struct AppState {
     pub trade_queue: Vec<TradeWhisper>,
     pub current_zone: String,
     pub current_area: Option<CurrentAreaInfo>,
+    pub world_area_status: WorldAreaStatus,
     pub trade_league: String,
     pub league_catalog: Vec<LeagueCatalogEntry>,
     pub trade_leagues: Vec<TradeLeague>,
@@ -1057,7 +1080,11 @@ pub fn run() {
             spawn_global_input_worker(app_handle.clone(), state.clone());
             spawn_window_attachment_worker(app_handle.clone());
 
-            init_world_areas();
+            let world_area_status = init_world_areas();
+            {
+                let mut locked_state = state.blocking_lock();
+                locked_state.world_area_status = world_area_status;
+            }
             spawn_client_log_worker(app_handle, state);
 
             Ok(())
@@ -2324,27 +2351,80 @@ struct AreaMeta {
     name: Option<String>,
 }
 
-fn init_world_areas() {
+fn init_world_areas() -> WorldAreaStatus {
     let path = world_areas_cache_path();
-    let data = if path.exists() {
-        std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|text| parse_world_areas(&text))
-    } else {
-        None
-    };
+    let mut source = "empty";
+    let mut fetch_error: Option<String> = None;
+    let data = read_cached_world_areas(&path)
+        .map(|map| {
+            source = "cache";
+            map
+        })
+        .or_else(|| match fetch_world_areas_cache(&path) {
+            Ok(map) => {
+                source = "repoe";
+                Some(map)
+            }
+            Err(error) => {
+                fetch_error = Some(error);
+                None
+            }
+        });
     let map = data.unwrap_or_default();
+    let status = WorldAreaStatus {
+        state: if map.is_empty() { "missing".to_string() } else { "ready".to_string() },
+        source: source.to_string(),
+        count: map.len(),
+        cache_path: path.display().to_string(),
+        error: fetch_error.clone(),
+    };
     debug_log::append(
         "world-areas.init",
         serde_json::json!({
             "path": path.display().to_string(),
             "exists": path.exists(),
+            "source": source,
             "count": map.len(),
             "has_g1_2": map.contains_key("G1_2"),
             "has_g1_town": map.contains_key("G1_town"),
+            "fetch_error": fetch_error,
         }),
     );
     let _ = WORLD_AREAS.set(map);
+    status
+}
+
+fn read_cached_world_areas(path: &PathBuf) -> Option<HashMap<String, AreaMeta>> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| parse_world_areas(&text))
+        .filter(|map| !map.is_empty())
+}
+
+fn fetch_world_areas_cache(path: &PathBuf) -> Result<HashMap<String, AreaMeta>, String> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("Reliquary/0.1 world-areas")
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let text = client
+        .get(REPOE_WORLD_AREAS_URL)
+        .send()
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?
+        .text()
+        .map_err(|error| error.to_string())?;
+    let map = parse_world_areas(&text)
+        .filter(|map| !map.is_empty())
+        .ok_or_else(|| "RePoE world_areas response did not parse into usable area metadata".to_string())?;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    std::fs::write(path, text).map_err(|error| error.to_string())?;
+
+    Ok(map)
 }
 
 fn read_world_areas() -> Option<&'static HashMap<String, AreaMeta>> {
