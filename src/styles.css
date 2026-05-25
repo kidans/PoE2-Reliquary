@@ -56,6 +56,10 @@
   --shadow: rgba(0, 0, 0, 0.78);
   --surface-alpha: 0.98;
   --surface-glow-alpha: 0.16;
+  --scan-overscan-left: 22px;
+  --scan-overscan-top: 14px;
+  --scan-overscan-right: 10px;
+  --scan-overscan-bottom: 18px;
 }
 
 html,
@@ -118,8 +122,89 @@ select {
     inset 0 0 0 1px hsl(var(--accent-hue, 355) 58% 20% / calc(var(--surface-alpha) * 0.82));
 }
 
+.hud-card[data-tab="scan"] {
+  width: calc(100% - var(--scan-overscan-left) - var(--scan-overscan-right));
+  height: calc(100vh - var(--scan-overscan-top) - var(--scan-overscan-bottom));
+  margin:
+    var(--scan-overscan-top)
+    var(--scan-overscan-right)
+    var(--scan-overscan-bottom)
+    var(--scan-overscan-left);
+  overflow: visible;
+}
+
+.hud-card[data-tab="scan"]::after {
+  position: absolute;
+  right: -8px;
+  bottom: -14px;
+  z-index: 5;
+  width: min(260px, 70%);
+  height: 44px;
+  pointer-events: none;
+  content: "";
+  opacity: calc(var(--surface-alpha) * 0.94);
+  background:
+    radial-gradient(ellipse at 100% 82%, hsl(var(--accent-hue, 355) 72% 62% / 0.42), transparent 30%),
+    radial-gradient(circle at 96% 76%, rgba(72, 184, 255, 0.48), transparent 8%),
+    radial-gradient(circle at 90% 84%, rgba(72, 184, 255, 0.28), transparent 7%),
+    linear-gradient(90deg, transparent 0 4%, rgba(219, 179, 91, 0.62) 4% 78%, rgba(219, 179, 91, 0) 78%),
+    linear-gradient(90deg, transparent 0 18%, rgba(48, 163, 211, 0.38) 18% 72%, rgba(48, 163, 211, 0) 72%);
+  background-position:
+    0 0,
+    0 0,
+    0 0,
+    0 29px,
+    0 34px;
+  background-repeat: no-repeat;
+  background-size:
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 2px,
+    100% 1px;
+  filter: drop-shadow(0 0 9px hsl(var(--accent-hue, 355) 70% 58% / 0.22));
+}
+
+.hud-card[data-tab="scan"] .hud-header {
+  min-height: 39px;
+  padding-left: 146px;
+}
+
+.hud-card[data-tab="scan"] .brand-lockup {
+  position: absolute;
+  top: -13px;
+  left: -11px;
+  z-index: 7;
+  min-width: 162px;
+  padding: 4px 10px 5px;
+  border-left: 3px solid hsl(var(--accent-hue, 355) 78% 62% / 0.86);
+  border-bottom: 1px solid hsl(var(--accent-hue, 355) 78% 62% / 0.42);
+  background:
+    linear-gradient(90deg, rgba(4, 4, 5, 0.98), rgba(4, 4, 5, 0.9) 82%, transparent);
+  box-shadow:
+    0 10px 22px rgba(0, 0, 0, 0.34),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.hud-card[data-tab="scan"] .brand-title {
+  color: #f5d9dd;
+  font-size: 19px;
+  letter-spacing: 0.14em;
+  line-height: 1;
+}
+
+.hud-card[data-tab="scan"] .zone-pill {
+  max-width: 132px;
+}
+
+.hud-card[data-tab="scan"] .league-select {
+  max-width: 126px;
+}
+
 .hud-card.is-compact {
+  width: 100%;
   height: 40px;
+  margin: 0;
   border-radius: 0;
   background: linear-gradient(
     180deg,
@@ -523,6 +608,10 @@ kbd {
 .hud-card.is-compact .hud-header,
 .hud-card.is-compact .tab-row,
 .hud-card.is-compact .panel {
+  display: none;
+}
+
+.hud-card.is-compact::after {
   display: none;
 }
 
