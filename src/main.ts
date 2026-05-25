@@ -991,12 +991,18 @@ async function showListingPreviewForIndex(index: number, anchorTop: number) {
   }).catch((error) => pushStatus("preview", String(error)));
 }
 
+function renderScanShortcut() {
+  const mod = appSettings.scanMod || DEFAULT_APP_SETTINGS.scanMod;
+  const key = normalizeShortcutKey(appSettings.scanKey, DEFAULT_APP_SETTINGS.scanKey);
+  return `<kbd>${escapeHtml(mod)}</kbd> + <kbd>${escapeHtml(key)}</kbd>`;
+}
+
 function renderScanPanel(item: ScannedItem | null, priceCheck: PriceCheck | null) {
   if (!item) {
     return `
       <div class="empty-state">
         <p class="section-label">Waiting for clipboard scan</p>
-        <p>Hover an item in PoE2 and press <kbd>Ctrl</kbd> + <kbd>C</kbd>. The parsed item and hazard profile will land here.</p>
+        <p>Hover an item in PoE2 and press ${renderScanShortcut()}. The parsed item and hazard profile will land here.</p>
       </div>
     `;
   }
