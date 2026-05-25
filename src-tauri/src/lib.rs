@@ -432,8 +432,9 @@ fn start_drag_window(window: tauri::Window) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn minimize_window(window: tauri::Window) -> Result<(), String> {
-    window.minimize().map_err(|error| error.to_string())
+fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String> {
+    app_handle.exit(0);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1062,7 +1063,7 @@ pub fn run() {
             hide_listing_preview,
             kick_buyer,
             load_more_price_check_results,
-            minimize_window,
+            exit_app,
             open_last_trade_search,
             open_external_url,
             refresh_exchange_category,

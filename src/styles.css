@@ -135,51 +135,32 @@ select {
 
 .hud-card:not(.is-compact)::after {
   position: absolute;
-  right: -9px;
-  bottom: -15px;
-  z-index: 5;
-  width: min(340px, 76%);
-  height: 58px;
+  right: -11px;
+  bottom: -17px;
+  z-index: 2;
+  width: min(380px, 82%);
+  height: 286px;
   pointer-events: none;
   content: "";
-  opacity: calc(var(--surface-alpha) * 0.9);
-  background:
-    radial-gradient(ellipse at 98% 80%, hsl(var(--accent-hue, 355) 78% 60% / 0.42), transparent 31%),
-    radial-gradient(circle at 94% 76%, rgba(72, 184, 255, 0.5), transparent 7%),
-    radial-gradient(circle at 89% 84%, rgba(72, 184, 255, 0.28), transparent 6%),
-    linear-gradient(0deg, transparent 0 10px, rgba(219, 179, 91, 0.48) 10px 12px, transparent 12px),
-    linear-gradient(90deg, transparent 0 4%, rgba(219, 179, 91, 0.68) 4% 88%, rgba(219, 179, 91, 0) 88%),
-    linear-gradient(90deg, transparent 0 22%, rgba(48, 163, 211, 0.4) 22% 82%, rgba(48, 163, 211, 0) 82%);
-  background-position:
-    0 0,
-    0 0,
-    0 0,
-    100% 8px,
-    0 40px,
-    0 46px;
+  opacity: calc(var(--surface-alpha) * 0.94);
+  background-image: url("/frame/poe2-gold-blue-corner.png");
+  background-position: right bottom;
   background-repeat: no-repeat;
-  background-size:
-    100% 100%,
-    100% 100%,
-    100% 100%,
-    18px 46px,
-    100% 2px,
-    100% 1px;
+  background-size: contain;
   animation: reliquary-frame-pulse 4.8s ease-in-out infinite;
-  filter:
-    drop-shadow(0 0 8px hsl(var(--accent-hue, 355) 70% 58% / 0.2))
-    drop-shadow(0 0 8px rgba(72, 184, 255, 0.1));
+  filter: drop-shadow(0 0 9px rgba(72, 184, 255, 0.12));
 }
 
 .hud-card:not(.is-compact) .hud-header {
   min-height: 39px;
-  padding-left: 146px;
+  justify-content: flex-start;
+  padding-left: 8px;
 }
 
 .hud-card:not(.is-compact) .brand-lockup {
   position: absolute;
-  top: -15px;
-  left: -6px;
+  top: -13px;
+  left: 0;
   z-index: 7;
   min-width: 0;
   padding: 0;
@@ -198,8 +179,22 @@ select {
     0 0 16px hsl(var(--accent-hue, 355) 70% 58% / 0.22);
 }
 
-.hud-card:not(.is-compact) .zone-pill {
-  max-width: 132px;
+.hud-card:not(.is-compact) .zone-label {
+  max-width: min(210px, 36%);
+  overflow: hidden;
+  color: rgba(242, 226, 229, 0.72);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.76);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.window-controls {
+  margin-left: auto;
 }
 
 .hud-card:not(.is-compact) .league-select {
@@ -285,7 +280,8 @@ select {
   text-transform: uppercase;
 }
 
-.chrome-button-minimize {
+.chrome-button-line,
+.chrome-button-close {
   min-width: 24px;
   padding: 5px 6px;
   font-size: 12px;

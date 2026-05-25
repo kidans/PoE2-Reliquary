@@ -488,16 +488,16 @@ root.innerHTML = isListingPreviewWindow
           <div class="brand-lockup">
             <h1 class="brand-title">reliquary</h1>
           </div>
+          <div class="zone-label" data-zone>Unknown</div>
           <div class="window-controls">
-            <div class="zone-pill" data-zone>Zone: Unknown</div>
             <select class="league-select" data-league aria-label="Trade league">
               <option>Fate of the Vaal</option>
               <option>HC Fate of the Vaal</option>
               <option>Standard</option>
               <option>Hardcore</option>
             </select>
-            <button class="chrome-button" data-toggle-compact type="button" title="Toggle compact mode">Line</button>
-            <button class="chrome-button chrome-button-minimize" data-minimize type="button" title="Minimize" aria-label="Minimize">-</button>
+            <button class="chrome-button chrome-button-line" data-toggle-compact type="button" title="Line mode" aria-label="Line mode">_</button>
+            <button class="chrome-button chrome-button-close" data-close-app type="button" title="Exit" aria-label="Exit">x</button>
           </div>
         </header>
 
@@ -567,7 +567,7 @@ function render() {
     return;
   }
 
-  zoneElement!.textContent = `Zone: ${state.current_zone || "Unknown"}`;
+  zoneElement!.textContent = state.current_zone || "Unknown";
   renderLeagueOptions();
   hudElement!.classList.toggle("is-compact", compactMode);
   hudElement!.dataset.tab = activeTab;
@@ -3334,7 +3334,7 @@ if (!isListingPreviewWindow && leagueElement) {
     const openTrade = target.closest<HTMLButtonElement>("[data-open-trade]");
     const macroButton = target.closest<HTMLButtonElement>("[data-macro]");
     const compactButton = target.closest<HTMLButtonElement>("[data-toggle-compact]");
-    const minimizeButton = target.closest<HTMLButtonElement>("[data-minimize]");
+    const closeButton = target.closest<HTMLButtonElement>("[data-close-app]");
     const sourceButton = target.closest<HTMLButtonElement>("[data-source-url]");
     const specButton = target.closest<HTMLButtonElement>("[data-spec-key]");
     const clearSpecsButton = target.closest<HTMLButtonElement>("[data-clear-specs]");
@@ -3433,10 +3433,11 @@ if (!isListingPreviewWindow && leagueElement) {
       return;
     }
 
-    if (minimizeButton) {
-      await invoke("minimize_window").catch((error) =>
+    if (closeButton) {
+      await invoke("exit_app").catch((error) =>
         pushStatus("window", String(error)),
       );
+      return;
     }
 
     if (openTrade) {
