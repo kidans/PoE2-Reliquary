@@ -462,18 +462,16 @@ const LOCAL_CURRENCY_ICONS: Record<string, string> = {
   transmute: "/currency/transmute.webp",
   chaos: "/currency/chaos.webp",
   vaal: "/currency/vaal.webp",
-  alchemy: "/currency/alchemy.webp",
   alch: "/currency/alchemy.webp",
   annul: "/currency/annul.webp",
   chance: "/currency/chance.webp",
-  augment: "/currency/augment.webp",
   aug: "/currency/augment.webp",
   mirror: "/currency/mirror.png",
 };
 
 const CURRENCY_ICON_ALIASES: Record<string, string> = {
-  alch: "alchemy",
-  aug: "augment",
+  alchemy: "alch",
+  augment: "aug",
 };
 
 root.innerHTML = isListingPreviewWindow
@@ -2015,11 +2013,15 @@ function renderListingRow(
   const matchNote = softMiss
     ? `<small class="listing-match-note">partial ${rank!.score}/${rank!.maxScore}</small>`
     : "";
+  const rawPriceNote =
+    showNormalizedDisplay && listing.price !== priceText
+      ? `<small class="listing-price-raw">listed ${escapeHtml(listing.price)}</small>`
+      : "";
 
   return `
     <div class="${rowClass}"${title}>
       <button class="inspect-eye ${pinnedListingPreviewIndex === index ? "is-active" : ""}" data-preview-listing="${index}" type="button" title="Click to inspect this exact listing">View</button>
-      <span class="listing-price">${priceIcon}${escapeHtml(priceText)}${listing.online ? '<i class="online-dot"></i>' : ""}</span>
+      <span class="listing-price">${priceIcon}${escapeHtml(priceText)}${rawPriceNote}${listing.online ? '<i class="online-dot"></i>' : ""}</span>
       <span>${itemLevel}</span>
       <span>${quality}%</span>
       <span class="seller-name">${escapeHtml(shortSeller(seller))}${matchNote}</span>
@@ -2974,9 +2976,9 @@ function fallbackCurrencies(): CurrencyMeta[] {
     { id: "regal", name: "Regal Orb", icon_url: resolveCurrencyIcon("regal", null) },
     { id: "transmute", name: "Orb of Transmutation", icon_url: resolveCurrencyIcon("transmute", null) },
     { id: "chaos", name: "Chaos Orb", icon_url: resolveCurrencyIcon("chaos", null) },
-    { id: "alchemy", name: "Orb of Alchemy", icon_url: resolveCurrencyIcon("alchemy", null) },
+    { id: "alch", name: "Orb of Alchemy", icon_url: resolveCurrencyIcon("alch", null) },
     { id: "chance", name: "Orb of Chance", icon_url: resolveCurrencyIcon("chance", null) },
-    { id: "augment", name: "Orb of Augmentation", icon_url: resolveCurrencyIcon("augment", null) },
+    { id: "aug", name: "Orb of Augmentation", icon_url: resolveCurrencyIcon("aug", null) },
     { id: "annul", name: "Orb of Annulment", icon_url: resolveCurrencyIcon("annul", null) },
     { id: "mirror", name: "Mirror of Kalandra", icon_url: resolveCurrencyIcon("mirror", null) },
     { id: "vaal", name: "Vaal Orb", icon_url: resolveCurrencyIcon("vaal", null) },

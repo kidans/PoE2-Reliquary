@@ -19,11 +19,14 @@ const PRICE_OPTION_EQUIVALENT: &str = "equivalent";
 const PRICE_OPTION_EXALTED_DIVINE: &str = "exalted_divine";
 const TRADE_WEB_BASE: &str = "https://www.pathofexile.com/trade2/search/poe2";
 const TRADE_API_BASE: &str = "https://www.pathofexile.com/api/trade2";
+const TRADE_STATIC_URL: &str = "https://www.pathofexile.com/api/trade2/data/static";
+const TRADE_CDN_BASE: &str = "https://www.pathofexile.com";
 const POE2DB_CURRENCY_URL: &str = "https://poe2db.tw/us/Currency";
 const TRADE_STATS_URL: &str = "https://www.pathofexile.com/api/trade2/data/stats";
 const MAX_LISTINGS: usize = 50;
 const MAX_FETCH_BATCH: usize = 10;
 const INITIAL_FETCH_COUNT: usize = 10;
+const MAX_EXCHANGE_CURRENCIES_PER_REQUEST: usize = 10;
 const PRICE_CHECK_CACHE_TTL: Duration = Duration::from_secs(10);
 const CURRENCY_META_CACHE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 const EXCHANGE_RATES_CACHE_TTL: Duration = Duration::from_secs(60);
@@ -46,10 +49,10 @@ static COMMON_CURRENCIES: &[(&str, &str, &str)] = &[
     ("transmute", "Orb of Transmutation", "Orb_of_Transmutation"),
     ("chaos", "Chaos Orb", "Chaos_Orb"),
     ("vaal", "Vaal Orb", "Vaal_Orb"),
-    ("alchemy", "Orb of Alchemy", "Orb_of_Alchemy"),
+    ("alch", "Orb of Alchemy", "Orb_of_Alchemy"),
     ("annul", "Orb of Annulment", "Orb_of_Annulment"),
     ("chance", "Orb of Chance", "Orb_of_Chance"),
-    ("augment", "Orb of Augmentation", "Orb_of_Augmentation"),
+    ("aug", "Orb of Augmentation", "Orb_of_Augmentation"),
     ("mirror", "Mirror of Kalandra", "Mirror_of_Kalandra"),
 ];
 
@@ -1366,11 +1369,21 @@ fn trade_listing_url(source_url: &str, result_id: &str) -> String {
 }
 
 fn format_price(amount: f64, currency: &str) -> String {
-    if amount.fract() == 0.0 {
-        format!("{} {}", amount as u64, currency.to_uppercase())
+    let amount_text = if amount.fract() == 0.0 {
+        format!("{}", amount as u64)
+    } else if amount >= 100.0 {
+        format!("{amount:.0}")
+    } else if amount >= 10.0 {
+        format!("{amount:.1}")
+    } else if amount >= 1.0 {
+        format!("{amount:.2}")
+    } else if amount >= 0.01 {
+        format!("{amount:.2}")
     } else {
-        format!("{amount:.1} {}", currency.to_uppercase())
-    }
+        format!("{amount:.3}")
+    };
+
+    format!("{amount_text} {}", canonical_currency_id(currency).to_uppercase())
 }
 
 fn preview_item_name(item: &FetchItem) -> Option<String> {
@@ -1433,7 +1446,7 @@ fn trade_price_option_for_request(price_option: &str) -> Option<&str> {
     match price_option {
         PRICE_OPTION_EQUIVALENT => None,
         PRICE_OPTION_EXALTED_DIVINE => Some(PRICE_OPTION_EXALTED_DIVINE),
-        direct_currency => Some(direct_currency),
+        direct_currency => Some(canonical_currency_id(direct_currency)),
     }
 }
 
@@ -1458,6 +1471,19 @@ async fn cached_currency_meta() -> Option<Vec<CurrencyMeta>> {
 }
 
 async fn fetch_currency_meta_live() -> Result<Vec<CurrencyMeta>, String> {
+    match fetch_trade_static_currency_meta().await {
+        Ok(currencies) if !currencies.is_empty() => return Ok(currencies),
+        Ok(_) => {}
+        Err(error) => {
+            debug_log::append(
+                "currency.meta.trade_static_fallback",
+                json!({
+                    "error": error,
+                }),
+            );
+        }
+    }
+
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 poe2db-currency-icons")
         .build()
@@ -1503,6 +1529,64 @@ async fn fetch_currency_meta_live() -> Result<Vec<CurrencyMeta>, String> {
                 .or_else(|| Some(format!("https://cdn.poe2db.tw/image/poe2/{slug}.webp"))),
         })
         .collect())
+}
+
+async fn fetch_trade_static_currency_meta() -> Result<Vec<CurrencyMeta>, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Reliquary/0.1 trade-static-currencies")
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let response = client
+        .get(TRADE_STATIC_URL)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?
+        .json::<TradeStaticResponse>()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let official = response
+        .result
+        .into_iter()
+        .find(|group| group.id == "Currency")
+        .map(|group| {
+            group
+                .entries
+                .into_iter()
+                .filter(|entry| entry.id != "sep")
+                .filter_map(|entry| {
+                    Some(CurrencyMeta {
+                        id: canonical_currency_id(&entry.id).to_string(),
+                        name: entry.text,
+                        icon_url: absolutize_trade_image_url(entry.image?),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut by_id = official
+        .into_iter()
+        .map(|currency| (currency.id.clone(), currency))
+        .collect::<HashMap<_, _>>();
+    let mut ordered = Vec::new();
+
+    for (id, name, slug) in COMMON_CURRENCIES {
+        ordered.push(by_id.remove(*id).unwrap_or_else(|| CurrencyMeta {
+            id: (*id).to_string(),
+            name: (*name).to_string(),
+            icon_url: Some(format!("https://cdn.poe2db.tw/image/poe2/{slug}.webp")),
+        }));
+    }
+
+    let mut rest = by_id.into_values().collect::<Vec<_>>();
+    rest.sort_by(|left, right| left.name.cmp(&right.name));
+    ordered.extend(rest);
+
+    Ok(ordered)
 }
 
 async fn fetch_trade_stats() -> Result<Vec<TradeStatEntry>, String> {
@@ -1609,55 +1693,69 @@ async fn fetch_exchange_rates_live(
         .user_agent("Reliquary/0.1 currency-exchange")
         .build()
         .map_err(|error| error.to_string())?;
-    let have = COMMON_CURRENCIES
+    let selected_currency = canonical_currency_id(selected_currency);
+    let currency_meta = fetch_currency_meta()
+        .await
+        .unwrap_or_else(|_| default_currency_meta());
+    let mut have = currency_meta
         .iter()
-        .map(|(id, _, _)| *id)
-        .filter(|id| *id != selected_currency)
+        .map(|currency| canonical_currency_id(&currency.id).to_string())
+        .filter(|id| id != selected_currency)
         .collect::<Vec<_>>();
-    let request = json!({
-        "engine": "new",
-        "query": {
-            "status": { "option": "online" },
-            "have": have,
-            "want": [selected_currency],
-        },
-        "sort": { "have": "asc" }
-    });
+    have.sort();
+    have.dedup();
     let url = format!(
         "{TRADE_API_BASE}/exchange/poe2/{}",
         urlencoding::encode(league)
     );
 
-    debug_log::append(
-        "currency.exchange.request",
-        json!({
-            "league": league,
-            "selected_currency": selected_currency,
-            "url": url,
-            "have_count": have.len(),
-            "request_hash": hash_json_value(&request),
-        }),
-    );
+    let mut exchanges = Vec::new();
 
-    let exchange_started = Instant::now();
-    let response = client
-        .post(url)
-        .json(&request)
-        .send()
+    for chunk in have.chunks(MAX_EXCHANGE_CURRENCIES_PER_REQUEST) {
+        let request = json!({
+            "engine": "new",
+            "query": {
+                "status": { "option": "online" },
+                "have": chunk,
+                "want": [selected_currency],
+            },
+            "sort": { "have": "asc" }
+        });
+
+        debug_log::append(
+            "currency.exchange.request",
+            json!({
+                "league": league,
+                "selected_currency": selected_currency,
+                "url": url,
+                "have_count": have.len(),
+                "chunk_count": chunk.len(),
+                "request_hash": hash_json_value(&request),
+            }),
+        );
+
+        let exchange_started = Instant::now();
+        let response = client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|error| logged_transport_error("currency.exchange.transport_error", error))?;
+        let (exchange, _) = parse_json_response::<TradeExchangeResponse>(
+            "currency.exchange.response",
+            response,
+            exchange_started,
+        )
         .await
-        .map_err(|error| logged_transport_error("currency.exchange.transport_error", error))?;
-    let (exchange, _) = parse_json_response::<TradeExchangeResponse>(
-        "currency.exchange.response",
-        response,
-        exchange_started,
-    )
-    .await
-    .map_err(|error| error.message)?;
+        .map_err(|error| error.message)?;
+        exchanges.push(exchange);
+    }
 
-    Ok(CurrencyRates::from_exchange(selected_currency, exchange))
+    Ok(CurrencyRates::from_exchanges(selected_currency, exchanges))
 }
 
 fn normalize_amount(amount: f64, currency: &str, rates: &CurrencyRates) -> Option<f64> {
+    let currency = canonical_currency_id(currency);
     if currency == rates.selected_currency {
         return Some(amount);
     }
@@ -1685,8 +1783,8 @@ fn currency_icon_url(currencies: &[CurrencyMeta], currency: &str) -> Option<Stri
 
 fn canonical_currency_id(currency: &str) -> &str {
     match currency {
-        "aug" => "augment",
-        "alch" => "alchemy",
+        "augment" => "aug",
+        "alchemy" => "alch",
         other => other,
     }
 }
@@ -1700,6 +1798,18 @@ fn default_currency_meta() -> Vec<CurrencyMeta> {
             icon_url: Some(format!("https://cdn.poe2db.tw/image/poe2/{slug}.webp")),
         })
         .collect()
+}
+
+fn absolutize_trade_image_url(image: String) -> Option<String> {
+    if image.trim().is_empty() {
+        return None;
+    }
+
+    if image.starts_with("http://") || image.starts_with("https://") {
+        return Some(image);
+    }
+
+    Some(format!("{TRADE_CDN_BASE}{image}"))
 }
 
 fn clean_html(value: &str) -> String {
@@ -1829,17 +1939,24 @@ fn normalized_league(league: Option<&str>) -> &str {
 }
 
 fn normalized_price_currency(currency: Option<&str>) -> &str {
-    currency
+    let currency = currency
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or(DEFAULT_PRICE_CURRENCY)
+        .unwrap_or(DEFAULT_PRICE_CURRENCY);
+
+    canonical_currency_id(currency)
 }
 
 fn normalized_price_option(price_option: Option<&str>) -> &str {
-    price_option
+    let price_option = price_option
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or(DEFAULT_PRICE_OPTION)
+        .unwrap_or(DEFAULT_PRICE_OPTION);
+
+    match price_option {
+        PRICE_OPTION_EQUIVALENT | PRICE_OPTION_EXALTED_DIVINE => price_option,
+        direct_currency => canonical_currency_id(direct_currency),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1864,6 +1981,24 @@ struct TradeLeagueEntry {
 #[derive(Debug, Deserialize)]
 struct TradeStatsResponse {
     result: Vec<TradeStatGroup>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TradeStaticResponse {
+    result: Vec<TradeStaticGroup>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TradeStaticGroup {
+    id: String,
+    entries: Vec<TradeStaticEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TradeStaticEntry {
+    id: String,
+    text: String,
+    image: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1931,19 +2066,26 @@ impl CurrencyRates {
         }
     }
 
-    fn from_exchange(selected_currency: &str, exchange: TradeExchangeResponse) -> Self {
+    fn from_exchanges<I>(selected_currency: &str, exchanges: I) -> Self
+    where
+        I: IntoIterator<Item = TradeExchangeResponse>,
+    {
         let mut grouped: HashMap<String, Vec<f64>> = HashMap::new();
 
-        for result in exchange.result.into_values() {
-            for offer in result.listing.offers {
-                if offer.item.currency != selected_currency || offer.item.amount <= 0.0 {
-                    continue;
-                }
+        for exchange in exchanges {
+            for result in exchange.result.into_values() {
+                for offer in result.listing.offers {
+                    if canonical_currency_id(&offer.item.currency) != selected_currency
+                        || offer.item.amount <= 0.0
+                    {
+                        continue;
+                    }
 
-                grouped
-                    .entry(offer.exchange.currency)
-                    .or_default()
-                    .push(offer.exchange.amount / offer.item.amount);
+                    grouped
+                        .entry(canonical_currency_id(&offer.exchange.currency).to_string())
+                        .or_default()
+                        .push(offer.exchange.amount / offer.item.amount);
+                }
             }
         }
 
@@ -2281,9 +2423,9 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{
-        build_trade_request, filters_for_item, listing_from_fetch_result, price_check_cache_key,
-        spec_template, CurrencyRates, ExtendedData, FetchAccount, FetchItem, FetchItemProperty,
-        FetchListing, FetchPrice, FetchResult, TradeStatEntry,
+        build_trade_request, filters_for_item, format_price, listing_from_fetch_result,
+        price_check_cache_key, spec_template, CurrencyRates, ExtendedData, FetchAccount, FetchItem,
+        FetchItemProperty, FetchListing, FetchPrice, FetchResult, TradeStatEntry,
     };
     use serde_json::json;
 
@@ -2436,6 +2578,13 @@ mod tests {
             request["query"]["stats"][0]["filters"][0]["value"]["max"],
             39.0
         );
+    }
+
+    #[test]
+    fn equivalent_prices_keep_small_currency_values_visible() {
+        assert_eq!(format_price(0.01, "exalted"), "0.01 EXALTED");
+        assert_eq!(format_price(0.004, "exalted"), "0.004 EXALTED");
+        assert_eq!(format_price(1.0, "chaos"), "1 CHAOS");
     }
 
     #[test]

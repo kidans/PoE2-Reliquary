@@ -94,6 +94,34 @@ const poe2dbSnapshot: Poe2DbDataSnapshot = {
           ],
           tags: ["damage", "physical", "attack"],
         },
+        {
+          id: "increased-physical-flaring",
+          tier: "T1",
+          name: "Flaring",
+          source_kind: "normal",
+          required_level: 75,
+          affix: "prefix",
+          text: "(150-169)% increased Physical Damage",
+          template: "#% increased Physical Damage",
+          roll_bands: [
+            { min: 150, max: 169 },
+          ],
+          tags: ["damage", "physical", "attack"],
+        },
+        {
+          id: "all-attack-skills-flaring",
+          tier: "T1",
+          name: "Flaring",
+          source_kind: "normal",
+          required_level: 75,
+          affix: "prefix",
+          text: "+(5-5) to Level of all Attack Skills",
+          template: "+# to Level of all Attack Skills",
+          roll_bands: [
+            { min: 5, max: 5 },
+          ],
+          tags: ["attack", "gem"],
+        },
       ],
     },
   ],
@@ -581,7 +609,7 @@ describe("hard filter routing", () => {
     ))).toBe(true);
   });
 
-  it("caps explicit API filters so selected mods do not create brittle exact-match queries", () => {
+  it("sends every selected hard explicit filter so the redirect matches the query", () => {
     const specs = itemSpecs(baseItem, undefined, poe2dbSnapshot);
     const selected = new Set(
       specs
@@ -595,7 +623,7 @@ describe("hard filter routing", () => {
 
     const hardFilters = hardPriceFiltersForSelection(baseItem, selected, "quick", poe2dbSnapshot);
 
-    expect(hardFilters.filter((filter) => filter.kind === "explicit")).toHaveLength(1);
+    expect(hardFilters.filter((filter) => filter.kind === "explicit")).toHaveLength(3);
   });
 });
 

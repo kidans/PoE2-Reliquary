@@ -428,7 +428,6 @@ export function hardPriceFiltersForSelection(
   const explicitFilters = hardEntries
     .filter(({ spec }) => spec.kind === "explicit")
     .sort((left, right) => priceImpactScore(right.spec) - priceImpactScore(left.spec))
-    .slice(0, 1)
     .map(({ filter }) => filter);
 
   return [...structuralFilters, ...explicitFilters];
