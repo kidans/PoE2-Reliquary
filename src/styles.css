@@ -58,8 +58,8 @@
   --surface-glow-alpha: 0.16;
   --frame-overscan-left: 22px;
   --frame-overscan-top: 14px;
-  --frame-overscan-right: 52px;
-  --frame-overscan-bottom: 52px;
+  --frame-overscan-right: 14px;
+  --frame-overscan-bottom: 14px;
 }
 
 html,
@@ -135,26 +135,21 @@ select {
 
 .hud-card:not(.is-compact)::after {
   position: absolute;
-  right: -43px;
-  bottom: -46px;
+  right: -12px;
+  bottom: -12px;
   z-index: 2;
-  width: 460px;
-  max-width: calc(100% + 43px);
-  height: 345px;
+  width: 410px;
+  max-width: calc(100% + 12px);
+  height: 308px;
   pointer-events: none;
   content: "";
   opacity: calc(var(--surface-alpha) * 0.94);
-  background-image:
-    url("/frame/poe2-gold-blue-corner.png"),
-    radial-gradient(ellipse at 90% 84%, rgba(0, 7, 10, 0.74), rgba(0, 7, 10, 0.45) 33%, transparent 63%),
-    linear-gradient(135deg, transparent 0 40%, rgba(0, 8, 10, 0.24) 62%, rgba(0, 7, 10, 0.64) 100%);
-  background-position: right bottom, right bottom, right bottom;
+  background-image: url("/frame/poe2-gold-blue-corner.png");
+  background-position: right bottom;
   background-repeat: no-repeat;
-  background-size: contain, 72% 58%, 62% 50%;
+  background-size: contain;
   animation: reliquary-frame-pulse 4.8s ease-in-out infinite;
-  filter:
-    drop-shadow(0 14px 26px rgba(0, 0, 0, 0.58))
-    drop-shadow(0 0 9px rgba(72, 184, 255, 0.12));
+  filter: drop-shadow(0 0 9px rgba(72, 184, 255, 0.12));
 }
 
 .hud-card:not(.is-compact) .hud-header {
@@ -1932,6 +1927,7 @@ kbd {
 
 .hud-card[data-tab="scan"] .panel,
 .panel[data-tab="scan"] {
+  position: relative;
   display: flex;
   align-items: stretch;
   overflow: hidden;
@@ -1940,9 +1936,10 @@ kbd {
 }
 
 .panel[data-tab="scan"] .empty-state {
-  flex: 1;
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 8px;
+  width: auto;
+  height: auto;
   min-height: 0;
   align-content: center;
   justify-items: start;
@@ -2945,7 +2942,6 @@ kbd {
   100% {
     opacity: calc(var(--surface-alpha) * 0.72);
     filter:
-      drop-shadow(0 12px 24px rgba(0, 0, 0, 0.54))
       drop-shadow(0 0 6px hsl(var(--accent-hue, 355) 70% 58% / 0.14))
       drop-shadow(0 0 6px rgba(72, 184, 255, 0.06));
   }
@@ -2953,7 +2949,6 @@ kbd {
   50% {
     opacity: calc(var(--surface-alpha) * 0.98);
     filter:
-      drop-shadow(0 16px 30px rgba(0, 0, 0, 0.62))
       drop-shadow(0 0 12px hsl(var(--accent-hue, 355) 70% 58% / 0.28))
       drop-shadow(0 0 13px rgba(72, 184, 255, 0.18));
   }
