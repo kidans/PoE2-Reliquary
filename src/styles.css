@@ -56,10 +56,10 @@
   --shadow: rgba(0, 0, 0, 0.78);
   --surface-alpha: 0.98;
   --surface-glow-alpha: 0.16;
-  --scan-overscan-left: 22px;
-  --scan-overscan-top: 14px;
-  --scan-overscan-right: 10px;
-  --scan-overscan-bottom: 18px;
+  --frame-overscan-left: 22px;
+  --frame-overscan-top: 14px;
+  --frame-overscan-right: 10px;
+  --frame-overscan-bottom: 18px;
 }
 
 html,
@@ -122,82 +122,87 @@ select {
     inset 0 0 0 1px hsl(var(--accent-hue, 355) 58% 20% / calc(var(--surface-alpha) * 0.82));
 }
 
-.hud-card[data-tab="scan"] {
-  width: calc(100% - var(--scan-overscan-left) - var(--scan-overscan-right));
-  height: calc(100vh - var(--scan-overscan-top) - var(--scan-overscan-bottom));
+.hud-card:not(.is-compact) {
+  width: calc(100% - var(--frame-overscan-left) - var(--frame-overscan-right));
+  height: calc(100vh - var(--frame-overscan-top) - var(--frame-overscan-bottom));
   margin:
-    var(--scan-overscan-top)
-    var(--scan-overscan-right)
-    var(--scan-overscan-bottom)
-    var(--scan-overscan-left);
+    var(--frame-overscan-top)
+    var(--frame-overscan-right)
+    var(--frame-overscan-bottom)
+    var(--frame-overscan-left);
   overflow: visible;
 }
 
-.hud-card[data-tab="scan"]::after {
+.hud-card:not(.is-compact)::after {
   position: absolute;
-  right: -8px;
-  bottom: -14px;
+  right: -9px;
+  bottom: -15px;
   z-index: 5;
-  width: min(260px, 70%);
-  height: 44px;
+  width: min(340px, 76%);
+  height: 58px;
   pointer-events: none;
   content: "";
-  opacity: calc(var(--surface-alpha) * 0.94);
+  opacity: calc(var(--surface-alpha) * 0.9);
   background:
-    radial-gradient(ellipse at 100% 82%, hsl(var(--accent-hue, 355) 72% 62% / 0.42), transparent 30%),
-    radial-gradient(circle at 96% 76%, rgba(72, 184, 255, 0.48), transparent 8%),
-    radial-gradient(circle at 90% 84%, rgba(72, 184, 255, 0.28), transparent 7%),
-    linear-gradient(90deg, transparent 0 4%, rgba(219, 179, 91, 0.62) 4% 78%, rgba(219, 179, 91, 0) 78%),
-    linear-gradient(90deg, transparent 0 18%, rgba(48, 163, 211, 0.38) 18% 72%, rgba(48, 163, 211, 0) 72%);
+    radial-gradient(ellipse at 98% 80%, hsl(var(--accent-hue, 355) 78% 60% / 0.42), transparent 31%),
+    radial-gradient(circle at 94% 76%, rgba(72, 184, 255, 0.5), transparent 7%),
+    radial-gradient(circle at 89% 84%, rgba(72, 184, 255, 0.28), transparent 6%),
+    linear-gradient(0deg, transparent 0 10px, rgba(219, 179, 91, 0.48) 10px 12px, transparent 12px),
+    linear-gradient(90deg, transparent 0 4%, rgba(219, 179, 91, 0.68) 4% 88%, rgba(219, 179, 91, 0) 88%),
+    linear-gradient(90deg, transparent 0 22%, rgba(48, 163, 211, 0.4) 22% 82%, rgba(48, 163, 211, 0) 82%);
   background-position:
     0 0,
     0 0,
     0 0,
-    0 29px,
-    0 34px;
+    100% 8px,
+    0 40px,
+    0 46px;
   background-repeat: no-repeat;
   background-size:
     100% 100%,
     100% 100%,
     100% 100%,
+    18px 46px,
     100% 2px,
     100% 1px;
-  filter: drop-shadow(0 0 9px hsl(var(--accent-hue, 355) 70% 58% / 0.22));
+  animation: reliquary-frame-pulse 4.8s ease-in-out infinite;
+  filter:
+    drop-shadow(0 0 8px hsl(var(--accent-hue, 355) 70% 58% / 0.2))
+    drop-shadow(0 0 8px rgba(72, 184, 255, 0.1));
 }
 
-.hud-card[data-tab="scan"] .hud-header {
+.hud-card:not(.is-compact) .hud-header {
   min-height: 39px;
   padding-left: 146px;
 }
 
-.hud-card[data-tab="scan"] .brand-lockup {
+.hud-card:not(.is-compact) .brand-lockup {
   position: absolute;
-  top: -13px;
-  left: -11px;
+  top: -15px;
+  left: -6px;
   z-index: 7;
-  min-width: 162px;
-  padding: 4px 10px 5px;
-  border-left: 3px solid hsl(var(--accent-hue, 355) 78% 62% / 0.86);
-  border-bottom: 1px solid hsl(var(--accent-hue, 355) 78% 62% / 0.42);
-  background:
-    linear-gradient(90deg, rgba(4, 4, 5, 0.98), rgba(4, 4, 5, 0.9) 82%, transparent);
-  box-shadow:
-    0 10px 22px rgba(0, 0, 0, 0.34),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.04);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
-.hud-card[data-tab="scan"] .brand-title {
+.hud-card:not(.is-compact) .brand-title {
   color: #f5d9dd;
-  font-size: 19px;
-  letter-spacing: 0.14em;
+  font-size: 22px;
+  letter-spacing: 0.13em;
   line-height: 1;
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.86),
+    0 0 16px hsl(var(--accent-hue, 355) 70% 58% / 0.22);
 }
 
-.hud-card[data-tab="scan"] .zone-pill {
+.hud-card:not(.is-compact) .zone-pill {
   max-width: 132px;
 }
 
-.hud-card[data-tab="scan"] .league-select {
+.hud-card:not(.is-compact) .league-select {
   max-width: 126px;
 }
 
@@ -2915,6 +2920,23 @@ kbd {
   100% {
     text-shadow: 0 0 12px rgba(100, 240, 120, 0.65);
     box-shadow: inset 0 -1px 0 rgba(100, 240, 120, 0.65);
+  }
+}
+
+@keyframes reliquary-frame-pulse {
+  0%,
+  100% {
+    opacity: calc(var(--surface-alpha) * 0.72);
+    filter:
+      drop-shadow(0 0 6px hsl(var(--accent-hue, 355) 70% 58% / 0.14))
+      drop-shadow(0 0 6px rgba(72, 184, 255, 0.06));
+  }
+
+  50% {
+    opacity: calc(var(--surface-alpha) * 0.98);
+    filter:
+      drop-shadow(0 0 12px hsl(var(--accent-hue, 355) 70% 58% / 0.28))
+      drop-shadow(0 0 13px rgba(72, 184, 255, 0.18));
   }
 }
 
