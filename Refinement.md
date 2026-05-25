@@ -213,6 +213,21 @@ References:
 - `SESSION_NOTES.txt`
 - `src-tauri/target/release/reliquary.exe`
 
+### 13. Add a single-instance guard
+
+Reliquary currently does not have a startup-level single-instance lock. Launching the executable twice can create duplicate overlays, duplicate global listeners, and duplicate trade/data refresh work.
+
+Acceptance:
+- Starting Reliquary while another GUI instance is already running should focus/show the existing app instead of launching a second overlay.
+- CLI modes such as `source-truth`, `leagues`, `tiers`, and `debug-log` should still run without being blocked by the GUI lock.
+- The guard should be cross-platform friendly for the Linux port. Prefer Tauri's single-instance plugin if it behaves cleanly with our tray, preview window, and ornament window; otherwise use a small native lock/mutex wrapper behind platform-specific code.
+- Add a smoke test/checklist item before release to verify no duplicate global hotkey listeners are created.
+
+References:
+- `src-tauri/src/main.rs`
+- `src-tauri/src/lib.rs` `run`
+- `src-tauri/Cargo.toml`
+
 ## Current Data Snapshot From Review
 
 Source-truth cache:
@@ -249,3 +264,4 @@ World areas cache on development machine:
 10. Reduce hotkey lock contention.
 11. Align shortcut UI/backend behavior.
 12. Clean release artifacts and rebuild.
+13. Add a single-instance guard.

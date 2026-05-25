@@ -78,6 +78,10 @@ const LISTING_PREVIEW_WINDOW_LABEL: &str = "listing-preview";
 const LISTING_PREVIEW_WIDTH: f64 = 360.0;
 const LISTING_PREVIEW_HEIGHT: f64 = 660.0;
 const LISTING_PREVIEW_GAP: f64 = 12.0;
+const FRAME_ORNAMENT_WINDOW_LABEL: &str = "frame-ornament";
+const FRAME_ORNAMENT_WIDTH: f64 = 460.0;
+const FRAME_ORNAMENT_HEIGHT: f64 = 345.0;
+const FRAME_ORNAMENT_INSET: f64 = 2.0;
 const REPOE_WORLD_AREAS_URL: &str = "https://repoe-fork.github.io/poe2/world_areas.min.json";
 const SNAP_MARGIN: f64 = 8.0;
 const FULL_SNAP_LEFT: f64 = 0.0;
@@ -438,7 +442,11 @@ fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn set_compact_mode(window: tauri::Window, compact: bool) -> Result<(), String> {
+fn set_compact_mode(
+    app_handle: tauri::AppHandle,
+    window: tauri::Window,
+    compact: bool,
+) -> Result<(), String> {
     let size = if compact {
         LogicalSize::new(COMPACT_WINDOW_WIDTH, COMPACT_WINDOW_HEIGHT)
     } else {
@@ -447,11 +455,20 @@ fn set_compact_mode(window: tauri::Window, compact: bool) -> Result<(), String> 
 
     window
         .set_size(Size::Logical(size))
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    sync_frame_ornament_window(
+        &app_handle,
+        &window,
+        if compact { "compact" } else { "default" },
+    )
 }
 
 #[tauri::command]
-fn set_window_layout(window: tauri::Window, layout: String) -> Result<(), String> {
+fn set_window_layout(
+    app_handle: tauri::AppHandle,
+    window: tauri::Window,
+    layout: String,
+) -> Result<(), String> {
     let (width, height) = match layout.as_str() {
         "scan" => (SCAN_WINDOW_WIDTH, SCAN_WINDOW_HEIGHT),
         "trade" => (TRADE_WINDOW_WIDTH, TRADE_WINDOW_HEIGHT),
@@ -471,7 +488,8 @@ fn set_window_layout(window: tauri::Window, layout: String) -> Result<(), String
         .map_err(|error| error.to_string())?;
     window
         .set_position(Position::Logical(position))
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    sync_frame_ornament_window(&app_handle, &window, layout.as_str())
 }
 
 #[tauri::command]
@@ -523,7 +541,11 @@ fn normalize_shortcut_modifier(value: &str, fallback: &str) -> String {
 }
 
 #[tauri::command]
-fn set_scan_window_height(window: tauri::Window, content_height: f64) -> Result<(), String> {
+fn set_scan_window_height(
+    app_handle: tauri::AppHandle,
+    window: tauri::Window,
+    content_height: f64,
+) -> Result<(), String> {
     let monitor = window
         .current_monitor()
         .map_err(|error| error.to_string())?
@@ -552,11 +574,16 @@ fn set_scan_window_height(window: tauri::Window, content_height: f64) -> Result<
         .map_err(|error| error.to_string())?;
     window
         .set_position(Position::Logical(position))
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    sync_frame_ornament_window(&app_handle, &window, "scan")
 }
 
 #[tauri::command]
-fn set_compact_window_height(window: tauri::Window, content_height: f64) -> Result<(), String> {
+fn set_compact_window_height(
+    app_handle: tauri::AppHandle,
+    window: tauri::Window,
+    content_height: f64,
+) -> Result<(), String> {
     let height = content_height.ceil().max(COMPACT_WINDOW_HEIGHT).min(600.0);
     let position = snapped_window_position(&window, "compact", COMPACT_WINDOW_WIDTH, height)?;
     window
@@ -567,7 +594,8 @@ fn set_compact_window_height(window: tauri::Window, content_height: f64) -> Resu
         .map_err(|error| error.to_string())?;
     window
         .set_position(Position::Logical(position))
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    sync_frame_ornament_window(&app_handle, &window, "compact")
 }
 
 fn snapped_window_position(
@@ -609,6 +637,49 @@ fn snapped_window_position(
         x.clamp(monitor_x, monitor_x + monitor_width - width),
         y.clamp(monitor_y, monitor_y + monitor_height - height),
     ))
+}
+
+fn sync_frame_ornament_window(
+    app_handle: &tauri::AppHandle,
+    main_window: &tauri::Window,
+    layout: &str,
+) -> Result<(), String> {
+    let Some(ornament_window) = app_handle.get_webview_window(FRAME_ORNAMENT_WINDOW_LABEL) else {
+        return Ok(());
+    };
+
+    if layout == "compact" {
+        return ornament_window.hide().map_err(|error| error.to_string());
+    }
+
+    let main_position = main_window
+        .outer_position()
+        .map_err(|error| error.to_string())?;
+    let main_size = main_window
+        .outer_size()
+        .map_err(|error| error.to_string())?;
+    let scale_factor = main_window
+        .current_monitor()
+        .map_err(|error| error.to_string())?
+        .or_else(|| main_window.primary_monitor().ok().flatten())
+        .map(|monitor| monitor.scale_factor())
+        .unwrap_or(1.0);
+    let ornament_width = (FRAME_ORNAMENT_WIDTH * scale_factor).round() as i32;
+    let ornament_height = (FRAME_ORNAMENT_HEIGHT * scale_factor).round() as i32;
+    let inset = (FRAME_ORNAMENT_INSET * scale_factor).round() as i32;
+    let x = main_position.x + main_size.width as i32 - ornament_width - inset;
+    let y = main_position.y + main_size.height as i32 - ornament_height - inset;
+
+    ornament_window
+        .set_size(Size::Logical(LogicalSize::new(
+            FRAME_ORNAMENT_WIDTH,
+            FRAME_ORNAMENT_HEIGHT,
+        )))
+        .map_err(|error| error.to_string())?;
+    ornament_window
+        .set_position(Position::Physical(PhysicalPosition::new(x, y)))
+        .map_err(|error| error.to_string())?;
+    ornament_window.show().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1089,6 +1160,7 @@ pub fn run() {
             window.set_always_on_top(true)?;
             window.set_ignore_cursor_events(false)?;
             create_listing_preview_window(app)?;
+            create_frame_ornament_window(app)?;
 
             let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
             let hide = MenuItemBuilder::with_id("hide", "Hide").build(app)?;
@@ -1108,9 +1180,19 @@ pub fn run() {
                     match event.id.as_ref() {
                         "show" => {
                             let _ = window.show();
+                            if let Some(ornament) =
+                                app.get_webview_window(FRAME_ORNAMENT_WINDOW_LABEL)
+                            {
+                                let _ = ornament.show();
+                            }
                         }
                         "hide" => {
                             let _ = window.hide();
+                            if let Some(ornament) =
+                                app.get_webview_window(FRAME_ORNAMENT_WINDOW_LABEL)
+                            {
+                                let _ = ornament.hide();
+                            }
                         }
                         "quit" => {
                             app.exit(0);
@@ -1129,11 +1211,20 @@ pub fn run() {
                             Some(w) => w,
                             None => return,
                         };
-                        let _ = if window.is_visible().unwrap_or(false) {
-                            window.hide()
+                        let ornament = tray
+                            .app_handle()
+                            .get_webview_window(FRAME_ORNAMENT_WINDOW_LABEL);
+                        if window.is_visible().unwrap_or(false) {
+                            let _ = window.hide();
+                            if let Some(ornament) = ornament {
+                                let _ = ornament.hide();
+                            }
                         } else {
-                            window.show()
-                        };
+                            let _ = window.show();
+                            if let Some(ornament) = ornament {
+                                let _ = ornament.show();
+                            }
+                        }
                     }
                 })
                 .build(app)?;
@@ -2363,6 +2454,37 @@ fn create_listing_preview_window<R: tauri::Runtime>(
     .build()?;
 
     preview_window.set_ignore_cursor_events(true)?;
+    Ok(())
+}
+
+fn create_frame_ornament_window<R: tauri::Runtime>(
+    app: &mut tauri::App<R>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if app
+        .get_webview_window(FRAME_ORNAMENT_WINDOW_LABEL)
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    let ornament_window = WebviewWindowBuilder::new(
+        app.handle(),
+        FRAME_ORNAMENT_WINDOW_LABEL,
+        WebviewUrl::App("index.html?preview=ornament".into()),
+    )
+    .title("Reliquary Frame Ornament")
+    .inner_size(FRAME_ORNAMENT_WIDTH, FRAME_ORNAMENT_HEIGHT)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .focusable(false)
+    .shadow(false)
+    .visible(false)
+    .build()?;
+
+    ornament_window.set_ignore_cursor_events(true)?;
     Ok(())
 }
 
