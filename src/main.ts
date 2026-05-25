@@ -255,8 +255,6 @@ type ExchangeTabState = {
 const root = document.querySelector<HTMLDivElement>("#root");
 const previewMode = new URLSearchParams(window.location.search).get("preview");
 const isListingPreviewWindow = previewMode === "listing";
-const isFrameOrnamentWindow = previewMode === "ornament";
-const isAuxiliaryWindow = isListingPreviewWindow || isFrameOrnamentWindow;
 
 if (!root) {
   throw new Error("Lumen-Scan root element was not found.");
@@ -484,12 +482,6 @@ root.innerHTML = isListingPreviewWindow
       <section class="listing-preview-shell" data-preview-panel></section>
     </main>
   `
-  : isFrameOrnamentWindow
-    ? `
-      <main class="ornament-overlay-root" aria-hidden="true">
-        <div class="frame-ornament" data-ornament-panel></div>
-      </main>
-    `
   : `
     <main class="overlay-root">
       <section class="hud-card interactive" data-interactive>
@@ -555,28 +547,22 @@ root.innerHTML = isListingPreviewWindow
     </main>
   `;
 
-const panelElement = root.querySelector<HTMLElement>(
-  isListingPreviewWindow ? "[data-preview-panel]" : isFrameOrnamentWindow ? "[data-ornament-panel]" : "[data-panel]",
-);
-const zoneElement = isAuxiliaryWindow ? null : root.querySelector<HTMLElement>("[data-zone]");
-const leagueElement = isAuxiliaryWindow ? null : root.querySelector<HTMLSelectElement>("[data-league]");
-const hudElement = isAuxiliaryWindow ? null : root.querySelector<HTMLElement>(".hud-card");
-const compactTitleElement = isAuxiliaryWindow ? null : root.querySelector<HTMLElement>("[data-compact-title]");
-const compactMetaElement = isAuxiliaryWindow ? null : root.querySelector<HTMLElement>("[data-compact-meta]");
-const checklistElement = isAuxiliaryWindow ? null : root.querySelector<HTMLElement>("[data-compat-checklist]");
-const tabButtons = isAuxiliaryWindow
+const panelElement = root.querySelector<HTMLElement>(isListingPreviewWindow ? "[data-preview-panel]" : "[data-panel]");
+const zoneElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-zone]");
+const leagueElement = isListingPreviewWindow ? null : root.querySelector<HTMLSelectElement>("[data-league]");
+const hudElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>(".hud-card");
+const compactTitleElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-title]");
+const compactMetaElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-meta]");
+const checklistElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compat-checklist]");
+const tabButtons = isListingPreviewWindow
   ? []
   : Array.from(root.querySelectorAll<HTMLButtonElement>("[data-tab]"));
 
-if (!panelElement || (!isAuxiliaryWindow && (!zoneElement || !leagueElement || !hudElement || !compactTitleElement || !compactMetaElement))) {
+if (!panelElement || (!isListingPreviewWindow && (!zoneElement || !leagueElement || !hudElement || !compactTitleElement || !compactMetaElement))) {
   throw new Error("Reliquary UI shell failed to initialize.");
 }
 
 function render() {
-  if (isFrameOrnamentWindow) {
-    return;
-  }
-
   if (isListingPreviewWindow) {
     panelElement!.innerHTML = renderListingPreviewWindow(hoveredListingPreview);
     return;

@@ -134,7 +134,22 @@ select {
 }
 
 .hud-card:not(.is-compact)::after {
-  display: none;
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  z-index: 0;
+  width: min(460px, calc(100% - 14px));
+  height: min(365px, calc(100% - 14px));
+  pointer-events: none;
+  content: "";
+  opacity: calc(var(--surface-alpha) * 0.96);
+  background-image:
+    url("/frame/cornerpiececrop.png"),
+    radial-gradient(circle at 90% 88%, hsl(var(--accent-hue, 355) 78% 58% / 0.2), transparent 34%);
+  background-position: right bottom, right bottom;
+  background-repeat: no-repeat;
+  background-size: contain, 36% 34%;
+  animation: reliquary-frame-pulse 4.8s ease-in-out infinite;
 }
 
 .hud-card:not(.is-compact) .hud-header {
@@ -231,6 +246,7 @@ select {
 .tab-row,
 .panel {
   position: relative;
+  z-index: 1;
 }
 
 .hud-header {
@@ -1934,31 +1950,6 @@ kbd {
 .hud-card[data-tab="scan"] .empty-state p:not(.section-label),
 .panel[data-tab="scan"] .empty-state p:not(.section-label) {
   max-width: min(430px, 100%);
-}
-
-.ornament-overlay-root {
-  position: relative;
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-  background: transparent;
-  pointer-events: none;
-  user-select: none;
-}
-
-.frame-ornament {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  background-image: url("/frame/poe2-gold-blue-corner.png");
-  background-position: right bottom;
-  background-repeat: no-repeat;
-  background-size: contain;
-  opacity: calc(var(--surface-alpha) * 0.94);
-  filter: drop-shadow(0 0 9px rgba(72, 184, 255, 0.12));
-  animation: reliquary-frame-pulse 4.8s ease-in-out infinite;
 }
 
 .hud-card[data-tab="trade"] .panel,
