@@ -717,7 +717,7 @@ describe("soft listing ranking", () => {
     );
   });
 
-  it("does not hide rows for hard-classified explicit specs that were not applied by the backend", () => {
+  it("hides rows with no selected explicit modifier overlap", () => {
     const check = priceCheck({
       applied_filters: [],
       listings: [
@@ -735,8 +735,36 @@ describe("soft listing ranking", () => {
 
     const ranked = filteredListingRanks(check, baseItem, selected, poe2dbSnapshot);
 
+    expect(ranked).toHaveLength(0);
+  });
+
+  it("keeps partial rows when at least one selected explicit modifier overlaps", () => {
+    const check = priceCheck({
+      applied_filters: [],
+      listings: [
+        listing({
+          explicit_mods: [
+            "158% increased Physical Damage",
+            "1 to 3 Physical Thorns Damage",
+          ],
+        }),
+      ],
+    });
+    const specs = itemSpecs(baseItem, undefined, poe2dbSnapshot);
+    const selected = new Set(
+      specs
+        .filter((s) =>
+          s.label.includes("158% increased Physical Damage")
+          || s.label.includes("Level of all Attack")
+          || s.label.includes("Gain 28% of Damage as Extra Physical Damage")
+        )
+        .map((s) => s.key),
+    );
+
+    const ranked = filteredListingRanks(check, baseItem, selected, poe2dbSnapshot);
+
     expect(ranked).toHaveLength(1);
-    expect(ranked[0].score).toBe(0);
+    expect(ranked[0].score).toBe(1);
     expect(ranked[0].penalties).toEqual(
       expect.arrayContaining([expect.stringContaining("score filter missed")]),
     );

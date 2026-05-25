@@ -443,6 +443,7 @@ export function rankListings(
   const specs = item ? itemSpecs(item, itemProfile(item), sourceTruth) : [];
   const selectedSpecs = specs.filter((spec) => selectedSpecKeys.has(spec.key));
   const appliedSpecs = item ? appliedSpecKeySet(item, priceCheck, sourceTruth) : new Set<string>();
+  const selectedExplicitCount = selectedSpecs.filter((spec) => spec.kind === "explicit").length;
   const maxScore = selectedSpecs.length;
   if (!maxScore) {
     return priceCheck.listings.map((listing) => ({
@@ -464,6 +465,7 @@ export function rankListings(
 
     const penalties: string[] = [];
     let hits = 0;
+    let explicitHits = 0;
 
     for (const spec of selectedSpecs) {
       const classification = classifySelectedSpecForSearch(spec);
@@ -481,7 +483,15 @@ export function rankListings(
         }
       } else {
         hits++;
+        if (spec.kind === "explicit") {
+          explicitHits++;
+        }
       }
+    }
+
+    if (selectedExplicitCount > 0 && explicitHits === 0) {
+      penalties.push("no selected modifiers matched");
+      return { listing, score: -1, maxScore, penalties };
     }
 
     const hardFailCount = penalties.filter((p) => p.startsWith("hard filter")).length;
