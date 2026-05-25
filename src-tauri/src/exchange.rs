@@ -249,7 +249,8 @@ struct PoeNinjaSparkline {
 pub fn is_exchange_item(item: &Item) -> bool {
     match item.family.as_str() {
         "currency" => true,
-        "charm" => false,
+        "accessory" | "armour" | "belt" | "charm" | "flask" | "jewel" | "offhand"
+        | "relic" | "tablet" | "waystone" | "weapon" => false,
         _ => {
             let haystacks = [
                 item.item_class.as_deref().unwrap_or(""),
@@ -893,6 +894,15 @@ mod tests {
             Some("Charms"),
         );
         assert!(!is_exchange_item(&charm));
+    }
+
+    #[test]
+    fn keeps_gear_with_exchange_words_in_scan_price_check() {
+        let amulet = item("Rune Pendant", "accessory", Some("Amulets"));
+        let talisman = item("Soul Core Talisman", "weapon", Some("Talismans"));
+
+        assert!(!is_exchange_item(&amulet));
+        assert!(!is_exchange_item(&talisman));
     }
 
     #[test]

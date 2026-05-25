@@ -2591,6 +2591,15 @@ function currentPriceRequestSignature(filters: ReturnType<typeof activePriceFilt
   ].join("||");
 }
 
+function hardPriceFiltersForCurrentSelection() {
+  return hardPriceFiltersForSelection(
+    state.scanned_item,
+    selectedSpecKeys,
+    selectedPriceProfile,
+    state.source_truth_snapshot,
+  );
+}
+
 function recentlyRequestedPriceCheck(signature: string) {
   const now = Date.now();
   for (const [cachedSignature, timestamp] of recentPriceRequestSignatures) {
@@ -2609,7 +2618,7 @@ function recentlyRequestedPriceCheck(signature: string) {
 }
 
 function currentRequestedFilterSignature() {
-  return activeFilterSignature(activePriceFiltersForCurrentSelection());
+  return activeFilterSignature(hardPriceFiltersForCurrentSelection());
 }
 
 function isSpecApplied(
@@ -2720,16 +2729,10 @@ async function pushActivePriceFilters() {
     return;
   }
 
-  const hardFilters = hardPriceFiltersForSelection(
-    state.scanned_item,
-    selectedSpecKeys,
-    selectedPriceProfile,
-    state.source_truth_snapshot,
-  );
-
+  const hardFilters = hardPriceFiltersForCurrentSelection();
   const allFilters = activePriceFiltersForCurrentSelection();
-  latestRequestedFilterSignature = activeFilterSignature(allFilters);
-  const requestSignature = currentPriceRequestSignature(allFilters);
+  latestRequestedFilterSignature = activeFilterSignature(hardFilters);
+  const requestSignature = currentPriceRequestSignature(hardFilters);
   if (recentlyRequestedPriceCheck(requestSignature)) {
     if (state.price_check) {
       state.price_check.status = allFilters.length
@@ -3132,8 +3135,29 @@ function isExchangeClipboardItem(item: ScannedItem | null) {
     return false;
   }
 
+  if (item.family === "currency") {
+    return true;
+  }
+
+  if (
+    [
+      "accessory",
+      "armour",
+      "belt",
+      "charm",
+      "flask",
+      "jewel",
+      "offhand",
+      "relic",
+      "tablet",
+      "waystone",
+      "weapon",
+    ].includes(item.family)
+  ) {
+    return false;
+  }
+
   const haystack = [
-    item.family,
     item.item_class ?? "",
     item.base_type ?? "",
     item.name,
@@ -3142,7 +3166,6 @@ function isExchangeClipboardItem(item: ScannedItem | null) {
     .toLowerCase();
 
   return [
-    "currency",
     "essence",
     "omen",
     "rune",
@@ -3409,6 +3432,7 @@ if (!isListingPreviewWindow && leagueElement) {
 
     if (specButton?.dataset.specKey) {
       const specKey = specButton.dataset.specKey;
+      activeTab = "scan";
       if (selectedSpecKeys.has(specKey)) {
         selectedSpecKeys.delete(specKey);
       } else {

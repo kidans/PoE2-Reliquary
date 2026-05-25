@@ -253,14 +253,28 @@ describe("evaluate listing matching", () => {
     expect(visible[0].explicit_mods).toContain("+5 to Level of all Attack Skills");
   });
 
-  it("still removes rows that fail hard selected specs", () => {
+  it("still removes rows that fail backend-applied structural hard specs", () => {
     const specs = itemSpecs(baseItem);
+    const itemLevelSpec = specs.find((spec) => spec.kind === "item_level");
     const selected = new Set([
-      specs.find((spec) => spec.kind === "item_level")?.key,
+      itemLevelSpec?.key,
       specs.find((spec) => spec.label === "+5 to Level of all Attack Skills")?.key,
     ].filter((key): key is string => Boolean(key)));
 
-    const visible = filteredListings(priceCheck(), baseItem, selected);
+    const visible = filteredListings(
+      priceCheck({
+        applied_filters: itemLevelSpec
+          ? [{
+              kind: itemLevelSpec.kind,
+              label: itemLevelSpec.label,
+              value: itemLevelSpec.value,
+              template: itemLevelSpec.template,
+            }]
+          : [],
+      }),
+      baseItem,
+      selected,
+    );
 
     expect(visible).toHaveLength(1);
     expect(visible[0].item_level).toBe(81);
@@ -566,6 +580,23 @@ describe("hard filter routing", () => {
       || (f.kind === "explicit" && f.tier !== null)
     ))).toBe(true);
   });
+
+  it("caps explicit API filters so selected mods do not create brittle exact-match queries", () => {
+    const specs = itemSpecs(baseItem, undefined, poe2dbSnapshot);
+    const selected = new Set(
+      specs
+        .filter((s) =>
+          s.label.includes("Adds 30 to 40 Physical Damage")
+          || s.label.includes("158% increased Physical Damage")
+          || s.label.includes("Level of all Attack")
+        )
+        .map((s) => s.key),
+    );
+
+    const hardFilters = hardPriceFiltersForSelection(baseItem, selected, "quick", poe2dbSnapshot);
+
+    expect(hardFilters.filter((filter) => filter.kind === "explicit")).toHaveLength(1);
+  });
 });
 
 describe("soft listing ranking", () => {
@@ -576,7 +607,18 @@ describe("soft listing ranking", () => {
       specs.find((s) => s.label === "+5 to Level of all Attack Skills")?.key,
     ].filter((key): key is string => Boolean(key)));
 
-    const check = priceCheck({ selected_price_option: "exalted_divine" });
+    const itemLevelSpec = specs.find((s) => s.kind === "item_level");
+    const check = priceCheck({
+      selected_price_option: "exalted_divine",
+      applied_filters: itemLevelSpec
+        ? [{
+            kind: itemLevelSpec.kind,
+            label: itemLevelSpec.label,
+            value: itemLevelSpec.value,
+            template: itemLevelSpec.template,
+          }]
+        : [],
+    });
     const rankings = rankListings(check, baseItem, selected);
 
     const passing = rankings.filter((r) => r.score >= 0);
@@ -670,6 +712,31 @@ describe("soft listing ranking", () => {
 
     expect(ranked).toHaveLength(1);
     expect(ranked[0].score).toBeLessThan(ranked[0].maxScore);
+    expect(ranked[0].penalties).toEqual(
+      expect.arrayContaining([expect.stringContaining("score filter missed")]),
+    );
+  });
+
+  it("does not hide rows for hard-classified explicit specs that were not applied by the backend", () => {
+    const check = priceCheck({
+      applied_filters: [],
+      listings: [
+        listing({
+          explicit_mods: ["+5 to Level of all Attack Skills"],
+        }),
+      ],
+    });
+    const specs = itemSpecs(baseItem, undefined, poe2dbSnapshot);
+    const selected = new Set(
+      specs
+        .filter((s) => s.label.includes("Adds 30 to 40 Physical Damage"))
+        .map((s) => s.key),
+    );
+
+    const ranked = filteredListingRanks(check, baseItem, selected, poe2dbSnapshot);
+
+    expect(ranked).toHaveLength(1);
+    expect(ranked[0].score).toBe(0);
     expect(ranked[0].penalties).toEqual(
       expect.arrayContaining([expect.stringContaining("score filter missed")]),
     );

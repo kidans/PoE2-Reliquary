@@ -411,14 +411,27 @@ export function hardPriceFiltersForSelection(
   selectedPriceProfile: PriceProfileId,
   sourceTruth: Poe2DbDataSnapshot | null = null,
 ): ActivePriceFilter[] {
-  return activePriceFiltersForSelection(item, selectedSpecKeys, selectedPriceProfile, sourceTruth)
-    .filter((filter, index, all) => {
-      const spec = itemSpecs(item!, itemProfile(item!), sourceTruth)
-        .filter((s) => selectedSpecKeys.has(s.key))
-        [index];
-      if (!spec) return false;
-      return classifySelectedSpecForSearch(spec).classification === "hard";
-    });
+  if (!item) {
+    return [];
+  }
+
+  const selectedSpecs = itemSpecs(item, itemProfile(item), sourceTruth)
+    .filter((spec) => selectedSpecKeys.has(spec.key));
+  const filters = selectedSpecs.map((spec) => activeFilterForSpec(spec, selectedPriceProfile, sourceTruth));
+  const hardEntries = selectedSpecs
+    .map((spec, index) => ({ spec, filter: filters[index] }))
+    .filter(({ spec }) => classifySelectedSpecForSearch(spec).classification === "hard");
+
+  const structuralFilters = hardEntries
+    .filter(({ spec }) => spec.kind !== "explicit")
+    .map(({ filter }) => filter);
+  const explicitFilters = hardEntries
+    .filter(({ spec }) => spec.kind === "explicit")
+    .sort((left, right) => priceImpactScore(right.spec) - priceImpactScore(left.spec))
+    .slice(0, 1)
+    .map(({ filter }) => filter);
+
+  return [...structuralFilters, ...explicitFilters];
 }
 
 export function rankListings(
@@ -429,6 +442,7 @@ export function rankListings(
 ): ListingRank[] {
   const specs = item ? itemSpecs(item, itemProfile(item), sourceTruth) : [];
   const selectedSpecs = specs.filter((spec) => selectedSpecKeys.has(spec.key));
+  const appliedSpecs = item ? appliedSpecKeySet(item, priceCheck, sourceTruth) : new Set<string>();
   const maxScore = selectedSpecs.length;
   if (!maxScore) {
     return priceCheck.listings.map((listing) => ({
@@ -454,7 +468,13 @@ export function rankListings(
     for (const spec of selectedSpecs) {
       const classification = classifySelectedSpecForSearch(spec);
       if (!listingMatchesSpec(listing, spec)) {
-        if (classification.classification === "hard") {
+        const wasBackendApplied = appliedSpecs.has(spec.key);
+        const shouldRejectLocally =
+          classification.classification === "hard" &&
+          wasBackendApplied &&
+          spec.kind !== "explicit";
+
+        if (shouldRejectLocally) {
           penalties.push(`hard filter failed: ${spec.kind} "${spec.label}"`);
         } else {
           penalties.push(`score filter missed: ${spec.kind} "${spec.label}"`);
