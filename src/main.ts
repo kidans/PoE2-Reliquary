@@ -1332,17 +1332,17 @@ function modifierChipMetas(specs: ItemSpec[], rarity: string): ModifierChipMeta[
 
   return specs.map((spec) => {
     const affix = spec.tier_match?.affix ?? null;
-    const sourceKind = spec.tier_match?.source_kind ?? null;
+    const sourceKind = spec.tier_match?.source_kind ?? spec.source_kind_hint ?? null;
     const isUnique = rarity.toLowerCase() === "unique";
     const tierConfidence = spec.tier_match?.confidence ?? "unknown";
     const tierLabel = spec.tier_match
-      ? `${spec.tier_match.tier}${tierConfidence === "template" ? "?" : ""}`
+      ? tierLabelForMatch(spec.tier_match.tier, sourceKind, tierConfidence)
       : sourceKindLabel(sourceKind);
     const tierTitle = spec.tier_match
-      ? `${spec.tier_match.tier} ${spec.tier_match.tier_name} (${sourceKindLabel(sourceKind)}) - ${
+      ? `${spec.tier_match.tier || sourceKindLabel(sourceKind)} ${spec.tier_match.tier_name} (${sourceKindLabel(sourceKind)}) - ${
           tierConfidence === "validated" ? "validated roll band" : "template-only tier hint"
         }`
-      : "Tier unknown until PoE2DB data matches this modifier";
+      : sourceKind ? `${sourceKindLabel(sourceKind)} source category inferred; exact tier unknown` : "Tier unknown until source data matches this modifier";
 
     if (isUnique) {
       return { tierLabel, tierTitle, affixLabel: "U", affixTone: "unique", tierConfidence };
@@ -1388,12 +1388,23 @@ function sourceKindLabel(sourceKind: string | null) {
       return "EN";
     case "normal":
     case "table":
-      return "T?";
+      return "?";
     case "repoe":
-      return "R?";
+      return "?";
     default:
-      return sourceKind ? sourceKind.slice(0, 2).toUpperCase() : "T?";
+      return sourceKind ? sourceKind.slice(0, 2).toUpperCase() : "?";
   }
+}
+
+function tierLabelForMatch(
+  tier: string | null | undefined,
+  sourceKind: string | null,
+  confidence: "validated" | "template" | "unknown",
+) {
+  if (tier && tier.trim()) {
+    return `${tier}${confidence === "template" ? "?" : ""}`;
+  }
+  return sourceKindLabel(sourceKind);
 }
 
 function renderSpecButton(spec: ItemSpec, className: string, meta?: ModifierChipMeta) {
@@ -1442,12 +1453,12 @@ function splitModifierSpecs(specs: ItemSpec[]): ModifierGroups {
       return;
     }
 
-    if (normalized.includes("(rune)")) {
+    if (normalized.includes("(rune)") || spec.source_kind_hint === "rune" || spec.tier_match?.source_kind === "rune") {
       groups.rune.push(spec);
       return;
     }
 
-    if (normalized.includes("(implicit)")) {
+    if (normalized.includes("(implicit)") || spec.source_kind_hint === "implicit" || spec.tier_match?.source_kind === "implicit") {
       groups.implicit.push(spec);
       return;
     }
@@ -1456,7 +1467,8 @@ function splitModifierSpecs(specs: ItemSpec[]): ModifierGroups {
       normalized.includes("(desec") ||
       normalized.includes("(corrupt") ||
       normalized.includes("(enchant") ||
-      normalized.includes("(fractured)")
+      normalized.includes("(fractured)") ||
+      ["desecrated", "corrupted", "enchant", "fractured"].includes(spec.source_kind_hint ?? spec.tier_match?.source_kind ?? "")
     ) {
       groups.special.push(spec);
       return;
@@ -1646,6 +1658,29 @@ function normalizeDisplayLabel(label: string) {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+function apiTradeSourceUrl(sourceUrl: string | null | undefined) {
+  if (!sourceUrl || sourceUrl.includes("?q=")) {
+    return null;
+  }
+  return sourceUrl.includes("/trade2/search/poe2/") ? sourceUrl : null;
+}
+
+function currentTradeSourceUrl(priceCheck: PriceCheck, item: ScannedItem) {
+  const sourceUrl = apiTradeSourceUrl(priceCheck.source_url);
+  if (!sourceUrl) {
+    return null;
+  }
+
+  const expected = activeFilterSignature(hardPriceFiltersForSelection(
+    item,
+    selectedSpecKeys,
+    selectedPriceProfile,
+    state.source_truth_snapshot,
+  ));
+  const requested = activeFilterSignature(priceCheck.requested_filters ?? []);
+  return expected === requested ? sourceUrl : null;
+}
+
 function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedItem) {
   if (!priceCheck) {
     return `
@@ -1666,6 +1701,7 @@ function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedIt
   const visibleListings = visibleListingRanks.map((entry) => entry.listing);
   const estimate = estimatePriceFromListings(priceCheck, visibleListings);
   const selectedCurrency = currencyById(priceCheck, priceCheck.selected_currency);
+  const sourceUrl = currentTradeSourceUrl(priceCheck, item);
   const filters = priceCheck.filters.length
     ? priceCheck.filters
         .map((filter) => renderPriceFilter(filter))
@@ -1704,10 +1740,10 @@ function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedIt
 
         <div class="result-source-row">
           <span>${visibleListings.length}/${priceCheck.matched}</span>
-          <button class="source-link" data-source-url="${escapeAttribute(priceCheck.source_url ?? "")}" type="button" ${priceCheck.source_url ? "" : "disabled"}>
+          <button class="source-link" data-source-url="${escapeAttribute(sourceUrl ?? "")}" type="button" ${sourceUrl ? "" : "disabled"}>
             Results from pathofexile.com/trade
           </button>
-          <button class="refresh-mark" data-open-trade type="button" title="Open latest search" aria-label="Open latest search">
+          <button class="refresh-mark" data-source-url="${escapeAttribute(sourceUrl ?? "")}" type="button" ${sourceUrl ? "" : "disabled"} title="Open latest filtered search" aria-label="Open latest filtered search">
             <svg class="redirect-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M8 7H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-2" />
               <path d="M13 4h7v7" />
@@ -1824,6 +1860,7 @@ function renderPriceCheck(priceCheck: PriceCheck | null, item?: ScannedItem) {
   }
 
   const estimate = estimatePrice(priceCheck);
+  const sourceUrl = item ? currentTradeSourceUrl(priceCheck, item) : apiTradeSourceUrl(priceCheck.source_url);
   const filters = priceCheck.filters.length
     ? priceCheck.filters
         .slice(0, 8)
@@ -1854,10 +1891,10 @@ function renderPriceCheck(priceCheck: PriceCheck | null, item?: ScannedItem) {
 
       <div class="result-source-row">
         <span>${priceCheck.listings.length}/${priceCheck.matched}</span>
-        <button class="source-link" data-source-url="${escapeAttribute(priceCheck.source_url ?? "")}" type="button" ${priceCheck.source_url ? "" : "disabled"}>
+        <button class="source-link" data-source-url="${escapeAttribute(sourceUrl ?? "")}" type="button" ${sourceUrl ? "" : "disabled"}>
           Results from pathofexile.com/trade
         </button>
-        <button class="refresh-mark" data-open-trade type="button" title="Open latest search">↻</button>
+        <button class="refresh-mark" data-source-url="${escapeAttribute(sourceUrl ?? "")}" type="button" ${sourceUrl ? "" : "disabled"} title="Open latest filtered search">↻</button>
       </div>
 
         <div class="trade-control-row">

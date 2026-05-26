@@ -215,7 +215,7 @@ describe("evaluate filter signatures", () => {
           value: 20.1234,
         },
       ]),
-    ).toBe("explicit|maximum life|+73 to Maximum Life|73.000|||;quality|quality|Quality: 20%|20.123|||");
+    ).toBe("explicit|maximum life|+73 to Maximum Life|73.000||||;quality|quality|Quality: 20%|20.123||||");
   });
 
   it("relaxes broad numeric filters without relaxing item level", () => {
@@ -642,20 +642,20 @@ describe("hard/score filter classification", () => {
     expect(classifySelectedSpecForSearch(requiredLevel!).reason).toContain("varies");
   });
 
-  it("classifies implicits, runes, and desecrated mods without tier match as score", () => {
+  it("classifies official category hints without tier match as exact hard filters", () => {
     const specs = itemSpecs(baseItem);
     const implicit = specs.find((s) => s.label.includes("(Implicit)"));
     const rune = specs.find((s) => s.label.includes("(Rune)"));
     const desecrated = specs.find((s) => s.label.includes("(Desecrated)"));
 
     expect(implicit).toBeDefined();
-    expect(classifySelectedSpecForSearch(implicit!).classification).toBe("score");
+    expect(classifySelectedSpecForSearch(implicit!).classification).toBe("hard");
 
     expect(rune).toBeDefined();
-    expect(classifySelectedSpecForSearch(rune!).classification).toBe("score");
+    expect(classifySelectedSpecForSearch(rune!).classification).toBe("hard");
 
     expect(desecrated).toBeDefined();
-    expect(classifySelectedSpecForSearch(desecrated!).classification).toBe("score");
+    expect(classifySelectedSpecForSearch(desecrated!).classification).toBe("hard");
   });
 
   it("classifies special modifiers with known source bands as hard", () => {
@@ -729,7 +729,7 @@ describe("hard filter routing", () => {
       f.kind === "item_level"
       || f.kind === "quality"
       || f.kind === "sockets"
-      || (f.kind === "explicit" && f.tier !== null)
+      || (f.kind === "explicit" && (f.tier !== null || f.source_kind != null))
     ))).toBe(true);
   });
 
@@ -748,6 +748,27 @@ describe("hard filter routing", () => {
     const hardFilters = hardPriceFiltersForSelection(baseItem, selected, "quick", poe2dbSnapshot);
 
     expect(hardFilters.filter((filter) => filter.kind === "explicit")).toHaveLength(3);
+  });
+
+  it("keeps base implicit category hints in hard filters when tier data is missing", () => {
+    const item: ScannedItem = {
+      ...baseItem,
+      explicit_mods: ["+8 to Maximum Rage"],
+    };
+    const spec = itemSpecs(item, undefined, poe2dbSnapshot).find((candidate) =>
+      candidate.label.includes("Maximum Rage"),
+    );
+
+    expect(spec?.source_kind_hint).toBe("implicit");
+    expect(classifySelectedSpecForSearch(spec!).classification).toBe("hard");
+
+    const hardFilters = hardPriceFiltersForSelection(item, new Set([spec!.key]), "quick", poe2dbSnapshot);
+    expect(hardFilters).toEqual([
+      expect.objectContaining({
+        template: "# to maximum rage",
+        source_kind: "implicit",
+      }),
+    ]);
   });
 });
 

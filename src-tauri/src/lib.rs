@@ -342,6 +342,8 @@ pub struct ActivePriceFilter {
     pub affix: Option<String>,
     #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
+    pub source_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -966,13 +968,25 @@ async fn load_more_price_check_results(
 
 #[tauri::command]
 async fn open_last_trade_search(state: tauri::State<'_, SharedAppState>) -> Result<(), String> {
-    let (scanned_item, league) = {
+    let (filtered_source_url, scanned_item, league) = {
         let locked_state = state.lock().await;
         (
+            locked_state
+                .price_check
+                .as_ref()
+                .and_then(|price_check| price_check.source_url.clone()),
             locked_state.scanned_item.clone(),
             locked_state.trade_league.clone(),
         )
     };
+
+    if let Some(url) = filtered_source_url
+        .filter(|url| url.contains("/trade2/search/poe2/") && !url.contains("?q="))
+    {
+        return webbrowser::open(&url)
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+    }
 
     match scanned_item {
         Some(item) => trade_search::open_marketplace_handoff(&item, Some(&league)),

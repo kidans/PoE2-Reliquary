@@ -50,6 +50,7 @@ export type ItemSpec = {
   value: number | null;
   template: string;
   tier_match?: TierMatch | null;
+  source_kind_hint?: string | null;
 };
 
 export type ActivePriceFilter = {
@@ -63,6 +64,7 @@ export type ActivePriceFilter = {
   tier_name?: string | null;
   affix?: AffixKind | null;
   source?: string | null;
+  source_kind?: string | null;
 };
 
 export type FilterClass = "hard" | "score";
@@ -319,6 +321,7 @@ export function itemSpecs(
       value: firstNumber(label),
       template: specTemplate(label),
       tier_match: pendingTier ?? tierMatch,
+      source_kind_hint: sourceKindHintForSpec(label, item),
     });
     specIndex += 1;
     pendingTier = null;
@@ -369,7 +372,7 @@ export function activePriceFiltersForSelection(
 
   return itemSpecs(item, itemProfile(item), sourceTruth)
     .filter((spec) => selectedSpecKeys.has(spec.key))
-    .map((spec) => activeFilterForSpec(spec, selectedPriceProfile, sourceTruth));
+    .map((spec) => activeFilterForSpec(spec, selectedPriceProfile, sourceTruth, item));
 }
 
 export function classifySelectedSpecForSearch(spec: ItemSpec): { classification: FilterClass; reason: string } {
@@ -391,6 +394,9 @@ export function classifySelectedSpecForSearch(spec: ItemSpec): { classification:
     }
     if (spec.tier_match) {
       return { classification: "score", reason: "tier matched but lacks numeric band for hard filtering" };
+    }
+    if (spec.source_kind_hint && spec.value !== null) {
+      return { classification: "hard", reason: `official ${spec.source_kind_hint} stat hint` };
     }
     const label = spec.label.toLowerCase();
     if (label.includes("(implicit)") || label.includes("(rune)") || label.includes("(desecrated)")) {
@@ -417,7 +423,7 @@ export function hardPriceFiltersForSelection(
 
   const selectedSpecs = itemSpecs(item, itemProfile(item), sourceTruth)
     .filter((spec) => selectedSpecKeys.has(spec.key));
-  const filters = selectedSpecs.map((spec) => activeFilterForSpec(spec, selectedPriceProfile, sourceTruth));
+  const filters = selectedSpecs.map((spec) => activeFilterForSpec(spec, selectedPriceProfile, sourceTruth, item));
   const hardEntries = selectedSpecs
     .map((spec, index) => ({ spec, filter: filters[index] }))
     .filter(({ spec }) => classifySelectedSpecForSearch(spec).classification === "hard");
@@ -513,6 +519,7 @@ export function activeFilterSignature(filters: ActivePriceFilter[]) {
         filter.min === null || filter.min === undefined ? "" : Number(filter.min).toFixed(3),
         filter.max === null || filter.max === undefined ? "" : Number(filter.max).toFixed(3),
         filter.tier ?? "",
+        filter.source_kind ?? "",
       ].join("|"),
     )
     .sort()
@@ -961,8 +968,10 @@ function activeFilterForSpec(
   spec: ItemSpec,
   selectedPriceProfile: PriceProfileId,
   sourceTruth: Poe2DbDataSnapshot | null,
+  item?: ScannedItem | null,
 ): ActivePriceFilter {
   const tierBand = tierBandForProfile(spec, selectedPriceProfile, sourceTruth);
+  const sourceKind = tierBand?.source_kind ?? spec.tier_match?.source_kind ?? spec.source_kind_hint ?? sourceKindHintForSpec(spec.label, item);
   return {
     kind: spec.kind,
     label: spec.label,
@@ -974,7 +983,29 @@ function activeFilterForSpec(
     tier_name: tierBand?.tier_name ?? spec.tier_match?.tier_name ?? null,
     affix: spec.tier_match?.affix ?? null,
     source: spec.tier_match?.source ?? null,
+    source_kind: sourceKind ?? null,
   };
+}
+
+function sourceKindHintForSpec(
+  label: string,
+  item?: Pick<ScannedItem, "item_class" | "base_type"> | null,
+): string | null {
+  const normalized = cleanTradeMarkup(label).toLowerCase();
+  if (normalized.includes("(rune)")) return "rune";
+  if (normalized.includes("(implicit)")) return "implicit";
+  if (normalized.includes("(desecrated)")) return "desecrated";
+  if (normalized.includes("(fractured)")) return "fractured";
+  if (normalized.includes("(enchant)")) return "enchant";
+  if (normalized.includes("(corrupted)")) return "corrupted";
+
+  const itemClass = item?.item_class?.toLowerCase() ?? "";
+  const baseType = item?.base_type?.toLowerCase() ?? "";
+  if ((itemClass.includes("talisman") || baseType.includes("talisman")) && specTemplate(label) === "# to maximum rage") {
+    return "implicit";
+  }
+
+  return null;
 }
 
 function tierBandForProfile(

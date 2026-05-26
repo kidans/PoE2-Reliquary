@@ -1162,7 +1162,7 @@ fn matching_trade_stat<'a>(
     filter: &ActivePriceFilter,
     stats: &'a [TradeStatEntry],
 ) -> Option<&'a TradeStatEntry> {
-    for prefix in preferred_stat_prefixes(&filter.label) {
+    for prefix in preferred_stat_prefixes(filter) {
         if let Some(stat) = stats.iter().find(|stat| {
             templates_compatible(&stat.template, &filter.template) && stat.id.starts_with(prefix)
         }) {
@@ -1173,8 +1173,18 @@ fn matching_trade_stat<'a>(
     None
 }
 
-fn preferred_stat_prefixes(label: &str) -> &'static [&'static str] {
-    let label = label.to_ascii_lowercase();
+fn preferred_stat_prefixes(filter: &ActivePriceFilter) -> &'static [&'static str] {
+    match filter.source_kind.as_deref() {
+        Some("rune") | Some("socketable") => return &["rune.", "explicit.", "pseudo."],
+        Some("implicit") => return &["implicit.", "rune.", "pseudo.", "explicit."],
+        Some("desecrated") => return &["desecrated.", "explicit.", "pseudo."],
+        Some("fractured") => return &["fractured.", "explicit.", "pseudo."],
+        Some("enchant") => return &["enchant.", "explicit.", "pseudo."],
+        Some("corrupted") => return &["corrupted.", "explicit.", "pseudo."],
+        _ => {}
+    }
+
+    let label = filter.label.to_ascii_lowercase();
 
     if label.contains("(rune)") {
         return &["rune.", "explicit.", "pseudo."];
@@ -2627,6 +2637,58 @@ mod tests {
         let stat = matching_trade_stat(&filter, &stats).expect("matching stat");
 
         assert_eq!(stat.id, "explicit.stat_1881230714");
+    }
+
+    #[test]
+    fn source_kind_hint_routes_base_implicit_stats_to_official_implicit_category() {
+        let filter = crate::ActivePriceFilter {
+            kind: "explicit".to_string(),
+            label: "+8 to Maximum Rage".to_string(),
+            value: Some(8.0),
+            min: Some(8.0),
+            max: Some(12.0),
+            template: spec_template("+8 to Maximum Rage"),
+            source_kind: Some("implicit".to_string()),
+            ..Default::default()
+        };
+        let stats = vec![
+            TradeStatEntry {
+                id: "explicit.stat_1181501418".to_string(),
+                template: spec_template("# to Maximum Rage"),
+            },
+            TradeStatEntry {
+                id: "implicit.stat_1181501418".to_string(),
+                template: spec_template("# to Maximum Rage"),
+            },
+        ];
+
+        let stat = matching_trade_stat(&filter, &stats).expect("matching stat");
+        let request = build_trade_request(
+            &Item {
+                name: "Maji Talisman".to_string(),
+                rarity: "Rare".to_string(),
+                family: "accessory".to_string(),
+                item_class: Some("Talismans".to_string()),
+                base_type: Some("Maji Talisman".to_string()),
+                item_level: Some(81),
+                property_lines: Vec::new(),
+                explicit_mods: vec!["+8 to Maximum Rage".to_string()],
+                sockets: None,
+                spirit: None,
+                hazards: Vec::new(),
+                trade_url: None,
+                raw_text: String::new(),
+            },
+            "equivalent",
+            &[filter],
+            &stats,
+        );
+
+        assert_eq!(stat.id, "implicit.stat_1181501418");
+        assert_eq!(
+            request["query"]["stats"][0]["filters"][0]["id"],
+            "implicit.stat_1181501418"
+        );
     }
 
     #[test]
