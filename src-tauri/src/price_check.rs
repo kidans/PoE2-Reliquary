@@ -33,6 +33,10 @@ const EXCHANGE_RATES_CACHE_TTL: Duration = Duration::from_secs(60);
 
 static NUMBER_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?P<number>-?\d+(?:\.\d+)?)").expect("valid number regex"));
+static INLINE_ROLL_RANGE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(-?\d+(?:\.\d+)?)(?:\s*\(\s*-?\d+(?:\.\d+)?\s*-\s*-?\d+(?:\.\d+)?\s*\))")
+        .expect("valid inline roll range regex")
+});
 static TIER_HINT_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\(tier:\s*(?P<tier>\d+)\)").expect("valid tier regex"));
 static POE2DB_CURRENCY_RE: Lazy<Regex> = Lazy::new(|| {
@@ -1852,9 +1856,11 @@ fn clean_trade_text(value: String) -> String {
 }
 
 fn spec_template(value: &str) -> String {
+    let cleaned = clean_trade_text(value.to_string());
+    let without_inline_ranges = INLINE_ROLL_RANGE_RE.replace_all(&cleaned, "$1");
     NUMBER_RE
         .replace_all(
-            &clean_trade_text(value.to_string()).to_ascii_lowercase(),
+            &without_inline_ranges.to_ascii_lowercase(),
             "#",
         )
         .chars()
@@ -1903,8 +1909,9 @@ fn filters_for_item(item: &Item) -> Vec<PriceFilter> {
     }
 
     filters.extend(item.explicit_mods.iter().map(|modifier| {
+        let searchable_modifier = INLINE_ROLL_RANGE_RE.replace_all(modifier, "$1");
         let value = NUMBER_RE
-            .captures(modifier)
+            .captures(&searchable_modifier)
             .and_then(|captures| captures.name("number"))
             .and_then(|number| number.as_str().parse::<f64>().ok());
 
@@ -2616,6 +2623,22 @@ mod tests {
         let stat = matching_trade_stat(&filter, &stats).expect("matching stat");
 
         assert_eq!(stat.id, "desecrated.stat_666077204");
+    }
+
+    #[test]
+    fn inline_roll_ranges_normalize_to_official_trade_templates() {
+        assert_eq!(
+            spec_template("Companions have 12(12-18)% increased Attack Speed"),
+            spec_template("Companions have #% increased Attack Speed")
+        );
+        assert_eq!(
+            spec_template("Adds 30(23-35) to 40(39-59) Physical Damage"),
+            spec_template("Adds # to # Physical Damage")
+        );
+        assert_eq!(
+            spec_template("+8(8-12) to Maximum Rage"),
+            spec_template("+# to Maximum Rage")
+        );
     }
 
     #[test]

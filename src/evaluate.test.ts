@@ -11,6 +11,7 @@ import {
   profileSpecKeySet,
   rankListings,
   resolveTierMatch,
+  specTemplate,
   type PriceCheck,
   type PriceListing,
   type Poe2DbDataSnapshot,
@@ -310,6 +311,17 @@ describe("evaluate listing matching", () => {
 });
 
 describe("PoE2DB tier matching", () => {
+  it("normalizes inline actual-roll ranges before template and value matching", () => {
+    expect(specTemplate("158(155-169)% increased Physical Damage")).toBe("#% increased physical damage");
+    expect(specTemplate("Adds 30(23-35) to 40(39-59) Physical Damage")).toBe("adds # to # physical damage");
+
+    const phys = resolveTierMatch("158(155-169)% increased Physical Damage", poe2dbSnapshot, baseItem);
+    const added = resolveTierMatch("Adds 30(23-35) to 40(39-59) Physical Damage", poe2dbSnapshot, baseItem);
+
+    expect(phys).toEqual(expect.objectContaining({ tier: "T1", min: 150, max: 169 }));
+    expect(added).toEqual(expect.objectContaining({ tier: "T2", min: 21, max: 31 }));
+  });
+
   it("resolves copied wide-range mods to trusted tier bands", () => {
     const match = resolveTierMatch("Adds 30 to 50 Physical Damage", poe2dbSnapshot);
 
@@ -406,6 +418,69 @@ describe("PoE2DB tier matching", () => {
         max: 28,
       }),
     );
+  });
+
+  it("keeps inline range annotations searchable for special and desecrated modifiers", () => {
+    const snapshot: Poe2DbDataSnapshot = {
+      ...poe2dbSnapshot,
+      mod_pages: [
+        {
+          slug: "Talismans",
+          source_url: "https://poe2db.tw/us/Talismans",
+          tiers: [
+            {
+              id: "perfect-essence-onslaught",
+              tier: "T1",
+              name: "Perfect Essence of Haste",
+              source_kind: "perfect_essence",
+              required_level: 72,
+              affix: null,
+              text: "(20-25)% chance to gain Onslaught on Killing Hits with this Weapon",
+              template: "#% chance to gain Onslaught on Killing Hits with this Weapon",
+              roll_bands: [{ min: 20, max: 25 }],
+              tags: ["speed"],
+            },
+            {
+              id: "amanamu-companion-attack-speed",
+              tier: "T1",
+              name: "of Amanamu",
+              source_kind: "desecrated",
+              required_level: 65,
+              affix: null,
+              text: "(12-18)% increased Attack Speed Companions have (12-18)% increased Attack Speed",
+              template: "#% increased Attack Speed Companions have #% increased Attack Speed",
+              roll_bands: [
+                { min: 12, max: 18 },
+                { min: 12, max: 18 },
+              ],
+              tags: ["amanamu_mod"],
+            },
+          ],
+        },
+      ],
+      status: { ...poe2dbSnapshot.status },
+    };
+    const item: ScannedItem = {
+      ...baseItem,
+      explicit_mods: [
+        "23(20-25)% chance to gain Onslaught on Killing Hits with this Weapon",
+        "Companions have 12(12-18)% increased Attack Speed",
+      ],
+    };
+    const specs = itemSpecs(item, undefined, snapshot).filter((spec) => spec.kind === "explicit");
+    const hardFilters = hardPriceFiltersForSelection(item, new Set(specs.map((spec) => spec.key)), "quick", snapshot);
+
+    expect(specs.every((spec) => classifySelectedSpecForSearch(spec).classification === "hard")).toBe(true);
+    expect(hardFilters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ min: 20, max: 25, source_kind: "perfect_essence" }),
+      expect.objectContaining({
+        label: "Companions have 12(12-18)% increased Attack Speed",
+        min: 12,
+        max: 18,
+        source_kind: "desecrated",
+        template: "companions have #% increased attack speed",
+      }),
+    ]));
   });
 });
 

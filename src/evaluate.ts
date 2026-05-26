@@ -835,7 +835,7 @@ export function cleanTradeMarkup(value: string) {
 }
 
 export function specTemplate(value: string) {
-  return cleanTradeMarkup(value)
+  return stripInlineRollRanges(cleanTradeMarkup(value))
     .toLowerCase()
     .replace(/\b(rune|implicit|desecrated|corrupted|fractured|enchant|augmented)\b/g, " ")
     .replace(/\d+(?:\.\d+)?/g, "#")
@@ -1122,10 +1122,17 @@ function placeholderCount(template: string) {
 }
 
 function numbersInText(value: string) {
-  return cleanTradeMarkup(value)
+  return stripInlineRollRanges(cleanTradeMarkup(value))
     .match(/-?\d+(?:\.\d+)?/g)
     ?.map(Number)
     .filter((number) => Number.isFinite(number)) ?? [];
+}
+
+function stripInlineRollRanges(value: string) {
+  return value.replace(
+    /(-?\d+(?:\.\d+)?)(?:\s*\(\s*-?\d+(?:\.\d+)?\s*-\s*-?\d+(?:\.\d+)?\s*\))/g,
+    "$1",
+  );
 }
 
 function numericAtLeast(actual: number | null, expected: number | null) {
