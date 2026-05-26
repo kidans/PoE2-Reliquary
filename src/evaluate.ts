@@ -710,7 +710,8 @@ export function resolveTierMatch(
     const pageScore = pageHintScore(page.slug, itemHints);
 
     for (const tier of sameTemplate) {
-      if (!tierMatchesValues(tier, values)) continue;
+      const bandMatch = matchingRollBand(tier, template, values);
+      if (!bandMatch.matches) continue;
 
       const skRank = tierSourceKindRank(tier.source_kind);
       // Primary sort: source_kind rank (normal > repoe).
@@ -728,7 +729,8 @@ export function resolveTierMatch(
 
   if (!best) return null;
 
-  const firstBand = best.tier.roll_bands[0];
+  const bandMatch = matchingRollBand(best.tier, template, values);
+  const firstBand = bandMatch.band;
   const confidence = firstBand ? "validated" : "template";
   return {
     source: best.page.slug.startsWith("repoe-") ? "repoe" : "poe2db",
@@ -1054,20 +1056,38 @@ function listingModifierMatchesSpec(modifier: string, spec: ItemSpec) {
   return first >= tier.min && (tier.max === null || first <= tier.max);
 }
 
-function tierMatchesValues(tier: Poe2DbModTier, values: number[]) {
+function matchingRollBand(tier: Poe2DbModTier, modifierTemplate: string, values: number[]) {
   // If the mod has no roll bands at all, accept template match without value validation.
   // This handles PoE2DB pages where roll range scraping failed (11.9% of tiers).
   if (!tier.roll_bands.length) {
-    return true;
+    return { matches: true, band: null };
   }
 
-  return values.every((value, index) => {
-    const band = tier.roll_bands[index];
-    if (!band) {
-      return false;
-    }
-    return value >= band.min && value <= band.max;
-  }) && values.length <= tier.roll_bands.length;
+  const tierTemplate = specTemplate(tier.template);
+  const bandOffset = rollBandOffset(tierTemplate, modifierTemplate);
+  if (bandOffset + values.length > tier.roll_bands.length) {
+    return { matches: false, band: null };
+  }
+
+  const matches = values.every((value, index) => {
+    const band = tier.roll_bands[bandOffset + index];
+    return !!band && value >= band.min && value <= band.max;
+  });
+
+  return { matches, band: matches ? tier.roll_bands[bandOffset] ?? null : null };
+}
+
+function rollBandOffset(tierTemplate: string, modifierTemplate: string) {
+  const start = tierTemplate.indexOf(modifierTemplate);
+  if (start <= 0) {
+    return 0;
+  }
+
+  return placeholderCount(tierTemplate.slice(0, start));
+}
+
+function placeholderCount(template: string) {
+  return template.match(/#%?|#/g)?.length ?? 0;
 }
 
 function numbersInText(value: string) {

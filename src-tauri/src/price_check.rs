@@ -2424,8 +2424,9 @@ mod tests {
 
     use super::{
         build_trade_request, filters_for_item, format_price, listing_from_fetch_result,
-        price_check_cache_key, spec_template, CurrencyRates, ExtendedData, FetchAccount, FetchItem,
-        FetchItemProperty, FetchListing, FetchPrice, FetchResult, TradeStatEntry,
+        matching_trade_stat, price_check_cache_key, spec_template, CurrencyRates, ExtendedData,
+        FetchAccount, FetchItem, FetchItemProperty, FetchListing, FetchPrice, FetchResult,
+        TradeStatEntry,
     };
     use serde_json::json;
 
@@ -2578,6 +2579,54 @@ mod tests {
             request["query"]["stats"][0]["filters"][0]["value"]["max"],
             39.0
         );
+    }
+
+    #[test]
+    fn special_stat_filters_prefer_matching_official_category() {
+        let filter = crate::ActivePriceFilter {
+            kind: "explicit".to_string(),
+            label: "Companions have 16% increased Attack Speed (Desecrated)".to_string(),
+            value: Some(16.0),
+            min: Some(12.0),
+            max: Some(18.0),
+            template: spec_template("Companions have 16% increased Attack Speed"),
+            ..Default::default()
+        };
+        let stats = vec![
+            TradeStatEntry {
+                id: "explicit.stat_666077204".to_string(),
+                template: spec_template("Companions have #% increased Attack Speed"),
+            },
+            TradeStatEntry {
+                id: "desecrated.stat_666077204".to_string(),
+                template: spec_template("Companions have #% increased Attack Speed"),
+            },
+        ];
+
+        let stat = matching_trade_stat(&filter, &stats).expect("matching stat");
+
+        assert_eq!(stat.id, "desecrated.stat_666077204");
+    }
+
+    #[test]
+    fn essence_sourced_flat_mods_match_official_explicit_stats() {
+        let filter = crate::ActivePriceFilter {
+            kind: "explicit".to_string(),
+            label: "23% chance to gain Onslaught on Killing Hits with this Weapon".to_string(),
+            value: Some(23.0),
+            min: Some(20.0),
+            max: Some(25.0),
+            template: spec_template("23% chance to gain Onslaught on Killing Hits with this Weapon"),
+            ..Default::default()
+        };
+        let stats = vec![TradeStatEntry {
+            id: "explicit.stat_1881230714".to_string(),
+            template: spec_template("#% chance to gain Onslaught on Killing Hits with this Weapon"),
+        }];
+
+        let stat = matching_trade_stat(&filter, &stats).expect("matching stat");
+
+        assert_eq!(stat.id, "explicit.stat_1881230714");
     }
 
     #[test]

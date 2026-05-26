@@ -340,6 +340,73 @@ describe("PoE2DB tier matching", () => {
       expect.objectContaining({ min: 21, max: null, tier: "T1+" }),
     ]);
   });
+
+  it("resolves flat essence and desecrated source bands as hard-searchable ranges", () => {
+    const snapshot: Poe2DbDataSnapshot = {
+      ...poe2dbSnapshot,
+      mod_pages: [
+        {
+          slug: "Talismans",
+          source_url: "https://poe2db.tw/us/Talismans",
+          tiers: [
+            {
+              id: "perfect-essence-onslaught",
+              tier: "T1",
+              name: "Perfect Essence of Haste",
+              source_kind: "perfect_essence",
+              required_level: 72,
+              affix: null,
+              text: "(20-25)% chance to gain Onslaught on Killing Hits with this Weapon",
+              template: "#% chance to gain Onslaught on Killing Hits with this Weapon",
+              roll_bands: [{ min: 20, max: 25 }],
+              tags: ["speed"],
+            },
+            {
+              id: "amanamu-companion-attack-speed",
+              tier: "T1",
+              name: "of Amanamu",
+              source_kind: "desecrated",
+              required_level: 65,
+              affix: null,
+              text: "(12-18)% increased Attack Speed Companions have (22-28)% increased Attack Speed",
+              template: "#% increased Attack Speed Companions have #% increased Attack Speed",
+              roll_bands: [
+                { min: 12, max: 18 },
+                { min: 22, max: 28 },
+              ],
+              tags: ["amanamu_mod"],
+            },
+          ],
+        },
+      ],
+      status: { ...poe2dbSnapshot.status },
+    };
+
+    expect(resolveTierMatch("23% chance to gain Onslaught on Killing Hits with this Weapon", snapshot)).toEqual(
+      expect.objectContaining({
+        source_kind: "perfect_essence",
+        min: 20,
+        max: 25,
+        confidence: "validated",
+      }),
+    );
+
+    expect(resolveTierMatch("15% increased Attack Speed (Desecrated)", snapshot)).toEqual(
+      expect.objectContaining({
+        source_kind: "desecrated",
+        min: 12,
+        max: 18,
+      }),
+    );
+
+    expect(resolveTierMatch("Companions have 24% increased Attack Speed (Desecrated)", snapshot)).toEqual(
+      expect.objectContaining({
+        source_kind: "desecrated",
+        min: 22,
+        max: 28,
+      }),
+    );
+  });
 });
 
 describe("tier matching with empty roll_bands", () => {
@@ -589,6 +656,63 @@ describe("hard/score filter classification", () => {
 
     expect(desecrated).toBeDefined();
     expect(classifySelectedSpecForSearch(desecrated!).classification).toBe("score");
+  });
+
+  it("classifies special modifiers with known source bands as hard", () => {
+    const item: ScannedItem = {
+      ...baseItem,
+      explicit_mods: [
+        "23% chance to gain Onslaught on Killing Hits with this Weapon",
+        "Companions have 24% increased Attack Speed (Desecrated)",
+      ],
+    };
+    const snapshot: Poe2DbDataSnapshot = {
+      ...poe2dbSnapshot,
+      mod_pages: [
+        {
+          slug: "Talismans",
+          source_url: "https://poe2db.tw/us/Talismans",
+          tiers: [
+            {
+              id: "perfect-essence-onslaught",
+              tier: "T1",
+              name: "Perfect Essence of Haste",
+              source_kind: "perfect_essence",
+              required_level: 72,
+              affix: null,
+              text: "(20-25)% chance to gain Onslaught on Killing Hits with this Weapon",
+              template: "#% chance to gain Onslaught on Killing Hits with this Weapon",
+              roll_bands: [{ min: 20, max: 25 }],
+              tags: ["speed"],
+            },
+            {
+              id: "amanamu-companion-attack-speed",
+              tier: "T1",
+              name: "of Amanamu",
+              source_kind: "desecrated",
+              required_level: 65,
+              affix: null,
+              text: "(12-18)% increased Attack Speed Companions have (22-28)% increased Attack Speed",
+              template: "#% increased Attack Speed Companions have #% increased Attack Speed",
+              roll_bands: [
+                { min: 12, max: 18 },
+                { min: 22, max: 28 },
+              ],
+              tags: ["amanamu_mod"],
+            },
+          ],
+        },
+      ],
+      status: { ...poe2dbSnapshot.status },
+    };
+
+    const specs = itemSpecs(item, undefined, snapshot).filter((spec) => spec.kind === "explicit");
+
+    expect(specs.map((spec) => classifySelectedSpecForSearch(spec).classification)).toEqual(["hard", "hard"]);
+    expect(hardPriceFiltersForSelection(item, new Set(specs.map((spec) => spec.key)), "quick", snapshot)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ min: 20, max: 25, source: "poe2db" }),
+      expect.objectContaining({ min: 22, max: 28, source: "poe2db" }),
+    ]));
   });
 });
 
