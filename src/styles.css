@@ -2079,8 +2079,8 @@ kbd {
   align-items: center;
   border: 1px solid hsl(var(--accent-hue, 355) 70% 58% / 0.12);
   border-radius: 8px;
-  padding: 6px 10px;
-  min-height: 36px;
+  padding: 0 10px;
+  height: 36px;
   background: rgba(8, 8, 10, 0.85);
   color: var(--vellum-muted);
   cursor: pointer;
@@ -2088,6 +2088,7 @@ kbd {
   font-size: 11px;
   text-align: left;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .campaign-act-button span {
@@ -2099,6 +2100,7 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  line-height: 1;
 }
 
 .campaign-act-button strong {
@@ -2107,6 +2109,7 @@ kbd {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
+  line-height: 1;
 }
 
 .campaign-act-button.is-active {

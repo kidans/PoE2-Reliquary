@@ -4384,12 +4384,12 @@ if (!isListingPreviewWindow && leagueElement) {
       campaignGuidePage = 0;
     }
 
-    const now = Date.now();
-    const eventAgeMs = now - event.payload.entered_at_epoch_ms;
+    const eventTime = event.payload.entered_at_epoch_ms;
+    const eventAgeMs = Date.now() - eventTime;
     const isReplay = eventAgeMs > 10_000;
 
     if (!isReplay && campaignCurrentZoneEnteredAt > 0 && prevArea && prevArea.area_type !== "hideout") {
-      const elapsed = now - campaignCurrentZoneEnteredAt;
+      const elapsed = eventTime - campaignCurrentZoneEnteredAt;
       const prevName = normalizeZoneName(prevArea.name);
       campaignZoneTimes.set(prevName, (campaignZoneTimes.get(prevName) ?? 0) + elapsed);
       if (prevArea.area_type === "map" && campaignMapRuns.length > 0) {
@@ -4406,13 +4406,13 @@ if (!isListingPreviewWindow && leagueElement) {
         tier: event.payload.area_level ?? null,
         boss: event.payload.boss ?? null,
         elapsed_ms: 0,
-        entered_at: Date.now(),
+        entered_at: eventTime,
       });
       if (campaignMapRuns.length > 5) campaignMapRuns.pop();
     }
 
     if (!isReplay) {
-      campaignCurrentZoneEnteredAt = event.payload.area_type === "hideout" ? 0 : now;
+      campaignCurrentZoneEnteredAt = event.payload.area_type === "hideout" ? 0 : eventTime;
       saveCampaignZoneData();
     }
 
