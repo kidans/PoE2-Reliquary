@@ -1,0 +1,20 @@
+# JavaScript dependencies and build output
+node_modules/
+dist/
+
+# Tauri/Rust build output
+src-tauri/target/
+
+# Local editor and OS files
+.DS_Store
+*.swp
+
+# Local agent/research scratch output
+.codex/
+.tmp-*/
+.tmp-*.bin
+.tmp-*.zip
+graphify-out/
+.impeccable.md
+AGENTS.md
+FlashWork
