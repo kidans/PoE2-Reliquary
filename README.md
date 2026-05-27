@@ -4,6 +4,8 @@ A lightweight Path of Exile 2 desktop overlay for item evaluation, trade awarene
 
 Built with Tauri v2 (Rust backend + TypeScript/HTML/CSS frontend), Reliquary runs as a transparent, always-on-top overlay that stays out of your way until you need it.
 
+Extremely lightweight: 16.5 mb exe, with 50-67 mb ram usage effectively smaller by 5x-10x within similar tools!
+
 ---
 
 ## Features
