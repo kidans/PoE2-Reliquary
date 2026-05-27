@@ -1,0 +1,35 @@
+
+[2026-05-24] Fix mod tier matching: empty roll_bands + source_kind priority
+
+What changed / root cause:
+- 4753 of 39808 tiers (11.9%) have empty roll_bands — PoE2DB scraping failed to extract roll ranges for these mods (concentrated in Talismans, Amulets, Rings, Helmets, Body_Armours, Boots, Belts at 50-70% empty)
+- tierMatchesValues() returned false for empty bands, killing tier identity for all these mods
+- resolveTierMatch() returned first match across pages — repoe-global unique mods beat normal affixes from base-type pages when templates overlapped
+
+Fix 1 — tierMatchesValues (evaluate.ts:963):
+- Changed empty roll_bands from return false → return true
+- Template match alone is sufficient when roll data is missing
+- Recovers tier identity for ~3423 normal-source tiers with empty bands
+
+Fix 2 — resolveTierMatch (evaluate.ts:582):
+- Added TIER_SOURCE_KIND_RANK table: normal=100, implicit=90, corrupted=80, essence=70, ... repoe/default=10
+- Rewrote from early-return-first-match to collect-all-candidates-then-pick-best
+- Scoring: skRank * 100000 + pageRelevance * 100 + required_level
+- Normal affixes from base-type pages now always beat repoe uniques from repoe-global
+
+Verification:
+- 38 tests pass (21 in main, 17 in FlashWork mirror)
+- tsc --noEmit: clean
+- Smoke test with real data: crit chance mods (+2.43%, +1.20%, +3.80%, +0.50%) all match T1 of Unmaking (normal, Claws page)
+- 158% increased Physical Damage → T2 Tyrannical (normal, Claws) — not repoe-global unique
+- Implicit/rune/desecrated mods correctly route to their specialized pages
+- Self-validation: most empty-band tiers match themselves via template-only
+
+Files changed:
+- src/evaluate.ts — tierMatchesValues, resolveTierMatch, TIER_SOURCE_KIND_RANK, tierSourceKindRank
+- src/evaluate.test.ts — added 4 tests (empty roll_bands × 2, source_kind priority × 2)
+
+NEXT:
+- Commit these fixes to DeepseekFlash/Refining branch
+- Push branch to GitHub (requires Windows-side git auth or PAT)
+- Build Windows .exe from PowerShell

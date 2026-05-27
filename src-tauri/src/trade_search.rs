@@ -1,7 +1,7 @@
 use arboard::Clipboard;
 use serde::Serialize;
 
-use crate::{exchange, Item};
+use crate::Item;
 
 const DEFAULT_LEAGUE: &str = "Standard";
 const TRADE_WEB_BASE: &str = "https://www.pathofexile.com/trade2/search/poe2";
@@ -28,7 +28,7 @@ pub fn marketplace_url_for_item(item: &Item, league: Option<&str>) -> Result<Str
 }
 
 fn ensure_supported_trade_search(item: &Item) -> Result<(), String> {
-    if exchange::is_exchange_item(item) {
+    if item.is_exchange {
         return Err(
             "exchange-style items route into the dedicated exchange flow, not normal gear trade search".to_string(),
         );
@@ -200,6 +200,8 @@ mod tests {
             hazards: Vec::new(),
             trade_url: None,
             raw_text: String::new(),
+            is_exchange: false,
+            exchange_category_id: None,
         };
 
         let summary = build_marketplace_clipboard_summary(&item);
@@ -224,6 +226,8 @@ mod tests {
             hazards: Vec::new(),
             trade_url: None,
             raw_text: String::new(),
+            is_exchange: false,
+            exchange_category_id: None,
         };
 
         let url = build_marketplace_query_url(&item, "Fate of the Vaal").unwrap();
@@ -252,6 +256,8 @@ mod tests {
             hazards: Vec::new(),
             trade_url: None,
             raw_text: String::new(),
+            is_exchange: true,
+            exchange_category_id: None,
         };
 
         let result = build_marketplace_query_url(&item, "Fate of the Vaal");

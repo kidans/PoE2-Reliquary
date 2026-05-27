@@ -2,7 +2,7 @@ use std::{
     env,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, RwLock,
     },
     thread,
@@ -74,10 +74,16 @@ const SETTINGS_WINDOW_WIDTH: f64 = 814.0;
 const SETTINGS_WINDOW_HEIGHT: f64 = 686.0;
 const TRADE_WINDOW_WIDTH: f64 = 1074.0;
 const TRADE_WINDOW_HEIGHT: f64 = 826.0;
+const CAMPAIGN_WINDOW_WIDTH: f64 = 1074.0;
+const CAMPAIGN_WINDOW_HEIGHT: f64 = 826.0;
+const TEMPLE_WINDOW_WIDTH: f64 = 1668.0;
+const TEMPLE_WINDOW_HEIGHT: f64 = 908.0;
 const LISTING_PREVIEW_WINDOW_LABEL: &str = "listing-preview";
 const LISTING_PREVIEW_WIDTH: f64 = 360.0;
 const LISTING_PREVIEW_HEIGHT: f64 = 660.0;
 const LISTING_PREVIEW_GAP: f64 = 12.0;
+static LISTING_PREVIEW_VISIBLE: AtomicBool = AtomicBool::new(false);
+static LISTING_PREVIEW_SHOWN_AT_MS: AtomicU64 = AtomicU64::new(0);
 const REPOE_WORLD_AREAS_URL: &str = "https://repoe-fork.github.io/poe2/world_areas.min.json";
 const SNAP_MARGIN: f64 = 8.0;
 const FULL_SNAP_LEFT: f64 = 0.0;
@@ -209,6 +215,8 @@ pub struct Item {
     pub hazards: Vec<String>,
     pub trade_url: Option<String>,
     pub raw_text: String,
+    pub is_exchange: bool,
+    pub exchange_category_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -406,6 +414,7 @@ struct WorkerStatus<'a> {
 enum InputAction {
     ClipboardScan(String),
     OpenTradeSearch,
+    DismissListingPreview,
 }
 
 #[derive(Debug, Error)]
@@ -457,7 +466,9 @@ fn set_window_layout(window: tauri::Window, layout: String) -> Result<(), String
     let (width, height) = match layout.as_str() {
         "scan" => (SCAN_WINDOW_WIDTH, SCAN_WINDOW_HEIGHT),
         "trade" => (TRADE_WINDOW_WIDTH, TRADE_WINDOW_HEIGHT),
+        "campaign" => (CAMPAIGN_WINDOW_WIDTH, CAMPAIGN_WINDOW_HEIGHT),
         "settings" => (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT),
+        "temple" => (TEMPLE_WINDOW_WIDTH, TEMPLE_WINDOW_HEIGHT),
         "idle" => (IDLE_WINDOW_WIDTH, IDLE_WINDOW_HEIGHT),
         "default" => (DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT),
         "compact" => (COMPACT_WINDOW_WIDTH, COMPACT_WINDOW_HEIGHT),
@@ -625,6 +636,8 @@ fn show_listing_preview(
         let mut locked_state = state.blocking_lock();
         locked_state.current_listing_preview = Some(preview.clone());
     }
+    LISTING_PREVIEW_VISIBLE.store(true, Ordering::SeqCst);
+    LISTING_PREVIEW_SHOWN_AT_MS.store(now_epoch_ms(), Ordering::SeqCst);
 
     let preview_window = app_handle
         .get_webview_window(LISTING_PREVIEW_WINDOW_LABEL)
@@ -671,6 +684,8 @@ fn hide_listing_preview(
         let mut locked_state = state.blocking_lock();
         locked_state.current_listing_preview = None;
     }
+    LISTING_PREVIEW_VISIBLE.store(false, Ordering::SeqCst);
+    LISTING_PREVIEW_SHOWN_AT_MS.store(0, Ordering::SeqCst);
 
     if let Some(preview_window) = app_handle.get_webview_window(LISTING_PREVIEW_WINDOW_LABEL) {
         let _ = app_handle.emit_to(
@@ -728,7 +743,7 @@ async fn set_trade_league(
     };
 
     if let Some(item) = scanned_item {
-        if exchange::is_exchange_item(&item) {
+        if item.is_exchange {
             spawn_exchange_item_worker(
                 app_handle,
                 state.inner().clone(),
@@ -785,7 +800,7 @@ async fn set_price_currency(
     };
 
     if let Some(item) = item {
-        if exchange::is_exchange_item(&item) {
+        if item.is_exchange {
             spawn_exchange_item_worker(app_handle, state.inner().clone(), item, league);
         } else {
             spawn_price_check_worker(
@@ -829,7 +844,7 @@ async fn set_price_option(
     };
 
     if let Some(item) = item {
-        if exchange::is_exchange_item(&item) {
+        if item.is_exchange {
             spawn_exchange_item_worker(app_handle, state.inner().clone(), item, league);
         } else {
             spawn_price_check_worker(
@@ -1068,6 +1083,13 @@ fn debug_log_path() -> String {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(Arc::new(Mutex::new(AppState::new())) as SharedAppState)
         .invoke_handler(tauri::generate_handler![
             invite_buyer,
@@ -1238,7 +1260,7 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
                     };
 
                     if let Some(item) = checked_item {
-                        if exchange::is_exchange_item(&item) {
+                        if item.is_exchange {
                             spawn_exchange_item_worker(
                                 app_handle.clone(),
                                 state.clone(),
@@ -1274,6 +1296,31 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
                             "input",
                             "scan an item before opening trade search".to_string(),
                         );
+                    }
+                }
+                InputAction::DismissListingPreview => {
+                    let shown_at = LISTING_PREVIEW_SHOWN_AT_MS.load(Ordering::SeqCst);
+                    let age_ms = now_epoch_ms().saturating_sub(shown_at);
+                    if shown_at > 0 && age_ms < 250 {
+                        continue;
+                    }
+
+                    {
+                        let mut locked_state = state.lock().await;
+                        locked_state.current_listing_preview = None;
+                    }
+                    LISTING_PREVIEW_VISIBLE.store(false, Ordering::SeqCst);
+                    LISTING_PREVIEW_SHOWN_AT_MS.store(0, Ordering::SeqCst);
+
+                    if let Some(preview_window) =
+                        app_handle.get_webview_window(LISTING_PREVIEW_WINDOW_LABEL)
+                    {
+                        let _ = app_handle.emit_to(
+                            LISTING_PREVIEW_WINDOW_LABEL,
+                            "preview://listing-cleared",
+                            (),
+                        );
+                        let _ = preview_window.hide();
                     }
                 }
             }
@@ -1695,6 +1742,9 @@ fn handle_global_input_event(
             if is_trade {
                 let _ = input_tx.send(InputAction::OpenTradeSearch);
             }
+        }
+        EventType::ButtonPress(_) if LISTING_PREVIEW_VISIBLE.load(Ordering::SeqCst) => {
+            let _ = input_tx.send(InputAction::DismissListingPreview);
         }
         _ => {}
     }
@@ -2296,7 +2346,17 @@ fn item_from_clipboard(raw_text: String, league: Option<&str>) -> Item {
         }
     }
 
-    item.trade_url = trade_search::marketplace_url_for_item(&item, league).ok();
+    item.is_exchange = exchange::is_exchange_item(&item);
+    item.exchange_category_id = if item.is_exchange {
+        exchange::category_id_for_item(&item).map(str::to_string)
+    } else {
+        None
+    };
+    item.trade_url = if item.is_exchange {
+        None
+    } else {
+        trade_search::marketplace_url_for_item(&item, league).ok()
+    };
 
     item
 }

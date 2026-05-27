@@ -27,6 +27,25 @@ import {
   type TradeRateLimit,
 } from "./evaluate";
 import guideData from "./campaign-guide.json";
+import {
+  createTempleLayout,
+  getTempleCellByKey,
+  parseTempleLayout,
+  serializeTempleLayout,
+  setTempleCellLocked,
+  setTempleManualTier,
+  setTempleRoom,
+  simulateDestabilization,
+  TEMPLE_STORAGE_KEY,
+  templeCellKey,
+  templeSummary,
+  validateTemplePlacement,
+  type TempleDestabilizationOptions,
+  type TempleDestabilizationResult,
+  type TempleLayoutState,
+} from "./temple-engine";
+import { renderTemplePanel } from "./temple-view";
+import { TEMPLE_ROOMS, type TempleRoomId, type TempleTier } from "./temple-data";
 import "./styles.css";
 
 type GuideStep = {
@@ -52,7 +71,8 @@ type GuideAct = {
   zones: GuideZone[];
 };
 
-type TabId = "scan" | "trade" | "data" | "settings";
+type TabId = "scan" | "trade" | "data" | "settings" | "temple" | "campaign";
+type CampaignSubTab = "timer" | "guide" | "map-runs";
 
 type CurrentAreaInfo = {
   name: string;
@@ -289,7 +309,7 @@ let workerMessages: WorkerStatus[] = [];
 let compactMode = false;
 let selectedSpecKeys = new Set<string>();
 let selectedPriceProfile: PriceProfileId = "quick";
-let appliedWindowLayout: "scan" | "trade" | "settings" | "idle" | "default" | "compact" | null = null;
+let appliedWindowLayout: "scan" | "trade" | "settings" | "temple" | "campaign" | "idle" | "default" | "compact" | null = null;
 let evaluateLayoutFrame = 0;
 let tradeSearchQuery = "";
 let loadingMoreMarketplaceResults = false;
@@ -310,6 +330,22 @@ let campaignTimerHandle = 0;
 let campaignCompletedSteps = new Set<string>();
 let campaignCurrentZone = "";
 const CAMPAIGN_STORAGE_KEY = "reliquary.campaign.progress";
+const CAMPAIGN_ZONES_KEY = "reliquary.campaign.zones";
+
+type MapRun = {
+  name: string;
+  tier: number | null;
+  boss: string | null;
+  elapsed_ms: number;
+  entered_at: number;
+};
+
+let activeCampaignSubTab: CampaignSubTab = "timer";
+let campaignSelectedAct = 1;
+let campaignZoneTimes: Map<string, number> = new Map();
+let campaignCurrentZoneEnteredAt = 0;
+let campaignMapRuns: MapRun[] = [];
+let campaignResetConfirmHandle = 0;
 
 const INTERLUDE_ZONE_MAP: Record<string, string> = {
   "scorched farmlands": "Interlude 5.1 — Ogham, The Refuge",
@@ -366,6 +402,139 @@ function loadCampaignProgress() {
       }
     }
   } catch { /* ignore */ }
+}
+
+function saveCampaignZoneData() {
+  try {
+    localStorage.setItem(CAMPAIGN_ZONES_KEY, JSON.stringify({
+      zoneTimes: Object.fromEntries(campaignZoneTimes),
+      mapRuns: campaignMapRuns,
+    }));
+  } catch { /* ignore */ }
+}
+
+function loadCampaignZoneData() {
+  try {
+    const raw = localStorage.getItem(CAMPAIGN_ZONES_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      campaignZoneTimes = new Map(Object.entries(data.zoneTimes ?? {}));
+      campaignMapRuns = Array.isArray(data.mapRuns) ? data.mapRuns : [];
+    }
+  } catch { /* ignore */ }
+}
+
+function readTempleLayout() {
+  try {
+    const raw = localStorage.getItem(TEMPLE_STORAGE_KEY);
+    if (!raw) return createTempleLayout();
+    return parseTempleLayout(raw) ?? createTempleLayout();
+  } catch {
+    return createTempleLayout();
+  }
+}
+
+function saveTempleLayout() {
+  try {
+    localStorage.setItem(TEMPLE_STORAGE_KEY, serializeTempleLayout(templeLayout));
+  } catch {
+    pushStatus("temple", "Unable to save temple layout locally.");
+  }
+}
+
+async function runTempleDestabilization() {
+  const result = simulateDestabilization(templeLayout, templeDestabilizationOptions);
+  const meaningfulAttempts = result.attempts.some((attempt) => attempt.result !== "skipped");
+  templeDestabilizationAnimation = {
+    busy: true,
+    activeKey: null,
+    lockedKey: null,
+    removedKeys: [],
+    lastSeed: result.seed,
+  };
+  render();
+
+  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  if (meaningfulAttempts) {
+    templeDestabilizationHistory = [...templeDestabilizationHistory, result].slice(-25);
+  }
+
+  for (const attempt of result.attempts) {
+    if (!attempt.targetKey) continue;
+    templeDestabilizationAnimation = {
+      ...templeDestabilizationAnimation,
+      activeKey: attempt.targetKey,
+      lockedKey: attempt.result === "locked" ? attempt.targetKey : null,
+    };
+    render();
+    if (!reducedMotion) await delay(180);
+
+    if (attempt.result === "removed") {
+      templeDestabilizationAnimation = {
+        ...templeDestabilizationAnimation,
+        removedKeys: [...templeDestabilizationAnimation.removedKeys, attempt.targetKey],
+      };
+      render();
+      if (!reducedMotion) await delay(160);
+    }
+  }
+
+  templeLayout = result.after;
+  saveTempleLayout();
+  templeDestabilizationAnimation = {
+    busy: false,
+    activeKey: null,
+    lockedKey: null,
+    removedKeys: [],
+    lastSeed: result.seed,
+  };
+  pushStatus("temple", meaningfulAttempts ? "Destabilization simulated." : "No valid destabilization targets.");
+  render();
+}
+
+function undoTempleDestabilization() {
+  const previous = templeDestabilizationHistory[templeDestabilizationHistory.length - 1];
+  if (!previous) return;
+  templeDestabilizationHistory = templeDestabilizationHistory.slice(0, -1);
+  templeLayout = previous.before;
+  saveTempleLayout();
+  templeDestabilizationAnimation = {
+    busy: false,
+    activeKey: null,
+    lockedKey: null,
+    removedKeys: [],
+    lastSeed: previous.seed,
+  };
+  pushStatus("temple", "Destabilization undone.");
+  render();
+}
+
+function removeTempleCellFromContextMenu(cellKey: string) {
+  if (templeDestabilizationAnimation.busy) return;
+  const [rawX, rawY] = cellKey.split(",");
+  const x = Number(rawX);
+  const y = Number(rawY);
+  if (!Number.isInteger(x) || !Number.isInteger(y)) return;
+
+  const cell = getTempleCellByKey(templeLayout, templeCellKey(x, y));
+  if (!cell || cell.roomId === "empty") return;
+
+  const result = validateTemplePlacement(templeLayout, x, y, "empty");
+  if (!result.valid) {
+    pushStatus("temple", result.reason ?? "This temple tile cannot be removed.");
+    render();
+    return;
+  }
+
+  const roomName = TEMPLE_ROOMS[cell.roomId].name;
+  templeLayout = setTempleRoom(templeLayout, x, y, "empty");
+  saveTempleLayout();
+  pushStatus("temple", `Removed ${roomName}.`);
+  render();
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 }
 
 function stepKey(act: number, zoneName: string, stepIndex: number) {
@@ -454,6 +623,23 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
 let appSettings = readAppSettings();
 applyAppSettings(appSettings);
 loadCampaignProgress();
+loadCampaignZoneData();
+
+let templeLayout: TempleLayoutState = readTempleLayout();
+let selectedTempleRoomId: TempleRoomId = "path";
+let templeSaveName = "";
+let templeDestabilizationOptions: TempleDestabilizationOptions = {
+  architectDefeated: false,
+  atziriDefeated: false,
+};
+let templeDestabilizationHistory: TempleDestabilizationResult[] = [];
+let templeDestabilizationAnimation = {
+  busy: false,
+  activeKey: null as string | null,
+  lockedKey: null as string | null,
+  removedKeys: [] as string[],
+  lastSeed: null as string | null,
+};
 
 const LOCAL_CURRENCY_ICONS: Record<string, string> = {
   exalted: "/currency/exalted.webp",
@@ -528,6 +714,18 @@ root.innerHTML = isListingPreviewWindow
               <svg viewBox="0 0 24 24"><path d="M5 6c0-1.7 3.1-3 7-3s7 1.3 7 3-3.1 3-7 3-7-1.3-7-3Z"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
             </span>
             <span class="tab-label">Data</span>
+          </button>
+          <button class="tab-button" data-tab="temple" type="button" title="Temple">
+            <span class="tab-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 2 21 12 12 22 3 12Z"/><path d="M12 6 17 12 12 18 7 12Z"/><path d="M12 2v4M12 18v4M3 12h4M17 12h4"/></svg>
+            </span>
+            <span class="tab-label">Temple</span>
+          </button>
+          <button class="tab-button" data-tab="campaign" type="button" title="Campaign">
+            <span class="tab-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            </span>
+            <span class="tab-label">Campaign</span>
           </button>
           <button class="tab-button tab-button-icon" data-tab="settings" type="button" title="Settings" aria-label="Settings">
             <span class="tab-icon" aria-hidden="true">
@@ -636,6 +834,32 @@ function render() {
 
     if (activeTab === "data") {
       panelElement!.innerHTML = renderDataPanel();
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
+
+    if (activeTab === "temple") {
+      panelElement!.innerHTML = renderTemplePanel({
+        layout: templeLayout,
+        selectedRoomId: selectedTempleRoomId,
+        selectedCellKey: templeLayout.selectedCellKey,
+        saveName: templeSaveName,
+        destabilization: {
+          options: templeDestabilizationOptions,
+          undoCount: templeDestabilizationHistory.length,
+          busy: templeDestabilizationAnimation.busy,
+          activeKey: templeDestabilizationAnimation.activeKey,
+          lockedKey: templeDestabilizationAnimation.lockedKey,
+          removedKeys: templeDestabilizationAnimation.removedKeys,
+          lastSeed: templeDestabilizationAnimation.lastSeed,
+        },
+      });
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
+
+    if (activeTab === "campaign") {
+      panelElement!.innerHTML = renderCampaignTabPanel();
       hoveredListingPreview = null;
       void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
     }
@@ -770,6 +994,11 @@ function remapCampaignAct(raw: number): number {
 }
 
 function compactTitleText(item: ScannedItem | null) {
+  if (activeTab === "temple") {
+    const summary = templeSummary(templeLayout);
+    return `Temple planner | ${summary.placed} rooms | ${summary.tier3} tier III`;
+  }
+
   if (campaignGuideAct > 0) {
     const next = findNextIncompleteStep();
     if (next) {
@@ -807,6 +1036,14 @@ function compactTitleText(item: ScannedItem | null) {
 }
 
 function compactMetaText(status: string) {
+  if (activeTab === "temple") {
+    const selected = getTempleCellByKey(templeLayout, templeLayout.selectedCellKey);
+    if (selected && selected.roomId !== "empty") {
+      return `${TEMPLE_ROOMS[selected.roomId].name} | T${selected.tier} | ${selected.reachable ? "reachable" : "unlinked"}`;
+    }
+    return "Pick a room, then click a tile";
+  }
+
   if (campaignGuideAct > 0) {
     const actTime = formatCampaignTime(campaignActTimes[Math.max(0, campaignGuideAct - 1)] ?? 0);
     const total = formatCampaignTime(campaignTotalMs);
@@ -2369,6 +2606,172 @@ function formatTimestamp(epochMs: number) {
   });
 }
 
+function renderCampaignTabPanel() {
+  const subTab = activeCampaignSubTab;
+  const isZoneResetPending = campaignResetConfirmHandle > 0;
+
+  return `
+    <section class="campaign-panel-shell">
+      <nav class="campaign-sub-tabs">
+        <button type="button" data-campaign-sub-tab="timer" class="${subTab === "timer" ? "is-active" : ""}">Timer</button>
+        <button type="button" data-campaign-sub-tab="guide" class="${subTab === "guide" ? "is-active" : ""}">Guide</button>
+        <button type="button" data-campaign-sub-tab="map-runs" class="${subTab === "map-runs" ? "is-active" : ""}">Map Runs</button>
+      </nav>
+      <div class="campaign-sub-content">
+        ${subTab === "timer" ? renderCampaignTimerSubTab(isZoneResetPending) : ""}
+        ${subTab === "guide" ? renderCampaignGuideSubTab() : ""}
+        ${subTab === "map-runs" ? renderCampaignMapRunsSubTab(isZoneResetPending) : ""}
+      </div>
+    </section>
+  `;
+}
+
+function renderCampaignTimerSubTab(isZoneResetPending: boolean) {
+  const acts = campaignGuideActs.filter(a => a.act >= 1 && a.act <= 5);
+  const selectedAct = acts.find(a => a.act === campaignSelectedAct);
+  const actRows = acts.map(act => {
+    const isActive = act.act === campaignSelectedAct;
+    const time = formatCampaignTime(campaignActTimes[Math.max(0, act.act - 1)] ?? 0);
+    return `<button type="button" class="campaign-act-button${isActive ? " is-active" : ""}" data-campaign-act="${act.act}">
+      <span>${actDisplayName(act.act)}</span><strong>${time}</strong>
+    </button>`;
+  }).join("");
+
+  const interludeTime = formatCampaignTime(campaignActTimes[4] ?? 0);
+  const interludeActive = campaignSelectedAct === 5;
+  const interludeRow = `<button type="button" class="campaign-act-button${interludeActive ? " is-active" : ""}" data-campaign-act="5">
+    <span>INTERLUDE</span><strong>${interludeTime}</strong>
+  </button>`;
+
+  let zoneRows = "";
+  if (selectedAct) {
+    const zones = selectedAct.zones;
+    zoneRows = zones.map(zone => {
+      const zoneTime = campaignZoneTimes.get(zone.name) ?? 0;
+      const isCurrentZone = state.current_area?.name.toLowerCase().trim() === zone.name.toLowerCase().trim()
+        || (state.current_area?.name.toLowerCase().trim() ?? "").includes(zone.name.toLowerCase().trim());
+      const liveTime = isCurrentZone && campaignCurrentZoneEnteredAt > 0
+        ? Date.now() - campaignCurrentZoneEnteredAt
+        : 0;
+      const totalTime = zoneTime + liveTime;
+      const wp = zone.waypoint ? `<span class="campaign-zone-wp" title="Waypoint">W</span>` : "";
+      const current = isCurrentZone ? " is-current" : "";
+      return `<div class="campaign-zone-row${current}">
+        <span class="campaign-zone-name">${escapeHtml(zone.name)}${wp}</span>
+        <span class="campaign-zone-level">L${escapeHtml(zone.level)}</span>
+        <span class="campaign-zone-time">${totalTime > 0 ? formatZoneTime(totalTime) : "—"}</span>
+      </div>`;
+    }).join("");
+  }
+
+  const totalText = formatCampaignTime(campaignTotalMs);
+  const actText = selectedAct ? formatCampaignTime(campaignActTimes[Math.max(0, campaignSelectedAct - 1)] ?? 0) : "0:00";
+  const resetLabel = isZoneResetPending ? "Are you sure?" : "Reset All";
+
+  return `
+    <aside class="campaign-sidebar">
+      ${actRows}${interludeRow}
+      <div class="campaign-sidebar-footer">
+        <button type="button" class="campaign-reset-button${isZoneResetPending ? " confirm" : ""}" data-campaign-zone-reset>${escapeHtml(resetLabel)}</button>
+      </div>
+    </aside>
+    <div class="campaign-main">
+      <header class="campaign-main-header">
+        <h2>${selectedAct ? escapeHtml(selectedAct.name) : "Select an act"}</h2>
+        <span>Total: ${totalText} · Act: ${actText}</span>
+      </header>
+      <div class="campaign-zone-list">
+        ${zoneRows || "<div class=\"campaign-zone-empty\">No zones for this act.</div>"}
+      </div>
+    </div>
+  `;
+}
+
+function renderCampaignGuideSubTab() {
+  const zone = findCurrentZoneInGuide();
+  if (!zone || campaignGuideAct <= 0) {
+    return `<div class="campaign-guide-empty">
+      <p class="section-label">Campaign Guide</p>
+      <p>Enter a campaign zone to see the current step checklist.</p>
+    </div>`;
+  }
+
+  const stepsHtml = zone.steps.map((step, i) => {
+    const key = stepKey(campaignGuideAct, zone.name, i);
+    const done = campaignCompletedSteps.has(key);
+    const loc = step.loc ? ` (${escapeHtml(step.loc)})` : "";
+    const rewardHtml = step.reward
+      ? ` <span class="reward-chip" style="color:${rewardColor(step.tags, step.reward)};border-color:${rewardColor(step.tags, step.reward)}">${escapeHtml(step.reward)}</span>`
+      : "";
+    return `<div class="checklist-step${done ? " completed" : ""}" data-campaign-step-key="${key}">${done ? "☑" : "☐"} ${escapeHtml(step.text)}${loc}${rewardHtml}</div>`;
+  }).join("");
+
+  const doneCount = zone.steps.filter((_, i) => campaignCompletedSteps.has(stepKey(campaignGuideAct, zone.name, i))).length;
+
+  return `
+    <div class="campaign-guide-content">
+      <header class="campaign-guide-header">
+        <h2>${escapeHtml(zone.name)} — ${actDisplayName(campaignGuideAct)}</h2>
+        <span>${doneCount}/${zone.steps.length} steps</span>
+      </header>
+      <div class="campaign-guide-steps">${stepsHtml}</div>
+    </div>
+  `;
+}
+
+function renderCampaignMapRunsSubTab(isZoneResetPending: boolean) {
+  if (!campaignMapRuns.length) {
+    return `<div class="campaign-maps-empty">
+      <p class="section-label">Map Runs</p>
+      <p>No endgame map runs recorded yet. Enter a map to start tracking.</p>
+    </div>`;
+  }
+
+  const maxTime = Math.max(...campaignMapRuns.map(r => r.elapsed_ms || 1));
+  const cards = campaignMapRuns.map(run => {
+    const time = run.elapsed_ms > 0 ? formatZoneTime(run.elapsed_ms) : "In progress";
+    const boss = run.boss ? `<small>${escapeHtml(run.boss)}</small>` : "";
+    const barPct = run.elapsed_ms > 0 ? Math.round((run.elapsed_ms / maxTime) * 100) : 0;
+    const bar = `<div class="campaign-map-bar"><div class="campaign-map-bar-fill" style="width:${barPct}%"></div></div>`;
+    return `<div class="campaign-map-card">
+      <div class="campaign-map-header">
+        <strong>${escapeHtml(run.name)}</strong>
+        <span>T${run.tier ?? "?"}</span>
+      </div>
+      ${boss}
+      <span class="campaign-map-time">${time}</span>
+      ${bar}
+    </div>`;
+  }).join("");
+
+  const resetLabel = isZoneResetPending ? "Are you sure?" : "Reset Map History";
+
+  return `
+    <div class="campaign-maps-content">
+      <header class="campaign-maps-header">
+        <h2>Recent Map Runs</h2>
+        <span>Last ${campaignMapRuns.length} maps</span>
+      </header>
+      <div class="campaign-maps-grid">${cards}</div>
+      <div class="campaign-maps-footer">
+        <button type="button" class="campaign-reset-button${isZoneResetPending ? " confirm" : ""}" data-campaign-map-reset>${escapeHtml(resetLabel)}</button>
+      </div>
+    </div>
+  `;
+}
+
+function formatZoneTime(ms: number) {
+  const totalSec = Math.floor(ms / 1000);
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  if (mins >= 60) {
+    const hours = Math.floor(mins / 60);
+    const remainMins = mins % 60;
+    return `${hours}:${remainMins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  }
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
 function renderDataPanel() {
   const sourceTruth = state.source_truth_snapshot;
   const worldAreas = state.world_area_status;
@@ -2400,18 +2803,21 @@ function renderDataPanel() {
 
   return `
     <div class="data-grid">
-      <div><span>Waystone Hazard</span><strong>Reflect</strong><small>Build-killer for many damage profiles.</small></div>
-      <div><span>Waystone Hazard</span><strong>No Regen</strong><small>Unsafe for sustain-dependent builds.</small></div>
-      <div><span>Trade Hotkey</span><strong>Alt+D</strong><small>Opens latest generated trade URL.</small></div>
-      <div><span>Rates Source</span><strong>poe.ninja</strong><small>Planned CLI feed for exchange-rate normalization.</small></div>
-      <div><span>World Areas</span><strong>${escapeHtml(worldAreas.state)}</strong><small>${escapeHtml(worldAreaDetail)}</small></div>
-      <div><span>PoE2DB Adapter</span><strong>${escapeHtml(sourceTruth?.status.state ?? "warming")}</strong><small>${escapeHtml(sourceStatus)}</small></div>
-      <div><span>Source Freshness</span><strong>${escapeHtml(sourceFreshness)}</strong>${failedPages}</div>
-      <div><span>Tier Data Quality</span><strong>${escapeHtml(sourceQualityText)}</strong><small>Prefix/suffix labels only show when source data proves them.</small></div>
-      <div><span>Debug Log</span><strong>Trade diagnostics</strong><small>${escapeHtml(state.debug_log_path ?? "Log path loading...")}</small></div>
+      ${renderCampaignSection()}
+      <div class="data-source-card">
+        <span>Sources</span>
+        <strong>Live data health</strong>
+        <div class="source-card-grid">
+          <section><span>Rates</span><strong>poe.ninja</strong><small>Exchange-rate normalization cache.</small></section>
+          <section><span>World Areas</span><strong>${escapeHtml(worldAreas.state)}</strong><small>${escapeHtml(worldAreaDetail)}</small></section>
+          <section><span>PoE2DB Adapter</span><strong>${escapeHtml(sourceTruth?.status.state ?? "warming")}</strong><small>${escapeHtml(sourceStatus)}</small></section>
+          <section><span>Freshness</span><strong>${escapeHtml(sourceFreshness)}</strong>${failedPages}</section>
+          <section><span>Tier Quality</span><strong>${escapeHtml(sourceQualityText)}</strong><small>Prefix/suffix labels only show when source data proves them.</small></section>
+          <section><span>Debug Log</span><strong>Trade diagnostics</strong><small>${escapeHtml(state.debug_log_path ?? "Log path loading...")}</small></section>
+        </div>
+      </div>
       <div><span>League Catalog</span><strong>${escapeHtml(state.trade_league)}</strong><ul class="feed-list">${catalogRows}</ul></div>
       <div><span>PoE2DB Data Feed</span><strong>Early league/item signal</strong><ul class="feed-list">${dataLeagueRows}</ul></div>
-      ${renderCampaignSection()}
     </div>
   `;
 }
@@ -3169,64 +3575,23 @@ function rarityClassName(rarity: string) {
   return "rarity-rare";
 }
 
-function isExchangeClipboardItem(item: ScannedItem | null) {
-  if (!item) {
-    return false;
-  }
 
-  if (item.family === "currency") {
-    return true;
-  }
 
-  if (
-    [
-      "accessory",
-      "armour",
-      "belt",
-      "charm",
-      "flask",
-      "jewel",
-      "offhand",
-      "relic",
-      "tablet",
-      "waystone",
-      "weapon",
-    ].includes(item.family)
-  ) {
-    return false;
-  }
-
-  const haystack = [
-    item.item_class ?? "",
-    item.base_type ?? "",
-    item.name,
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  return [
-    "essence",
-    "omen",
-    "rune",
-    "soul core",
-    "idol",
-    "uncut",
-    "liquid ",
-    "catalyst",
-    "fragment",
-    "splinter",
-    "abyssal",
-    "expedition",
-  ].some((needle) => haystack.includes(needle));
-}
-
-function desiredWindowLayout(): "scan" | "trade" | "settings" | "idle" | "default" | "compact" {
+function desiredWindowLayout(): "scan" | "trade" | "settings" | "temple" | "campaign" | "idle" | "default" | "compact" {
   if (compactMode) {
     return "compact";
   }
 
   if (activeTab === "trade") {
     return "trade";
+  }
+
+  if (activeTab === "temple") {
+    return "temple";
+  }
+
+  if (activeTab === "campaign") {
+    return "campaign";
   }
 
   if (activeTab === "settings") {
@@ -3398,6 +3763,15 @@ if (!isListingPreviewWindow && leagueElement) {
     pushStatus("league", `Trade league set to ${state.trade_league}`);
   });
 
+  root.addEventListener("contextmenu", (event) => {
+    const target = event.target as HTMLElement;
+    const templeCell = target.closest<HTMLElement>(".temple-cell[data-temple-cell]");
+    if (!templeCell?.dataset.templeCell) return;
+
+    event.preventDefault();
+    removeTempleCellFromContextMenu(templeCell.dataset.templeCell);
+  });
+
   root.addEventListener("click", async (event) => {
     const target = event.target as HTMLElement;
     const openTrade = target.closest<HTMLButtonElement>("[data-open-trade]");
@@ -3418,6 +3792,150 @@ if (!isListingPreviewWindow && leagueElement) {
     const campaignResetButton = target.closest<HTMLButtonElement>("[data-campaign-reset]");
     const compactMetaClick = target.closest<HTMLElement>("[data-compact-meta]");
     const compactTitleClick = target.closest<HTMLElement>("[data-compact-title]");
+    const templeRoomButton = target.closest<HTMLButtonElement>("[data-temple-room]");
+    const templeCellButton = target.closest<HTMLButtonElement>("[data-temple-cell]");
+    const templeClearButton = target.closest<HTMLButtonElement>("[data-temple-clear]");
+    const templeTierButton = target.closest<HTMLButtonElement>("[data-temple-tier]");
+    const templeSaveButton = target.closest<HTMLButtonElement>("[data-temple-save]");
+    const templeLockButton = target.closest<HTMLButtonElement>("[data-temple-lock-toggle]");
+    const templeDestabilizeButton = target.closest<HTMLButtonElement>("[data-temple-destabilize]");
+    const templeDestabilizeUndoButton = target.closest<HTMLButtonElement>("[data-temple-destabilize-undo]");
+    const campaignSubTabButton = target.closest<HTMLButtonElement>("[data-campaign-sub-tab]");
+    const campaignActButton = target.closest<HTMLButtonElement>("[data-campaign-act]");
+    const campaignZoneResetButton = target.closest<HTMLButtonElement>("[data-campaign-zone-reset]");
+    const campaignMapResetButton = target.closest<HTMLButtonElement>("[data-campaign-map-reset]");
+
+    if (campaignSubTabButton?.dataset.campaignSubTab) {
+      activeCampaignSubTab = campaignSubTabButton.dataset.campaignSubTab as CampaignSubTab;
+      render();
+      return;
+    }
+
+    if (campaignActButton?.dataset.campaignAct) {
+      const act = Number(campaignActButton.dataset.campaignAct);
+      if (act >= 0 && act <= 5) {
+        campaignSelectedAct = act;
+        render();
+      }
+      return;
+    }
+
+    if (campaignZoneResetButton) {
+      if (campaignResetConfirmHandle > 0) {
+        window.clearTimeout(campaignResetConfirmHandle);
+        campaignResetConfirmHandle = 0;
+        campaignZoneTimes.clear();
+        campaignMapRuns = [];
+        campaignActTimes = [0, 0, 0, 0, 0, 0, 0, 0];
+        campaignTotalMs = 0;
+        saveCampaignZoneData();
+        saveCampaignProgress();
+        render();
+      } else {
+        campaignResetConfirmHandle = window.setTimeout(() => {
+          campaignResetConfirmHandle = 0;
+          render();
+        }, 3000);
+        render();
+      }
+      return;
+    }
+
+    if (campaignMapResetButton) {
+      if (campaignResetConfirmHandle > 0) {
+        window.clearTimeout(campaignResetConfirmHandle);
+        campaignResetConfirmHandle = 0;
+        campaignMapRuns = [];
+        saveCampaignZoneData();
+        render();
+      } else {
+        campaignResetConfirmHandle = window.setTimeout(() => {
+          campaignResetConfirmHandle = 0;
+          render();
+        }, 3000);
+        render();
+      }
+      return;
+    }
+
+    if (templeRoomButton?.dataset.templeRoom) {
+      const roomId = templeRoomButton.dataset.templeRoom as TempleRoomId;
+      if (roomId in TEMPLE_ROOMS) {
+        selectedTempleRoomId = roomId;
+        activeTab = "temple";
+        render();
+      }
+      return;
+    }
+
+    if (templeTierButton?.dataset.templeTier && templeTierButton.dataset.templeCell) {
+      if (templeDestabilizationAnimation.busy) return;
+      const tier = Number(templeTierButton.dataset.templeTier) as TempleTier;
+      const [rawX, rawY] = templeTierButton.dataset.templeCell.split(",");
+      templeLayout = setTempleManualTier(templeLayout, Number(rawX), Number(rawY), tier);
+      saveTempleLayout();
+      render();
+      return;
+    }
+
+    if (templeClearButton?.dataset.templeClear) {
+      if (templeDestabilizationAnimation.busy) return;
+      const [rawX, rawY] = templeClearButton.dataset.templeClear.split(",");
+      templeLayout = setTempleRoom(templeLayout, Number(rawX), Number(rawY), "empty");
+      saveTempleLayout();
+      render();
+      return;
+    }
+
+    if (templeCellButton?.dataset.templeCell) {
+      if (templeDestabilizationAnimation.busy) return;
+      const [rawX, rawY] = templeCellButton.dataset.templeCell.split(",");
+      const x = Number(rawX);
+      const y = Number(rawY);
+      const existingCell = getTempleCellByKey(templeLayout, templeCellKey(x, y));
+      if (existingCell?.roomId === "empty") {
+        templeLayout = setTempleRoom(templeLayout, x, y, selectedTempleRoomId);
+      } else {
+        templeLayout = { ...templeLayout, selectedCellKey: templeCellKey(x, y), updatedAt: Date.now() };
+      }
+      saveTempleLayout();
+      render();
+      return;
+    }
+
+    if (templeLockButton?.dataset.templeLockToggle) {
+      if (templeDestabilizationAnimation.busy) return;
+      const [rawX, rawY] = templeLockButton.dataset.templeLockToggle.split(",");
+      const x = Number(rawX);
+      const y = Number(rawY);
+      const cell = getTempleCellByKey(templeLayout, templeCellKey(x, y));
+      if (cell) {
+        templeLayout = setTempleCellLocked(templeLayout, x, y, !cell.locked);
+        saveTempleLayout();
+        render();
+      }
+      return;
+    }
+
+    if (templeDestabilizeButton) {
+      if (templeDestabilizationAnimation.busy) return;
+      await runTempleDestabilization();
+      return;
+    }
+
+    if (templeDestabilizeUndoButton) {
+      if (templeDestabilizationAnimation.busy) return;
+      undoTempleDestabilization();
+      return;
+    }
+
+    if (templeSaveButton) {
+      const input = root.querySelector<HTMLInputElement>("[data-temple-save-name]");
+      templeSaveName = input?.value.trim() ?? templeSaveName;
+      saveTempleLayout();
+      pushStatus("temple", templeSaveName ? `Saved ${templeSaveName}` : "Temple layout saved");
+      return;
+    }
 
     if (resetVisualSettingsButton) {
       appSettings = { ...DEFAULT_APP_SETTINGS };
@@ -3568,6 +4086,19 @@ if (!isListingPreviewWindow && leagueElement) {
     const priceProfileInput = target.closest<HTMLInputElement>("[data-price-profile]");
     const priceOptionSelect = target.closest<HTMLSelectElement>("[data-price-option]");
     const currencySelect = target.closest<HTMLSelectElement>("[data-price-currency]");
+    const templeDestabilizeOption = target.closest<HTMLInputElement>("[data-temple-destabilize-option]");
+
+    if (templeDestabilizeOption?.dataset.templeDestabilizeOption) {
+      const option = templeDestabilizeOption.dataset.templeDestabilizeOption;
+      if (option === "architectDefeated" || option === "atziriDefeated") {
+        templeDestabilizationOptions = {
+          ...templeDestabilizationOptions,
+          [option]: templeDestabilizeOption.checked,
+        };
+        render();
+      }
+      return;
+    }
 
     if (settingInput?.dataset.setting) {
       const el = settingInput as HTMLInputElement | HTMLSelectElement;
@@ -3633,6 +4164,12 @@ if (!isListingPreviewWindow && leagueElement) {
     const target = event.target as HTMLElement;
     const tradeSearch = target.closest<HTMLInputElement>("[data-trade-search]");
     const settingInput = target.closest<HTMLInputElement>("[data-setting]");
+    const templeSaveInput = target.closest<HTMLInputElement>("[data-temple-save-name]");
+
+    if (templeSaveInput) {
+      templeSaveName = templeSaveInput.value;
+      return;
+    }
 
     if (settingInput?.dataset.setting) {
       const name = settingInput.dataset.setting;
@@ -3720,6 +4257,9 @@ if (!isListingPreviewWindow && leagueElement) {
     const previewButton = target.closest<HTMLButtonElement>("[data-preview-listing]");
 
     if (!previewButton?.dataset.previewListing) {
+      if (hoveredListingPreview) {
+        void hideListingPreview();
+      }
       return;
     }
 
@@ -3791,7 +4331,7 @@ if (!isListingPreviewWindow && leagueElement) {
     void hideListingPreview();
     state.scanned_item = event.payload;
     applyProfileSelection(event.payload);
-    latestRequestedFilterSignature = isExchangeClipboardItem(event.payload)
+    latestRequestedFilterSignature = event.payload.is_exchange
       ? null
       : currentRequestedFilterSignature();
     state.price_check = {
@@ -3809,7 +4349,7 @@ if (!isListingPreviewWindow && leagueElement) {
       listings: [],
       error: null,
     };
-    if (isExchangeClipboardItem(event.payload)) {
+    if (event.payload.is_exchange) {
       state.exchange_tab.status = `Loading cached exchange overview for ${event.payload.base_type ?? event.payload.name}...`;
       activeTab = "trade";
     } else {
@@ -3828,7 +4368,7 @@ if (!isListingPreviewWindow && leagueElement) {
 
     if (
       state.scanned_item &&
-      !isExchangeClipboardItem(state.scanned_item) &&
+      !(state.scanned_item?.is_exchange ?? false) &&
       latestRequestedFilterSignature !== null &&
       activeFilterSignature(nextPriceCheck.requested_filters ?? []) !== latestRequestedFilterSignature
     ) {
@@ -3838,13 +4378,13 @@ if (!isListingPreviewWindow && leagueElement) {
     state.price_check = nextPriceCheck;
     state.price_currency = nextPriceCheck.selected_currency;
     state.price_option = nextPriceCheck.selected_price_option;
-    activeTab = isExchangeClipboardItem(state.scanned_item) ? "trade" : "scan";
+    activeTab = (state.scanned_item?.is_exchange ?? false) ? "trade" : "scan";
     render();
   });
 
   void listen<ExchangeTabState>("scan://exchange-tab-updated", (event) => {
     state.exchange_tab = normalizeExchangeTab(event.payload);
-    if (isExchangeClipboardItem(state.scanned_item)) {
+    if ((state.scanned_item?.is_exchange ?? false)) {
       activeTab = "trade";
     }
     render();
@@ -3856,13 +4396,42 @@ if (!isListingPreviewWindow && leagueElement) {
   });
 
   void listen<CurrentAreaInfo>("scan://area-updated", (event) => {
+    const prevArea = state.current_area;
     state.current_area = event.payload;
     const rawAct = event.payload.act ?? 0;
     const newAct = remapCampaignAct(rawAct);
     if (newAct !== campaignGuideAct) {
       campaignGuideAct = newAct;
       campaignGuidePage = 0;
+      campaignSelectedAct = newAct > 0 ? newAct : campaignSelectedAct;
     }
+
+    if (campaignCurrentZoneEnteredAt > 0 && prevArea && prevArea.area_type !== "hideout") {
+      const elapsed = Date.now() - campaignCurrentZoneEnteredAt;
+      const prevName = prevArea.name;
+      campaignZoneTimes.set(prevName, (campaignZoneTimes.get(prevName) ?? 0) + elapsed);
+      if (prevArea.area_type === "map" && campaignMapRuns.length > 0) {
+        const lastRun = campaignMapRuns[0];
+        if (lastRun.elapsed_ms === 0) {
+          lastRun.elapsed_ms = elapsed;
+        }
+      }
+    }
+
+    if (event.payload.area_type === "map") {
+      campaignMapRuns.unshift({
+        name: event.payload.name,
+        tier: event.payload.area_level ?? null,
+        boss: event.payload.boss ?? null,
+        elapsed_ms: 0,
+        entered_at: Date.now(),
+      });
+      if (campaignMapRuns.length > 5) campaignMapRuns.pop();
+    }
+
+    campaignCurrentZoneEnteredAt = event.payload.area_type === "hideout" ? 0 : Date.now();
+    saveCampaignZoneData();
+
     if (event.payload.area_type === "hideout") {
       if (campaignTimerRunning) stopCampaignTimer();
       saveCampaignProgress();
@@ -3894,7 +4463,7 @@ if (!isListingPreviewWindow && leagueElement) {
 
   void listen<Poe2DbDataSnapshot>("scan://source-truth-updated", (event) => {
     state.source_truth_snapshot = event.payload;
-    if (state.scanned_item && !isExchangeClipboardItem(state.scanned_item) && selectedSpecKeys.size) {
+    if (state.scanned_item && !state.scanned_item.is_exchange && selectedSpecKeys.size) {
       scheduleActivePriceFilterPush();
     }
     render();
@@ -3936,7 +4505,7 @@ if (!isListingPreviewWindow && leagueElement) {
       state.exchange_tab = normalizeExchangeTab(initialState.exchange_tab);
       state.price_currency = initialState.price_currency || state.price_currency;
       state.price_option = initialState.price_option || state.price_option;
-      if (state.scanned_item && !isExchangeClipboardItem(state.scanned_item)) {
+      if (state.scanned_item && !state.scanned_item.is_exchange) {
         applyProfileSelection(state.scanned_item);
         latestRequestedFilterSignature = currentRequestedFilterSignature();
       }

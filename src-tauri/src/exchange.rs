@@ -298,9 +298,14 @@ pub fn default_tab_state() -> ExchangeTabState {
 }
 
 pub fn loading_tab_state_for_item(item: &Item) -> ExchangeTabState {
-    let selected_category_id = category_id_for_item(item)
-        .unwrap_or(DEFAULT_CATEGORY_ID)
-        .to_string();
+    let selected_category_id = item
+        .exchange_category_id
+        .clone()
+        .unwrap_or_else(|| {
+            category_id_for_item(item)
+                .unwrap_or(DEFAULT_CATEGORY_ID)
+                .to_string()
+        });
 
     ExchangeTabState {
         categories: categories(),
@@ -319,7 +324,11 @@ pub async fn resolve_item_exchange_state(
     item: &Item,
     league: &str,
 ) -> Result<ExchangeTabState, String> {
-    let category_id = category_id_for_item(item).unwrap_or(DEFAULT_CATEGORY_ID);
+    let category_id = item
+        .exchange_category_id
+        .as_deref()
+        .or_else(|| category_id_for_item(item))
+        .unwrap_or(DEFAULT_CATEGORY_ID);
     let overview = exchange_overview(league, category_id, false).await?;
     let selected_entry = select_entry_for_item(item, &overview);
 
@@ -436,7 +445,7 @@ pub fn price_check_from_tab_state(tab: &ExchangeTabState) -> PriceCheck {
     }
 }
 
-fn category_id_for_item(item: &Item) -> Option<&'static str> {
+pub fn category_id_for_item(item: &Item) -> Option<&'static str> {
     let haystacks = [
         item.item_class.as_deref().unwrap_or(""),
         item.base_type.as_deref().unwrap_or(""),
@@ -869,6 +878,8 @@ mod tests {
             hazards: Vec::new(),
             trade_url: None,
             raw_text: name.to_string(),
+            is_exchange: false,
+            exchange_category_id: None,
         }
     }
 

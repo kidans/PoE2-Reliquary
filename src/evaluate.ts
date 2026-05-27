@@ -14,6 +14,8 @@ export type ScannedItem = {
   hazards: string[];
   trade_url: string | null;
   raw_text: string;
+  is_exchange: boolean;
+  exchange_category_id: string | null;
 };
 
 export type TradeRateLimit = {

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 use crate::{
-    debug_log, exchange, ActivePriceFilter, CurrencyMeta, Item, PriceCheck, PriceFilter,
+    debug_log, ActivePriceFilter, CurrencyMeta, Item, PriceCheck, PriceFilter,
     PriceListing, TradeLeague, TradeRateLimit,
 };
 
@@ -247,7 +247,7 @@ pub async fn check_item_price(
 }
 
 fn uses_exchange_mode(item: &Item) -> bool {
-    exchange::is_exchange_item(item)
+    item.is_exchange
 }
 
 async fn request_price_check(
@@ -2463,6 +2463,8 @@ mod tests {
             hazards: Vec::new(),
             trade_url: None,
             raw_text: String::new(),
+            is_exchange: false,
+            exchange_category_id: None,
         };
 
         let request = build_trade_request(
@@ -2501,6 +2503,8 @@ mod tests {
             hazards: Vec::new(),
             trade_url: None,
             raw_text: String::new(),
+            is_exchange: false,
+            exchange_category_id: None,
         };
 
         let filters = filters_for_item(&item);
@@ -2528,6 +2532,8 @@ mod tests {
             hazards: Vec::new(),
             trade_url: None,
             raw_text: String::new(),
+            is_exchange: false,
+            exchange_category_id: None,
         };
         let filter = crate::ActivePriceFilter {
             kind: "explicit".to_string(),
@@ -2569,6 +2575,8 @@ mod tests {
             hazards: Vec::new(),
             trade_url: None,
             raw_text: String::new(),
+            is_exchange: false,
+            exchange_category_id: None,
         };
         let filter = crate::ActivePriceFilter {
             kind: "explicit".to_string(),
@@ -2701,6 +2709,8 @@ mod tests {
                 hazards: Vec::new(),
                 trade_url: None,
                 raw_text: String::new(),
+                is_exchange: false,
+                exchange_category_id: None,
             },
             "equivalent",
             &[filter],
@@ -2740,6 +2750,8 @@ mod tests {
             hazards: Vec::new(),
             trade_url: None,
             raw_text: String::new(),
+            is_exchange: true,
+            exchange_category_id: None,
         };
 
         let loading = super::loading(&item);
@@ -2770,6 +2782,8 @@ mod tests {
             raw_text:
                 "Rare Boots\nItem Level: 83\n30% increased Movement Speed\n+36 to maximum Life"
                     .to_string(),
+            is_exchange: false,
+            exchange_category_id: None,
         };
 
         let filter_a = crate::ActivePriceFilter {

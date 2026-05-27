@@ -42,6 +42,8 @@ const baseItem: ScannedItem = {
   spirit: null,
   hazards: [],
   trade_url: null,
+  is_exchange: false,
+  exchange_category_id: null,
   raw_text: [
     "Item Class: Talismans",
     "Rarity: Rare",

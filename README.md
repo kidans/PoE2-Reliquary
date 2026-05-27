@@ -1,123 +1,133 @@
 # Reliquary
 
-Reliquary is a Path of Exile 2 desktop overlay built for the moments that actually matter while you are playing: checking an item quickly, seeing whether it is worth anything, comparing it against live listings, and keeping an eye on market context without tabbing all over the place.
+A lightweight Path of Exile 2 desktop overlay for item evaluation, trade awareness, currency rates, map tracking, campaign guidance, and Incursion Temple planning — all without tabbing out of the game.
 
-The project is still evolving, but the core idea is already in place: make item evaluation and trade awareness feel fast, readable, and grounded in the same data the community actually uses.
+Built with Tauri v2 (Rust backend + TypeScript/HTML/CSS frontend), Reliquary runs as a transparent, always-on-top overlay that stays out of your way until you need it.
 
-## Disclaimer
+---
 
-Reliquary is an unofficial fan-made tool. It is not affiliated with, endorsed by, sponsored by, or approved by Grinding Gear Games. Path of Exile, Path of Exile 2, and related game content are property of Grinding Gear Games.
+## Features
 
-## What Reliquary Does Today
+### Quick Price Check
+Copy any item in Path of Exile 2 with `Ctrl+C` and Reliquary parses it instantly. Items are classified by family, rarity, and modifiers, then checked against live marketplace listings via the official `trade2` API. Tier-based filtering separates validated roll-band matches from template-only guesses, and rate-limit pressure is tracked so you never accidentally spam the API.
 
-### Scan
+### Currency Rates
+The Trade tab provides a real-time currency and exchange-item dashboard backed by cached PoE.ninja snapshots. Browse categories (currency, essences, fragments, runes, soul cores, catalysts, omens, and more), view sparkline trends, compare values against multiple quote currencies, and search across the entire exchange economy — all league-aware and refreshable on demand.
 
-Copy an item from PoE 2 with `Ctrl+C` and Reliquary opens an in-game style evaluation panel. It parses the clipboard, classifies the item, separates properties from modifiers, applies rarity-aware presentation, and shows comparable marketplace results.
+### Map Tracker
+When you enter a map, Reliquary automatically detects the area from your `Client.txt` log. It shows waystone mod counts, quantity, rarity, pack size, and hazard indicators directly in the compact HUD strip. Hazard mods that match the banned-mods catalog are surfaced as warnings so you know what you're walking into before the first pack.
 
-### Marketplace Results
+### Campaign Guide (Updated for 0.5)
+A full step-by-step leveling guide covering all five acts plus the Interlude. The overlay automatically detects which zone you're in and highlights the next incomplete task. Check off steps as you go — progress persists across sessions via local storage. Reward chips show skill points, spirit, life, mana, and resistance rewards with color-coded labels.
 
-For normal item checks, Reliquary uses official Path of Exile `trade2` searches and listing fetches.
+### Automatic Timer per Act
+The campaign guide includes a per-act timer that starts when you enter the first zone of an act and pauses in hideouts. Track your pace through each act and your total campaign time at a glance in both compact and full modes.
 
-It also does a few things to keep that experience practical:
+### Temple
+A full Incursion Temple planner for the Temple of Atzoatl mechanic. Place rooms on a 9×9 grid, manage room types and tiers, track adjacency requirements for upgrades, and plan Generator power routing. Supports all 21 room types including special mechanics like Spymaster medallions, Sacrificial Chamber upgrades, and Architect placement. Layouts persist via local storage.
 
-- identical marketplace checks are cached for `10` seconds
-- the first result batch loads quickly, then more rows load as you scroll
-- rate-limit pressure is tracked and shown as a subtle usage bar
-- league selection is respected end-to-end
+---
 
-### Trade Tab
+## Comparison with Exiled Exchange 2
 
-The Trade tab is a broader market view for exchange-style items such as currency, essences, fragments, runes, soul cores, and similar categories.
+Exiled Exchange 2 is a well-established Path of Exile 2 price-checking tool with a broad feature set. Reliquary is built with a different philosophy: it is laser-focused on being a lightweight overlay that feels native next to the game rather than a separate window.
 
-It is backed by cached PoE.ninja snapshots, then shaped into a league-aware dashboard with category browsing, value normalization, search, and quick actions.
+| | Reliquary | Exiled Exchange 2 |
+|---|---|---|
+| Overlay style | Transparent, always-on-top, frameless | Separate window with decorations |
+| Backend | Rust (Tauri v2) | Electron / JavaScript |
+| Memory footprint | ~40 MB idle | ~200+ MB typical for Electron |
+| Item scanning | Clipboard (Ctrl+C) | Clipboard + alternative methods |
+| Price checking | trade2 API (official) | trade2 API (official) |
+| Currency exchange | PoE.ninja snapshots with category browser | Currency overview |
+| Map tracking | Client.txt log parsing, waystone hazards | Map mod display |
+| Campaign guide | Zone-aware step tracking with timers | — |
+| Incursion Temple | Full 9×9 grid planner | — |
+| Global hotkeys | Ctrl+C scan, Alt+D trade (configurable) | Various hotkeys |
+| Data caching | Local smart caching with TTL-based refresh | Various |
 
-### Data Tab
+Reliquary does not aim to replace Exiled Exchange 2 — it offers a different experience for players who want minimal distraction, native performance, and an overlay that feels like part of the game.
 
-The Data tab is where Reliquary keeps its “source of truth” thinking visible. It is used for league discovery, catalog wiring, and the groundwork that helps the overlay stay resilient when a new league or new item family shows up.
+---
 
-## Why It Is Built This Way
+## Ready for 0.5
 
-Path of Exile 2 tooling has an annoying tension:
+Reliquary is tested and ready for Path of Exile 2 version 0.5. The overlay includes up-to-date league data, campaign guide steps aligned with the 0.5 patch, and Incursion Temple support matching the 0.4/0.5 mechanic.
 
-- the official trade APIs are the most honest source for live listings, but they are easy to overuse
-- PoE.ninja is great for broader market snapshots, but it is not truly real-time
-- PoE2DB often exposes item structure and league changes early, but it is not a live pricing source
-
-Reliquary leans into that reality instead of pretending one source can do everything.
-
-- `trade2` is used where live marketplace accuracy matters
-- `PoE.ninja` is used where cached market overviews make more sense
-- `PoE2DB` is used as a classification and source-of-truth input for item families, league discovery, and parser groundwork
-
-## Controls
-
-- `Ctrl+C` scans the currently copied PoE 2 item
-- `Alt+D` opens the latest marketplace handoff for the current item
-- `Line` collapses the overlay into a compact one-line mode
-- Drag the header to reposition the overlay
-- Use the top-right league selector to switch the active league context
-
-Single-key shortcuts that were easy to hit by accident while typing were intentionally removed.
-
-## Current Direction
-
-Reliquary is moving toward a few clear goals:
-
-- item parsing that is family-aware and easier to update when PoE 2 changes
-- a trade workflow that stays fast without abusing official APIs
-- league handling that does not break every time a new league launches
-- a UI that feels like it belongs next to PoE 2 rather than like a generic desktop panel
+---
 
 ## Tech Stack
 
-- `Tauri v2` for the desktop shell
-- `Rust` for parsing, workers, hotkeys, window behavior, caching, and API calls
-- `Vite + TypeScript` for the overlay UI
+- **Tauri v2** — Desktop shell with native webview (WebView2 on Windows, WebKit on Linux)
+- **Rust** — Parsing, workers, hotkeys, window management, caching, and API calls
+- **Vite + TypeScript** — Overlay UI with custom CSS (no framework)
+
+---
 
 ## Data Sources
 
-- [Official Path of Exile Trade](https://www.pathofexile.com/trade2/search/poe2)
-- [PoE.ninja PoE2 Economy](https://poe.ninja/poe2/economy/)
-- [PoE2DB](https://poe2db.tw/us/)
+- [Official Path of Exile Trade API](https://www.pathofexile.com/trade2/search/poe2) — Live marketplace listings
+- [PoE.ninja](https://poe.ninja/poe2/economy/) — Cached economy snapshots and exchange rates
+- [PoE2DB](https://poe2db.tw/us/) — Item family classification, league discovery, modifier tier data
+- [RePoE](https://repoe-fork.github.io/poe2/) — World area metadata, mod data, base item tags
 
-If you want the implementation notes and marketplace research trail, see [MARKETPLACE_RESEARCH.md](MARKETPLACE_RESEARCH.md).
+---
 
 ## Development
 
 ### Prerequisites
 
-- `Node.js + npm`
-- `Rust + Cargo`
+- Node.js + npm
+- Rust + Cargo
+- Windows 10+ (primary target), Linux via Wine/Proton
 
-### Useful Commands
+### Commands
 
 ```bash
 npm install
-npm run dev
-npm run build
-npm run tauri:dev
-cargo check --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml
-src-tauri/target/release/reliquary.exe sources --json
-src-tauri/target/release/reliquary.exe leagues --json
-src-tauri/target/release/reliquary.exe debug-log --tail 40
+npm run dev           # Vite dev server
+npm run build         # TypeScript + Vite production build
+npm run tauri:dev     # Full Tauri dev mode
+npm run tauri:build   # Production release build
+npm test              # Run all tests (Vitest + Cargo test)
 ```
 
-### Environment Notes
+### CLI Modes
 
-- `POE2_CLIENT_LOG` points the backend at a specific PoE 2 `Client.txt` while testing log watching
-- `RELIQUARY_BANNED_MODS` points to a custom hazard catalog JSON file
-- `RELIQUARY_POE2_LEAGUE` overrides the startup marketplace league
-- `RELIQUARY_DEBUG_LOG` overrides the default debug log path
+```bash
+reliquary.exe sources --json     # Print data source status
+reliquary.exe leagues --json     # Print detected leagues
+reliquary.exe tiers --json       # Print modifier tier summary
+reliquary.exe debug-log --tail 40 # Tail the debug log
+```
 
-By default, debug logs are written to:
+### Environment Variables
 
-`%LOCALAPPDATA%\Reliquary\reliquary-debug.log`
+| Variable | Purpose |
+|---|---|
+| `POE2_CLIENT_LOG` | Override `Client.txt` path for development |
+| `RELIQUARY_BANNED_MODS` | Custom hazard catalog JSON path |
+| `RELIQUARY_POE2_LEAGUE` | Override startup league |
+| `RELIQUARY_DEBUG_LOG` | Override debug log path |
 
-## Release Outputs
+---
 
-After `npm run tauri:build`, the Windows outputs are:
+## Credits & Inspiration
 
-- `src-tauri/target/release/reliquary.exe`
-- `src-tauri/target/release/bundle/nsis/Reliquary_0.1.0_x64-setup.exe`
-- `src-tauri/target/release/bundle/msi/Reliquary_0.1.0_x64_en-US.msi`
+Reliquary builds on ideas, data, and inspiration from the Path of Exile community:
+
+- **[Exiled Exchange 2](https://github.com/Kvan7/Exiled-Exchange-2)** — MIT License · Copyright (c) 2020 Alexander Drozdov
+- **[Exile-UI](https://github.com/Lailloken/Exile-UI)** — MIT License · Copyright (c) Lailloken
+- **[Sulozor](https://sulozor.github.io)** — Atziri Temple planner reference
+- **[PoE2DB](https://poe2db.tw/us/)** — Wiki content licensed under [CC BY-NC-SA 3.0](https://creativecommons.org/licenses/by-nc-sa/3.0/) · Copyright (c) 2014-2026 PoE2DB
+- **[PoE.ninja](https://poe.ninja)** — Economy data and exchange rates
+
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for full terms.
+
+**Additional Terms — Machine Learning Prohibition:** Permission is NOT granted for this Software to be utilized for machine learning training, text and data mining, or artificial intelligence model generation. Any automated harvesting of this codebase for the purpose of feeding LLMs constitutes a violation of this license agreement.
+
+**Path of Exile Assets Disclaimer:** Reliquary is an unofficial fan-made tool. It is not affiliated with, endorsed by, sponsored by, or approved by Grinding Gear Games. Path of Exile, Path of Exile 2, and related game content, trademarks, and assets are property of Grinding Gear Games.

@@ -64,6 +64,8 @@ pub fn parse_item_buffer(raw_text: String) -> Item {
         hazards: Vec::new(),
         trade_url: None,
         raw_text,
+        is_exchange: false,
+        exchange_category_id: None,
     }
 }
 
