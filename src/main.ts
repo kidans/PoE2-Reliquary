@@ -72,7 +72,7 @@ type GuideAct = {
 };
 
 type TabId = "scan" | "trade" | "data" | "settings" | "temple" | "campaign";
-type CampaignSubTab = "timer" | "guide" | "map-runs";
+type CampaignSubTab = "timer" | "map-runs";
 
 type CurrentAreaInfo = {
   name: string;
@@ -422,6 +422,13 @@ function loadCampaignZoneData() {
       campaignMapRuns = Array.isArray(data.mapRuns) ? data.mapRuns : [];
     }
   } catch { /* ignore */ }
+}
+
+function normalizeZoneName(name: string) {
+  return name
+    .toLowerCase()
+    .replace(/^the\s+/i, "")
+    .trim();
 }
 
 function readTempleLayout() {
@@ -2614,12 +2621,10 @@ function renderCampaignTabPanel() {
     <section class="campaign-panel-shell">
       <nav class="campaign-sub-tabs">
         <button type="button" data-campaign-sub-tab="timer" class="${subTab === "timer" ? "is-active" : ""}">Timer</button>
-        <button type="button" data-campaign-sub-tab="guide" class="${subTab === "guide" ? "is-active" : ""}">Guide</button>
         <button type="button" data-campaign-sub-tab="map-runs" class="${subTab === "map-runs" ? "is-active" : ""}">Map Runs</button>
       </nav>
       <div class="campaign-sub-content">
         ${subTab === "timer" ? renderCampaignTimerSubTab(isZoneResetPending) : ""}
-        ${subTab === "guide" ? renderCampaignGuideSubTab() : ""}
         ${subTab === "map-runs" ? renderCampaignMapRunsSubTab(isZoneResetPending) : ""}
       </div>
     </section>
@@ -2627,11 +2632,15 @@ function renderCampaignTabPanel() {
 }
 
 function renderCampaignTimerSubTab(isZoneResetPending: boolean) {
-  const acts = campaignGuideActs.filter(a => a.act >= 1 && a.act <= 5);
-  const selectedAct = acts.find(a => a.act === campaignSelectedAct);
+  const acts = campaignGuideActs.filter(a => a.act >= 1 && a.act <= 4);
+  const interlude = campaignGuideActs.find(a => a.act === 5);
+  const selectedAct = campaignSelectedAct === 5
+    ? interlude
+    : acts.find(a => a.act === campaignSelectedAct) ?? acts.find(a => a.act === 1);
   const actRows = acts.map(act => {
-    const isActive = act.act === campaignSelectedAct;
-    const time = formatCampaignTime(campaignActTimes[Math.max(0, act.act - 1)] ?? 0);
+    const isActive = act.act === (selectedAct?.act ?? 1) && campaignSelectedAct !== 5;
+    const actIdx = Math.max(0, act.act - 1);
+    const time = formatCampaignTime(campaignActTimes[actIdx] ?? 0);
     return `<button type="button" class="campaign-act-button${isActive ? " is-active" : ""}" data-campaign-act="${act.act}">
       <span>${actDisplayName(act.act)}</span><strong>${time}</strong>
     </button>`;
@@ -2647,9 +2656,12 @@ function renderCampaignTimerSubTab(isZoneResetPending: boolean) {
   if (selectedAct) {
     const zones = selectedAct.zones;
     zoneRows = zones.map(zone => {
-      const zoneTime = campaignZoneTimes.get(zone.name) ?? 0;
-      const isCurrentZone = state.current_area?.name.toLowerCase().trim() === zone.name.toLowerCase().trim()
-        || (state.current_area?.name.toLowerCase().trim() ?? "").includes(zone.name.toLowerCase().trim());
+      const normalizedName = normalizeZoneName(zone.name);
+      const zoneTime = campaignZoneTimes.get(normalizedName) ?? 0;
+      const currentName = normalizeZoneName(state.current_area?.name ?? "");
+      const isCurrentZone = currentName === normalizedName
+        || currentName.includes(normalizedName)
+        || normalizedName.includes(currentName);
       const liveTime = isCurrentZone && campaignCurrentZoneEnteredAt > 0
         ? Date.now() - campaignCurrentZoneEnteredAt
         : 0;
@@ -2659,13 +2671,13 @@ function renderCampaignTimerSubTab(isZoneResetPending: boolean) {
       return `<div class="campaign-zone-row${current}">
         <span class="campaign-zone-name">${escapeHtml(zone.name)}${wp}</span>
         <span class="campaign-zone-level">L${escapeHtml(zone.level)}</span>
-        <span class="campaign-zone-time">${totalTime > 0 ? formatZoneTime(totalTime) : "—"}</span>
+        <span class="campaign-zone-time">${totalTime > 0 ? formatZoneTime(totalTime) : "\u2014"}</span>
       </div>`;
     }).join("");
   }
 
   const totalText = formatCampaignTime(campaignTotalMs);
-  const actText = selectedAct ? formatCampaignTime(campaignActTimes[Math.max(0, campaignSelectedAct - 1)] ?? 0) : "0:00";
+  const actText = selectedAct ? formatCampaignTime(campaignActTimes[Math.max(0, (selectedAct.act <= 4 ? selectedAct.act : 5) - 1)] ?? 0) : "0:00";
   const resetLabel = isZoneResetPending ? "Are you sure?" : "Reset All";
 
   return `
@@ -2683,38 +2695,6 @@ function renderCampaignTimerSubTab(isZoneResetPending: boolean) {
       <div class="campaign-zone-list">
         ${zoneRows || "<div class=\"campaign-zone-empty\">No zones for this act.</div>"}
       </div>
-    </div>
-  `;
-}
-
-function renderCampaignGuideSubTab() {
-  const zone = findCurrentZoneInGuide();
-  if (!zone || campaignGuideAct <= 0) {
-    return `<div class="campaign-guide-empty">
-      <p class="section-label">Campaign Guide</p>
-      <p>Enter a campaign zone to see the current step checklist.</p>
-    </div>`;
-  }
-
-  const stepsHtml = zone.steps.map((step, i) => {
-    const key = stepKey(campaignGuideAct, zone.name, i);
-    const done = campaignCompletedSteps.has(key);
-    const loc = step.loc ? ` (${escapeHtml(step.loc)})` : "";
-    const rewardHtml = step.reward
-      ? ` <span class="reward-chip" style="color:${rewardColor(step.tags, step.reward)};border-color:${rewardColor(step.tags, step.reward)}">${escapeHtml(step.reward)}</span>`
-      : "";
-    return `<div class="checklist-step${done ? " completed" : ""}" data-campaign-step-key="${key}">${done ? "☑" : "☐"} ${escapeHtml(step.text)}${loc}${rewardHtml}</div>`;
-  }).join("");
-
-  const doneCount = zone.steps.filter((_, i) => campaignCompletedSteps.has(stepKey(campaignGuideAct, zone.name, i))).length;
-
-  return `
-    <div class="campaign-guide-content">
-      <header class="campaign-guide-header">
-        <h2>${escapeHtml(zone.name)} — ${actDisplayName(campaignGuideAct)}</h2>
-        <span>${doneCount}/${zone.steps.length} steps</span>
-      </header>
-      <div class="campaign-guide-steps">${stepsHtml}</div>
     </div>
   `;
 }
@@ -2803,7 +2783,6 @@ function renderDataPanel() {
 
   return `
     <div class="data-grid">
-      ${renderCampaignSection()}
       <div class="data-source-card">
         <span>Sources</span>
         <strong>Live data health</strong>
@@ -3813,7 +3792,7 @@ if (!isListingPreviewWindow && leagueElement) {
 
     if (campaignActButton?.dataset.campaignAct) {
       const act = Number(campaignActButton.dataset.campaignAct);
-      if (act >= 0 && act <= 5) {
+      if (act >= 1 && act <= 5) {
         campaignSelectedAct = act;
         render();
       }
@@ -4403,12 +4382,15 @@ if (!isListingPreviewWindow && leagueElement) {
     if (newAct !== campaignGuideAct) {
       campaignGuideAct = newAct;
       campaignGuidePage = 0;
-      campaignSelectedAct = newAct > 0 ? newAct : campaignSelectedAct;
     }
 
-    if (campaignCurrentZoneEnteredAt > 0 && prevArea && prevArea.area_type !== "hideout") {
-      const elapsed = Date.now() - campaignCurrentZoneEnteredAt;
-      const prevName = prevArea.name;
+    const now = Date.now();
+    const eventAgeMs = now - event.payload.entered_at_epoch_ms;
+    const isReplay = eventAgeMs > 10_000;
+
+    if (!isReplay && campaignCurrentZoneEnteredAt > 0 && prevArea && prevArea.area_type !== "hideout") {
+      const elapsed = now - campaignCurrentZoneEnteredAt;
+      const prevName = normalizeZoneName(prevArea.name);
       campaignZoneTimes.set(prevName, (campaignZoneTimes.get(prevName) ?? 0) + elapsed);
       if (prevArea.area_type === "map" && campaignMapRuns.length > 0) {
         const lastRun = campaignMapRuns[0];
@@ -4429,8 +4411,10 @@ if (!isListingPreviewWindow && leagueElement) {
       if (campaignMapRuns.length > 5) campaignMapRuns.pop();
     }
 
-    campaignCurrentZoneEnteredAt = event.payload.area_type === "hideout" ? 0 : Date.now();
-    saveCampaignZoneData();
+    if (!isReplay) {
+      campaignCurrentZoneEnteredAt = event.payload.area_type === "hideout" ? 0 : now;
+      saveCampaignZoneData();
+    }
 
     if (event.payload.area_type === "hideout") {
       if (campaignTimerRunning) stopCampaignTimer();
@@ -4492,6 +4476,9 @@ if (!isListingPreviewWindow && leagueElement) {
       if (state.current_area) {
         const rawAct = state.current_area.act ?? 0;
         campaignGuideAct = remapCampaignAct(rawAct);
+        if (state.current_area.area_type !== "hideout") {
+          campaignCurrentZoneEnteredAt = state.current_area.entered_at_epoch_ms || Date.now();
+        }
         if (campaignGuideAct > 0 && state.current_area.area_type !== "hideout") {
           startCampaignTimer();
         }
