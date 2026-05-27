@@ -2064,13 +2064,19 @@ kbd {
 }
 
 .campaign-sidebar {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
-  align-content: start;
   overflow-y: auto;
   padding-right: 4px;
   border-right: 1px solid hsl(var(--accent-hue, 355) 70% 58% / 0.12);
+}
+
+.campaign-sidebar-footer {
+  padding-top: 8px;
+  border-top: 1px solid hsl(var(--accent-hue, 355) 70% 58% / 0.1);
+  margin-top: auto;
+  flex-shrink: 0;
 }
 
 .campaign-act-button {

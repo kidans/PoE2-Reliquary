@@ -428,6 +428,7 @@ function normalizeZoneName(name: string) {
   return name
     .toLowerCase()
     .replace(/^the\s+/i, "")
+    .replace(/[^a-z0-9]+/g, " ")
     .trim();
 }
 
