@@ -1,6 +1,6 @@
 # Reliquary
 
-Reliquary is a lightweight desktop overlay for Path of Exile 2, built to help with item evaluation, trade awareness, currency rates, map tracking, campaign routing, and Incursion Temple planning without needing to tab out of the game.
+Reliquary is a lightweight desktop overlay for Path of Exile 2, built to help with item evaluation, trade awareness, currency rates, map tracking, campaign routing, per-zone timers, and Incursion Temple planning without needing to tab out of the game.
 
 It runs as a transparent, always-on-top overlay using Tauri v2, with a Rust backend and a TypeScript/HTML/CSS frontend. The goal is simple: keep useful information close, stay out of the way, and avoid adding unnecessary overhead while you play.
 
@@ -16,11 +16,15 @@ Copy an item in Path of Exile 2 with `Ctrl+C`, and Reliquary will parse it autom
 
 The price check system separates stronger roll-band matches from broader template-based results, so estimates are easier to understand. It also tracks rate-limit pressure to help avoid unnecessary API spam.
 
+![Quick Price Check](public/readme/Scan.png)
+
 ### Currency Rates
 
 The Trade tab gives you a real-time view of currency and exchange-item values using cached PoE.ninja economy snapshots.
 
 You can browse categories like currency, essences, fragments, runes, soul cores, catalysts, omens, and more. Reliquary also includes sparkline trends, searchable exchange data, league-aware pricing, and value comparisons across multiple quote currencies.
+
+![Currency Rates](public/readme/Currency.png)
 
 ### Map Tracker
 
@@ -28,19 +32,29 @@ Reliquary reads your `Client.txt` log to detect when you enter a map. From there
 
 If a map contains mods that match your banned-mod catalog, Reliquary surfaces them as warnings before you commit to the run.
 
-### Campaign Guide
+![Compact Map HUD](public/readme/Guide%20and%20Timer.png)
 
-Reliquary includes a step-by-step campaign guide covering all five acts and the Interlude, updated for Path of Exile 2 version 0.5.
+### Campaign Tab
 
-The overlay detects your current zone and highlights the next incomplete task, making it easier to stay on route while leveling. You can check off steps as you go, and progress is saved locally between sessions.
+The Campaign tab brings your act timer, per-zone breakdown, campaign guide, and map run history into one dedicated view. It is split into two sub-tabs: Timer and Map Runs.
 
-Reward chips also show important campaign rewards such as skill points, spirit, life, mana, and resistances.
+#### Timer
 
-### Act Timer
+The act sidebar shows your current time for each act (I–IV and Interlude), alongside a per-act death counter that tracks every death and shows it as a ☠ badge when there is one.
 
-The campaign guide includes a built-in timer for each act. It starts when you enter the first zone of an act and pauses while you are in hideouts.
+Selecting an act shows every zone you have visited with an individual timer. The current zone gets a gold highlight with a live ticking clock. Zones that are in the world areas data but not in the campaign guide — such as Mausoleum of the Praetor or buried Interlude maps like Qimah Reservoir — still show up under an *Other tracked zones* section so nothing goes unaccounted for.
 
-You can track your act pace and total campaign time from both compact and full guide views.
+A **Reset All** button clears your timers, zone times, and death counts. It uses a red confirmation so you do not reset by accident.
+
+![Campaign Timer](public/readme/Timerdata.png)
+
+#### Map Runs
+
+Every endgame map you enter and exit is logged in the Map Runs view. The last five maps appear as compact cards across the top, and the full run history fills a horizontal bar chart below.
+
+Each bar in the chart is sized to the map duration, with deaths shown directly on the bar. A vertical dashed reference line marks the median time, and a summary at the bottom shows your median map time and average deaths per map. A separate **Reset Map History** button clears only your endgame run log.
+
+![Map Runs](public/readme/MapRuns.png)
 
 ### Temple Planner
 
@@ -49,6 +63,16 @@ Reliquary includes a full Incursion Temple planner for the Temple of Atzoatl mec
 You can place rooms on a 9×9 grid, manage room types and tiers, track adjacency requirements, and plan Generator power routing. It supports all 21 room types, including special mechanics such as Spymaster medallions, Sacrificial Chamber upgrades, and Architect placement.
 
 Temple layouts are saved locally.
+
+![Incursion Temple Planner](public/readme/Temple.png)
+
+### Settings
+
+Reliquary gives you full control over how the overlay looks and behaves. The Settings tab includes sliders for accent hue, saturation, and panel transparency, so you can match the overlay to your display setup or personal taste. Warnings and hazards always stay red regardless of your chosen accent, so nothing important blends in.
+
+Hotkeys for scanning items and opening trade searches are configurable to `Ctrl`, `Alt`, or any letter or digit key, and shortcuts that do not pass validation fall back to safe defaults automatically. All preferences are saved to your local machine and applied instantly.
+
+![Settings](public/readme/Settings.png)
 
 ---
 
