@@ -16,17 +16,23 @@ Copy an item in Path of Exile 2 with `Ctrl+C`, and Reliquary will parse it autom
 
 The price check system separates stronger roll-band matches from broader template-based results, so estimates are easier to understand. It also tracks rate-limit pressure to help avoid unnecessary API spam.
 
+![Quick Price Check](public/readme/Scan.png)
+
 ### Currency Rates
 
 The Trade tab gives you a real-time view of currency and exchange-item values using cached PoE.ninja economy snapshots.
 
 You can browse categories like currency, essences, fragments, runes, soul cores, catalysts, omens, and more. Reliquary also includes sparkline trends, searchable exchange data, league-aware pricing, and value comparisons across multiple quote currencies.
 
+![Currency Rates](public/readme/Currency.png)
+
 ### Map Tracker
 
 Reliquary reads your `Client.txt` log to detect when you enter a map. From there, it shows key map details in a compact HUD strip, including waystone mod count, item quantity, rarity, pack size, and possible hazard indicators.
 
 If a map contains mods that match your banned-mod catalog, Reliquary surfaces them as warnings before you commit to the run.
+
+![Compact Map HUD](public/readme/Timer%20One-liner.png)
 
 ### Campaign Tab
 
@@ -40,11 +46,15 @@ Selecting an act shows every zone you have visited with an individual timer. The
 
 A **Reset All** button clears your timers, zone times, and death counts. It uses a red confirmation so you do not reset by accident.
 
+![Campaign Timer](public/readme/Timerdata.png)
+
 #### Map Runs
 
 Every endgame map you enter and exit is logged in the Map Runs view. The last five maps appear as compact cards across the top, and the full run history fills a horizontal bar chart below.
 
 Each bar in the chart is sized to the map duration, with deaths shown directly on the bar. A vertical dashed reference line marks the median time, and a summary at the bottom shows your median map time and average deaths per map. A separate **Reset Map History** button clears only your endgame run log.
+
+![Map Runs](public/readme/MapRuns.png)
 
 ### Temple Planner
 
@@ -53,6 +63,8 @@ Reliquary includes a full Incursion Temple planner for the Temple of Atzoatl mec
 You can place rooms on a 9×9 grid, manage room types and tiers, track adjacency requirements, and plan Generator power routing. It supports all 21 room types, including special mechanics such as Spymaster medallions, Sacrificial Chamber upgrades, and Architect placement.
 
 Temple layouts are saved locally.
+
+![Incursion Temple Planner](public/readme/Temple.png)
 
 ---
 
