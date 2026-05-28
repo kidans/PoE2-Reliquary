@@ -32,7 +32,7 @@ Reliquary reads your `Client.txt` log to detect when you enter a map. From there
 
 If a map contains mods that match your banned-mod catalog, Reliquary surfaces them as warnings before you commit to the run.
 
-![Compact Map HUD](public/readme/Timer%20One-liner.png)
+![Compact Map HUD](public/readme/Guide%20and%20Timer.png)
 
 ### Campaign Tab
 
@@ -65,6 +65,14 @@ You can place rooms on a 9×9 grid, manage room types and tiers, track adjacency
 Temple layouts are saved locally.
 
 ![Incursion Temple Planner](public/readme/Temple.png)
+
+### Settings
+
+Reliquary gives you full control over how the overlay looks and behaves. The Settings tab includes sliders for accent hue, saturation, and panel transparency, so you can match the overlay to your display setup or personal taste. Warnings and hazards always stay red regardless of your chosen accent, so nothing important blends in.
+
+Hotkeys for scanning items and opening trade searches are configurable to `Ctrl`, `Alt`, or any letter or digit key, and shortcuts that do not pass validation fall back to safe defaults automatically. All preferences are saved to your local machine and applied instantly.
+
+![Settings](public/readme/Settings.png)
 
 ---
 
