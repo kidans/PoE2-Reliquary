@@ -6,6 +6,7 @@ Built with Tauri v2 (Rust backend + TypeScript/HTML/CSS frontend), Reliquary run
 
 Extremely lightweight: 16.5 mb exe, with 50-67 mb ram usage effectively smaller by 5x-10x within similar tools!
 
+NO OAUTH, No data tracking (all personal and within your pc only), and only fetches current data from ##TRUSTED sources. 
 ---
 
 ## Features
