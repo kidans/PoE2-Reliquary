@@ -28,30 +28,6 @@ The campaign guide includes a per-act timer that starts when you enter the first
 ### Temple
 A full Incursion Temple planner for the Temple of Atzoatl mechanic. Place rooms on a 9×9 grid, manage room types and tiers, track adjacency requirements for upgrades, and plan Generator power routing. Supports all 21 room types including special mechanics like Spymaster medallions, Sacrificial Chamber upgrades, and Architect placement. Layouts persist via local storage.
 
----
-
-## Comparison with Exiled Exchange 2
-
-Exiled Exchange 2 is a well-established Path of Exile 2 price-checking tool with a broad feature set. Reliquary is built with a different philosophy: it is laser-focused on being a lightweight overlay that feels native next to the game rather than a separate window.
-
-| | Reliquary | Exiled Exchange 2 |
-|---|---|---|
-| Overlay style | Transparent, always-on-top, frameless | Separate window with decorations |
-| Backend | Rust (Tauri v2) | Electron / JavaScript |
-| Memory footprint | ~40 MB idle | ~200+ MB typical for Electron |
-| Item scanning | Clipboard (Ctrl+C) | Clipboard + alternative methods |
-| Price checking | trade2 API (official) | trade2 API (official) |
-| Currency exchange | PoE.ninja snapshots with category browser | Currency overview |
-| Map tracking | Client.txt log parsing, waystone hazards | Map mod display |
-| Campaign guide | Zone-aware step tracking with timers | — |
-| Incursion Temple | Full 9×9 grid planner | — |
-| Global hotkeys | Ctrl+C scan, Alt+D trade (configurable) | Various hotkeys |
-| Data caching | Local smart caching with TTL-based refresh | Various |
-
-Reliquary does not aim to replace Exiled Exchange 2 — it offers a different experience for players who want minimal distraction, native performance, and an overlay that feels like part of the game.
-
----
-
 ## Ready for 0.5
 
 Reliquary is tested and ready for Path of Exile 2 version 0.5. The overlay includes up-to-date league data, campaign guide steps aligned with the 0.5 patch, and Incursion Temple support matching the 0.4/0.5 mechanic.
