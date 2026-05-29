@@ -71,7 +71,7 @@ type GuideAct = {
   zones: GuideZone[];
 };
 
-type TabId = "scan" | "trade" | "data" | "settings" | "temple" | "campaign";
+type TabId = "scan" | "trade" | "campaign" | "atlas" | "data" | "settings" | "temple";
 type CampaignSubTab = "timer" | "map-runs";
 
 type CurrentAreaInfo = {
@@ -88,6 +88,53 @@ type CurrentAreaInfo = {
   boss: string | null;
 };
 
+type MapRunConfidence = "armed" | "area_only" | "stale" | "unknown";
+
+type HazardSummary = {
+  info: number;
+  warning: number;
+  danger: number;
+  build_breaking: number;
+};
+
+type WaystoneHazardWarning = {
+  modifier: string;
+  matched_pattern: string;
+  severity: "info" | "warning" | "danger" | "build_breaking";
+  profile_id: string;
+  profile_label: string;
+  reason: string;
+};
+
+type WaystoneSnapshot = {
+  name: string;
+  base_type: string | null;
+  tier: number | null;
+  item_level: number | null;
+  explicit_mods: string[];
+  quantity: number | null;
+  rarity: number | null;
+  pack_size: number | null;
+  hazard_count: number;
+  profile_hazards: WaystoneHazardWarning[];
+  profile_hazard_summary: HazardSummary;
+  raw_hash: string;
+  captured_at_epoch_ms: number;
+};
+
+type MapRunContext = {
+  area: CurrentAreaInfo;
+  waystone: WaystoneSnapshot | null;
+  confidence: MapRunConfidence;
+  started_at_epoch_ms: number;
+};
+
+type HazardProfile = {
+  id: string;
+  label: string;
+  rules: { pattern: string; severity: string; reason: string }[];
+};
+
 type WorldAreaStatus = {
   state: string;
   source: string;
@@ -101,6 +148,9 @@ type AppState = {
   trade_queue: TradeWhisper[];
   current_zone: string;
   current_area: CurrentAreaInfo | null;
+  pending_waystone: WaystoneSnapshot | null;
+  active_map_run: MapRunContext | null;
+  hazard_profile_id: string;
   world_area_status: WorldAreaStatus;
   trade_league: string;
   league_catalog: LeagueCatalogEntry[];
@@ -285,6 +335,9 @@ const state: AppState = {
   trade_queue: [],
   current_zone: "Unknown",
   current_area: null,
+  pending_waystone: null,
+  active_map_run: null,
+  hazard_profile_id: "general_safe_mapping",
   world_area_status: {
     state: "warming",
     source: "unknown",
@@ -317,6 +370,8 @@ let hoveredListingPreview: ListingPreviewRequest | null = null;
 let pinnedListingPreviewIndex: number | null = null;
 let previewPollHandle = 0;
 let latestRequestedFilterSignature: string | null = null;
+let hazardProfiles: HazardProfile[] = [];
+let selectedAtlasSection: "overview" | "safety" | "profile" | "focus" | "history" = "overview";
 let activeFilterPushTimer = 0;
 
 const campaignGuideActs = guideData.acts;
@@ -717,6 +772,18 @@ root.innerHTML = isListingPreviewWindow
             </span>
             <span class="tab-label">Trade</span>
           </button>
+          <button class="tab-button" data-tab="campaign" type="button" title="Campaign">
+            <span class="tab-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            </span>
+            <span class="tab-label">Campaign</span>
+          </button>
+          <button class="tab-button" data-tab="atlas" type="button" title="Atlas">
+            <span class="tab-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 2 4 6v12l8 4 8-4V6Z"/><path d="M12 2v20M4 6l8 4 8-4M4 18l8-4 8 4"/></svg>
+            </span>
+            <span class="tab-label">Atlas</span>
+          </button>
           <button class="tab-button" data-tab="data" type="button" title="Data">
             <span class="tab-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M5 6c0-1.7 3.1-3 7-3s7 1.3 7 3-3.1 3-7 3-7-1.3-7-3Z"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
@@ -728,12 +795,6 @@ root.innerHTML = isListingPreviewWindow
               <svg viewBox="0 0 24 24"><path d="M12 2 21 12 12 22 3 12Z"/><path d="M12 6 17 12 12 18 7 12Z"/><path d="M12 2v4M12 18v4M3 12h4M17 12h4"/></svg>
             </span>
             <span class="tab-label">Temple</span>
-          </button>
-          <button class="tab-button" data-tab="campaign" type="button" title="Campaign">
-            <span class="tab-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-            </span>
-            <span class="tab-label">Campaign</span>
           </button>
           <button class="tab-button tab-button-icon" data-tab="settings" type="button" title="Settings" aria-label="Settings">
             <span class="tab-icon" aria-hidden="true">
@@ -868,6 +929,12 @@ function render() {
 
     if (activeTab === "campaign") {
       panelElement!.innerHTML = renderCampaignTabPanel();
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
+
+    if (activeTab === "atlas") {
+      panelElement!.innerHTML = renderAtlasPanel();
       hoveredListingPreview = null;
       void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
     }
@@ -2826,6 +2893,249 @@ function formatCampaignTime(totalMs: number) {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
+function renderAtlasPanel() {
+  const sections: { id: typeof selectedAtlasSection; label: string }[] = [
+    { id: "overview", label: "Overview" },
+    { id: "safety", label: "Waystone Safety" },
+    { id: "profile", label: "Danger Profile" },
+    { id: "focus", label: "Endgame Focus" },
+    { id: "history", label: "Run History" },
+  ];
+
+  const sidebar = sections.map((section) => `
+    <button class="trade-category-button ${selectedAtlasSection === section.id ? "is-active" : ""}" data-atlas-section="${section.id}" type="button">
+      <span class="trade-category-glyph" aria-hidden="true"></span>
+      <span>${escapeHtml(section.label)}</span>
+    </button>
+  `).join("");
+
+  return `
+    <section class="trade-market atlas-shell">
+      <aside class="trade-sidebar">
+        <div class="trade-sidebar-section trade-sidebar-scroll">
+          <p class="section-label">Atlas</p>
+          <div class="trade-category-list">
+            ${sidebar}
+          </div>
+        </div>
+      </aside>
+      <div class="trade-market-main atlas-main">
+        <header class="trade-market-header">
+          <div>
+            <h2>Atlas</h2>
+            <p>Current run context · build-aware waystone safety</p>
+          </div>
+        </header>
+        ${renderAtlasDashboard()}
+      </div>
+    </section>
+  `;
+}
+
+function renderAtlasDashboard() {
+  if (selectedAtlasSection === "safety") return renderAtlasSafetyDashboard();
+  if (selectedAtlasSection === "profile") return renderAtlasProfileDashboard();
+  if (selectedAtlasSection === "focus") return renderAtlasFocusDashboard();
+  if (selectedAtlasSection === "history") return renderAtlasHistoryDashboard();
+  return renderAtlasOverviewDashboard();
+}
+
+function atlasContext() {
+  const run = state.active_map_run;
+  const area = run?.area ?? state.current_area;
+  const waystone = run?.waystone ?? state.pending_waystone;
+  const confidence: MapRunConfidence = run?.confidence ?? (state.pending_waystone ? "unknown" : "area_only");
+  return { run, area, waystone, confidence };
+}
+
+function renderAtlasOverviewDashboard() {
+  const { area, waystone, confidence } = atlasContext();
+  const summary = waystone?.profile_hazard_summary ?? { info: 0, warning: 0, danger: 0, build_breaking: 0 };
+  const warnings = waystone?.profile_hazards ?? [];
+
+  return `
+    <div class="atlas-dashboard">
+      <div class="atlas-summary-grid">
+        ${renderAtlasStatCard("Area", area?.name ?? "No active area", area?.area_level ? `Area Lv ${area.area_level}` : "Waiting for Client.txt")}
+        ${renderAtlasStatCard("Waystone", waystone?.base_type ?? waystone?.name ?? "Not armed", renderWaystoneStatsText(waystone))}
+        ${renderAtlasStatCard("Safety", safetySummaryLabel(summary), `${summary.build_breaking} breaking · ${summary.danger} danger · ${summary.warning} warning`)}
+        ${renderAtlasStatCard("Profile", profileLabel(state.hazard_profile_id), mapConfidenceLabel(confidence))}
+      </div>
+
+      <div class="atlas-content-grid">
+        <section class="atlas-card atlas-card-large">
+          <p class="section-label">Current Run</p>
+          <h3>${escapeHtml(area?.name ?? "Atlas")}</h3>
+          <div class="atlas-detail-list">
+            <span><strong>Type</strong>${escapeHtml(area?.area_type ?? "unknown")}</span>
+            <span><strong>Level</strong>${area?.area_level ?? "-"}</span>
+            <span><strong>Boss</strong>${escapeHtml(area?.boss ?? "Unknown")}</span>
+            <span><strong>Confidence</strong>${escapeHtml(mapConfidenceLabel(confidence))}</span>
+          </div>
+          <p>${escapeHtml(mapConfidenceDescription(confidence))}</p>
+        </section>
+
+        <section class="atlas-card atlas-card-large">
+          <p class="section-label">Waystone Safety</p>
+          <h3>${escapeHtml(safetySummaryLabel(summary))}</h3>
+          <div class="atlas-safety-strip">
+            <span class="atlas-danger-pill breaking">${summary.build_breaking} breaking</span>
+            <span class="atlas-danger-pill danger">${summary.danger} danger</span>
+            <span class="atlas-danger-pill warning">${summary.warning} warning</span>
+          </div>
+          <div class="atlas-warning-list compact">
+            ${warnings.length ? warnings.slice(0, 3).map(renderAtlasWarning).join("") : `<div class="empty-listing">No profile warnings for the armed/current waystone.</div>`}
+          </div>
+        </section>
+
+        <section class="atlas-card">
+          <p class="section-label">Endgame Focus</p>
+          <h3>0.5 companion placeholder</h3>
+          <p>Mechanic focus, boss/Fortress checklists, and market hooks will land here after map context is stable.</p>
+        </section>
+
+        <section class="atlas-card">
+          <p class="section-label">Run History</p>
+          <h3>Mapping log</h3>
+          <p>Run history will use the Currency table style after active map runs are persisted.</p>
+        </section>
+      </div>
+    </div>
+  `;
+}
+
+function renderAtlasSafetyDashboard() {
+  const { waystone } = atlasContext();
+  const summary = waystone?.profile_hazard_summary ?? { info: 0, warning: 0, danger: 0, build_breaking: 0 };
+  const warnings = waystone?.profile_hazards ?? [];
+
+  return `
+    <div class="atlas-dashboard">
+      <div class="atlas-summary-grid three">
+        ${renderAtlasStatCard("Build-breaking", String(summary.build_breaking), "Usually reroll")}
+        ${renderAtlasStatCard("Danger", String(summary.danger), "High-risk for profile")}
+        ${renderAtlasStatCard("Warning", String(summary.warning), "Playable but notable")}
+      </div>
+      <section class="atlas-card atlas-card-full">
+        <p class="section-label">Waystone Safety</p>
+        <h3>${escapeHtml(profileLabel(state.hazard_profile_id))}</h3>
+        <div class="atlas-warning-list">
+          ${warnings.length ? warnings.map(renderAtlasWarning).join("") : `<div class="empty-listing">No profile warnings for the armed/current waystone.</div>`}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAtlasProfileDashboard() {
+  const profiles = hazardProfiles.length ? hazardProfiles : [
+    { id: "general_safe_mapping", label: "General Safe Mapping", rules: [] },
+    { id: "energy_shield_recovery", label: "Energy Shield / Recovery", rules: [] },
+    { id: "minion", label: "Minion", rules: [] },
+  ];
+
+  return `
+    <div class="atlas-dashboard">
+      <section class="atlas-card atlas-card-full">
+        <p class="section-label">Danger Profile</p>
+        <h3>${escapeHtml(profileLabel(state.hazard_profile_id))}</h3>
+        <div class="atlas-profile-grid">
+          ${profiles.map((profile) => `
+            <button class="atlas-profile-card ${profile.id === state.hazard_profile_id ? "is-active" : ""}" data-hazard-profile="${escapeAttribute(profile.id)}" type="button">
+              <p class="section-label">${profile.id === state.hazard_profile_id ? "Active" : "Profile"}</p>
+              <strong>${escapeHtml(profile.label)}</strong>
+              <span>${profile.rules.length} safety rules</span>
+            </button>
+          `).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAtlasFocusDashboard() {
+  return `
+    <div class="atlas-dashboard">
+      <section class="atlas-card atlas-card-full">
+        <p class="section-label">Endgame Focus</p>
+        <h3>0.5 Atlas companion</h3>
+        <p>Mechanic focus, boss/Fortress checklists, and economy watchlist hooks will land here after the map-context foundation is tested.</p>
+      </section>
+    </div>
+  `;
+}
+
+function renderAtlasHistoryDashboard() {
+  return `
+    <div class="atlas-dashboard">
+      <section class="atlas-card atlas-card-full">
+        <p class="section-label">Run History</p>
+        <h3>Mapping log</h3>
+        <div class="empty-listing">Run history will be wired after active map runs are persisted.</div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAtlasStatCard(label: string, value: string, detail: string) {
+  return `
+    <section class="atlas-stat-card">
+      <p class="section-label">${escapeHtml(label)}</p>
+      <strong>${escapeHtml(value)}</strong>
+      <span>${escapeHtml(detail)}</span>
+    </section>
+  `;
+}
+
+function renderAtlasWarning(warning: WaystoneHazardWarning) {
+  return `
+    <article class="price-filter atlas-warning severity-${escapeAttribute(warning.severity)}">
+      <span>
+        <strong>${escapeHtml(warning.modifier)}</strong>
+        <small>${escapeHtml(warning.profile_label)} · ${escapeHtml(warning.reason)}</small>
+      </span>
+      <em>${escapeHtml(warning.severity.replace("_", " "))}</em>
+    </article>
+  `;
+}
+
+function renderWaystoneStatsText(waystone: WaystoneSnapshot | null | undefined) {
+  if (!waystone) return "Arm a waystone before entering a map.";
+  const parts = [
+    waystone.tier ? `T${waystone.tier}` : null,
+    waystone.quantity != null ? `Q:${waystone.quantity}%` : null,
+    waystone.rarity != null ? `R:${waystone.rarity}%` : null,
+    waystone.pack_size != null ? `Pack:${waystone.pack_size}%` : null,
+    waystone.hazard_count ? `${waystone.hazard_count} warnings` : null,
+  ].filter(Boolean);
+  return parts.join(" · ") || "Waystone armed.";
+}
+
+function safetySummaryLabel(summary: HazardSummary) {
+  if (summary.build_breaking > 0) return "Build-breaking";
+  if (summary.danger > 0) return "Danger";
+  if (summary.warning > 0) return "Warning";
+  return "No warnings";
+}
+
+function mapConfidenceLabel(confidence: MapRunConfidence) {
+  if (confidence === "armed") return "Armed";
+  if (confidence === "stale") return "Stale";
+  if (confidence === "unknown") return "Pending";
+  return "Area-only";
+}
+
+function mapConfidenceDescription(confidence: MapRunConfidence) {
+  if (confidence === "armed") return "This run consumed an explicitly armed waystone.";
+  if (confidence === "stale") return "A waystone existed, but it was too old to trust.";
+  if (confidence === "unknown") return "A waystone is armed and waiting for the next generated map.";
+  return "Client.txt detected the area, but no waystone was armed.";
+}
+
+function profileLabel(profileId: string) {
+  return hazardProfiles.find((profile) => profile.id === profileId)?.label ?? profileId.replace(/_/g, " ");
+}
+
 function renderSettingsPanel() {
   const transparencyPercent = Math.round((1 - appSettings.panelAlpha) * 100);
 
@@ -3785,6 +4095,23 @@ if (!isListingPreviewWindow && leagueElement) {
     const campaignZoneResetButton = target.closest<HTMLButtonElement>("[data-campaign-zone-reset]");
     const campaignMapResetButton = target.closest<HTMLButtonElement>("[data-campaign-map-reset]");
 
+    const atlasSectionButton = target.closest<HTMLButtonElement>("[data-atlas-section]");
+    if (atlasSectionButton?.dataset.atlasSection) {
+      selectedAtlasSection = atlasSectionButton.dataset.atlasSection as typeof selectedAtlasSection;
+      render();
+      return;
+    }
+
+    const hazardProfileButton = target.closest<HTMLButtonElement>("[data-hazard-profile]");
+    if (hazardProfileButton?.dataset.hazardProfile) {
+      state.hazard_profile_id = hazardProfileButton.dataset.hazardProfile;
+      render();
+      void invoke("set_hazard_profile", { profileId: hazardProfileButton.dataset.hazardProfile }).catch((error) =>
+        pushStatus("hazards", String(error)),
+      );
+      return;
+    }
+
     if (campaignSubTabButton?.dataset.campaignSubTab) {
       activeCampaignSubTab = campaignSubTabButton.dataset.campaignSubTab as CampaignSubTab;
       render();
@@ -4466,6 +4793,29 @@ if (!isListingPreviewWindow && leagueElement) {
   void listen<WorkerStatus>("scan://worker-error", (event) => {
     pushStatus(event.payload.worker, event.payload.message);
   });
+
+  listen<WaystoneSnapshot>("scan://pending-waystone-updated", (event) => {
+    state.pending_waystone = event.payload;
+    render();
+  });
+
+  listen<MapRunContext>("scan://map-run-updated", (event) => {
+    state.active_map_run = event.payload;
+    state.current_area = event.payload.area;
+    render();
+  });
+
+  listen<string>("scan://hazard-profile-updated", (event) => {
+    state.hazard_profile_id = event.payload;
+    render();
+  });
+
+  void invoke<HazardProfile[]>("get_hazard_profiles")
+    .then((profiles) => {
+      hazardProfiles = profiles;
+      render();
+    })
+    .catch((error) => pushStatus("hazards", String(error)));
 
   invoke<AppState>("get_app_state")
     .then((initialState) => {
