@@ -1,0 +1,14 @@
+{
+  "pipeline": "project/map-run-context-plan",
+  "stages": [
+    { "id": "git-fetch", "label": "git fetch origin", "status": "pending", "deps": [] },
+    { "id": "git-checkout", "label": "git checkout project/map-run-context-plan", "status": "pending", "deps": ["git-fetch"] },
+    { "id": "git-pull", "label": "git pull", "status": "pending", "deps": ["git-checkout"] },
+    { "id": "apply-p0-p1", "label": "python scripts/apply_priority_0_1.py", "status": "pending", "deps": ["git-pull"] },
+    { "id": "fix-atlas-ui", "label": "python scripts/fix_atlas_ui.py", "status": "pending", "deps": ["git-pull"] },
+    { "id": "npm-ci", "label": "npm ci --ignore-scripts", "status": "pending", "deps": ["apply-p0-p1", "fix-atlas-ui"] },
+    { "id": "npm-build", "label": "npm run build", "status": "pending", "deps": ["npm-ci"] },
+    { "id": "cargo-fmt", "label": "cargo fmt --manifest-path src-tauri/Cargo.toml", "status": "pending", "deps": ["npm-build"] },
+    { "id": "cargo-check", "label": "cargo check --manifest-path src-tauri/Cargo.toml", "status": "pending", "deps": ["cargo-fmt"] }
+  ]
+}
