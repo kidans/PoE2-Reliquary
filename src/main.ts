@@ -2962,7 +2962,7 @@ function renderAtlasOverviewDashboard() {
         ${renderAtlasStatCard("Profile", profileLabel(state.hazard_profile_id), mapConfidenceLabel(confidence))}
       </div>
 
-      <div class="atlas-content-grid">
+      <div class="atlas-overview-grid">
         <section class="atlas-card atlas-card-large">
           <p class="section-label">Current Run</p>
           <h3>${escapeHtml(area?.name ?? "Atlas")}</h3>
@@ -2976,7 +2976,7 @@ function renderAtlasOverviewDashboard() {
         </section>
 
         <section class="atlas-card atlas-card-large">
-          <p class="section-label">Waystone Safety</p>
+          <p class="section-label">Quick Safety</p>
           <h3>${escapeHtml(safetySummaryLabel(summary))}</h3>
           <div class="atlas-safety-strip">
             <span class="atlas-danger-pill breaking">${summary.build_breaking} breaking</span>
@@ -2988,16 +2988,14 @@ function renderAtlasOverviewDashboard() {
           </div>
         </section>
 
-        <section class="atlas-card">
-          <p class="section-label">Endgame Focus</p>
-          <h3>0.5 companion placeholder</h3>
-          <p>Mechanic focus, boss/Fortress checklists, and market hooks will land here after map context is stable.</p>
-        </section>
-
-        <section class="atlas-card">
-          <p class="section-label">Run History</p>
-          <h3>Mapping log</h3>
-          <p>Run history will use the Currency table style after active map runs are persisted.</p>
+        <section class="atlas-card atlas-card-full atlas-next-action-card">
+          <p class="section-label">Next Action</p>
+          <h3>${waystone ? "Enter the next map to bind this waystone" : "Arm a waystone before mapping"}</h3>
+          <p>${
+            waystone
+              ? "Reliquary will consume the armed waystone when Client.txt reports the next generated map."
+              : "Copy a waystone first so Atlas can show tier, quant, pack size, and build-aware warnings."
+          }</p>
         </section>
       </div>
     </div>
