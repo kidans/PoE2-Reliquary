@@ -4624,7 +4624,7 @@ kbd {
     0 0 18px hsl(var(--accent-hue, 355) 70% 48% / 0.16);
 }
 
-@media (max-width: 980px) {
+@media (max-width: 760px) {
   .atlas-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -4634,7 +4634,7 @@ kbd {
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 560px) {
   .atlas-summary-grid {
     grid-template-columns: 1fr;
   }

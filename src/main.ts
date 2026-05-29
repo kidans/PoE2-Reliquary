@@ -362,7 +362,7 @@ let workerMessages: WorkerStatus[] = [];
 let compactMode = false;
 let selectedSpecKeys = new Set<string>();
 let selectedPriceProfile: PriceProfileId = "quick";
-let appliedWindowLayout: "scan" | "trade" | "settings" | "temple" | "campaign" | "idle" | "default" | "compact" | null = null;
+let appliedWindowLayout: "scan" | "trade" | "settings" | "temple" | "campaign" | "atlas" | "idle" | "default" | "compact" | null = null;
 let evaluateLayoutFrame = 0;
 let tradeSearchQuery = "";
 let loadingMoreMarketplaceResults = false;
@@ -3865,7 +3865,7 @@ function rarityClassName(rarity: string) {
 
 
 
-function desiredWindowLayout(): "scan" | "trade" | "settings" | "temple" | "campaign" | "idle" | "default" | "compact" {
+function desiredWindowLayout(): "scan" | "trade" | "settings" | "temple" | "campaign" | "atlas" | "idle" | "default" | "compact" {
   if (compactMode) {
     return "compact";
   }
@@ -3876,6 +3876,10 @@ function desiredWindowLayout(): "scan" | "trade" | "settings" | "temple" | "camp
 
   if (activeTab === "temple") {
     return "temple";
+  }
+
+  if (activeTab === "atlas") {
+    return "atlas";
   }
 
   if (activeTab === "campaign") {
