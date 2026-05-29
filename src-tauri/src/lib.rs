@@ -32,6 +32,7 @@ mod exchange;
 mod hazards;
 mod item_parser;
 mod macros;
+mod map_context;
 mod price_check;
 pub mod source_truth;
 mod trade_search;
@@ -150,6 +151,9 @@ pub struct AppState {
     pub trade_queue: Vec<TradeWhisper>,
     pub current_zone: String,
     pub current_area: Option<CurrentAreaInfo>,
+    pub pending_waystone: Option<map_context::WaystoneSnapshot>,
+    pub active_map_run: Option<map_context::MapRunContext>,
+    pub hazard_profile_id: String,
     pub world_area_status: WorldAreaStatus,
     pub trade_league: String,
     pub league_catalog: Vec<LeagueCatalogEntry>,
@@ -190,6 +194,7 @@ impl AppState {
             exchange_tab: exchange::default_tab_state().into(),
             price_currency: "exalted".to_string(),
             price_option: "equivalent".to_string(),
+            hazard_profile_id: "general_safe_mapping".to_string(),
             trade_league_locked: configured_league.is_some(),
             scan_key: 'C',
             scan_mod: "Ctrl".to_string(),
@@ -712,6 +717,51 @@ async fn get_app_state(state: tauri::State<'_, SharedAppState>) -> Result<AppSta
 }
 
 #[tauri::command]
+fn get_hazard_profiles() -> Vec<hazards::HazardProfile> {
+    hazards::default_hazard_profiles()
+}
+
+#[tauri::command]
+async fn set_hazard_profile(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, SharedAppState>,
+    profile_id: String,
+) -> Result<(), String> {
+    let normalized = profile_id.trim();
+    if normalized.is_empty() {
+        return Err("hazard profile cannot be empty".to_string());
+    }
+
+    let selected = hazards::profile_by_id(normalized);
+    let mut pending = None;
+
+    {
+        let mut locked_state = state.lock().await;
+        locked_state.hazard_profile_id = selected.id.clone();
+
+        if let Some(scanned_item) = locked_state.scanned_item.as_ref() {
+            pending = map_context::snapshot_from_item(
+                scanned_item,
+                now_epoch_ms(),
+                &locked_state.hazard_profile_id,
+            );
+        }
+
+        if pending.is_some() {
+            locked_state.pending_waystone = pending.clone();
+        }
+    }
+
+    let _ = app_handle.emit("scan://hazard-profile-updated", selected.id.clone());
+
+    if let Some(snapshot) = pending {
+        let _ = app_handle.emit("scan://pending-waystone-updated", snapshot);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 async fn set_trade_league(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, SharedAppState>,
@@ -1094,6 +1144,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             invite_buyer,
             get_app_state,
+            get_hazard_profiles,
             get_listing_preview,
             debug_log_path,
             hide_listing_preview,
@@ -1107,6 +1158,7 @@ pub fn run() {
             set_price_option,
             set_active_price_filters,
             set_exchange_category,
+            set_hazard_profile,
             set_trade_league,
             set_compact_mode,
             set_window_layout,
@@ -1235,7 +1287,7 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
                         locked_state.trade_league.clone()
                     };
                     let scanned_item = item_from_clipboard(raw_text, Some(&league));
-                    {
+                    let pending_waystone = {
                         let mut locked_state = state.lock().await;
                         locked_state.active_price_filters.clear();
                         locked_state.scanned_item = Some(scanned_item.clone());
@@ -1244,6 +1296,27 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
                         locked_state.price_check_fetch_in_flight = false;
                         locked_state.exchange_tab =
                             exchange::loading_tab_state_for_item(&scanned_item).into();
+
+                        let pending = map_context::snapshot_from_item(
+                            &scanned_item,
+                            now_epoch_ms(),
+                            &locked_state.hazard_profile_id,
+                        );
+
+                        if pending.is_some() {
+                            locked_state.pending_waystone = pending.clone();
+                        }
+
+                        pending
+                    };
+
+                    if let Some(snapshot) = pending_waystone {
+                        let _ = app_handle.emit("scan://pending-waystone-updated", snapshot);
+                        emit_worker_status(
+                            &app_handle,
+                            "map-context",
+                            "waystone armed for the next map".to_string(),
+                        );
                     }
 
                     if let Err(error) = app_handle.emit("scan://item-updated", scanned_item) {
@@ -2100,39 +2173,6 @@ async fn process_log_line(
                 );
                 let internal_id = id.as_str().to_string();
                 let area_type = classify_area_kind(&internal_id);
-                let waystone_data = {
-                    let locked_state = state.lock().await;
-                    locked_state.scanned_item.as_ref().and_then(|item| {
-                        if item.family == "waystone"
-                            || item.base_type.as_deref().map_or(false, |bt| {
-                                bt.to_ascii_lowercase().contains("waystone")
-                                    || bt.to_ascii_lowercase().contains("tablet")
-                            })
-                        {
-                            let mod_count = item.explicit_mods.len();
-                            let quantity =
-                                parse_waystone_number(&item.property_lines, "increased Quantity")
-                                    .or_else(|| {
-                                        parse_waystone_number_from_text(
-                                            &item.raw_text,
-                                            "increased Quantity",
-                                        )
-                                    });
-                            let rarity =
-                                parse_waystone_number_from_text(&item.raw_text, "increased Rarity");
-                            let pack_size =
-                                parse_waystone_number(&item.property_lines, "Monster Pack Size")
-                                    .or_else(|| {
-                                        parse_waystone_number_from_text(&item.raw_text, "Pack Size")
-                                    });
-                            let hazard_count = item.hazards.len();
-                            Some((mod_count, quantity, rarity, pack_size, hazard_count))
-                        } else {
-                            None
-                        }
-                    })
-                };
-
                 let areas = read_world_areas();
                 let area_meta = areas.and_then(|map| map.get(&internal_id));
                 let display_name = area_meta
@@ -2146,17 +2186,17 @@ async fn process_log_line(
                         "has_act": area_meta.and_then(|m| m.act).is_some(),
                     }),
                 );
-                let area = CurrentAreaInfo {
+                let mut area = CurrentAreaInfo {
                     name: display_name,
                     area_level: Some(level),
                     area_type: area_type.to_string(),
                     entered_at_epoch_ms: now_epoch_ms(),
                     act: area_meta.and_then(|m| m.act),
-                    waystone_mod_count: waystone_data.map(|w| w.0),
-                    waystone_quantity: waystone_data.and_then(|w| w.1),
-                    waystone_rarity: waystone_data.and_then(|w| w.2),
-                    waystone_pack_size: waystone_data.and_then(|w| w.3),
-                    waystone_hazard_count: waystone_data.map(|w| w.4),
+                    waystone_mod_count: None,
+                    waystone_quantity: None,
+                    waystone_rarity: None,
+                    waystone_pack_size: None,
+                    waystone_hazard_count: None,
                     boss: area_boss(&internal_id),
                 };
 
@@ -2171,11 +2211,36 @@ async fn process_log_line(
                     }),
                 );
 
+                let active_map_run = if area.area_type == "map" {
+                    let pending_waystone = {
+                        let mut locked_state = state.lock().await;
+                        locked_state.pending_waystone.take()
+                    };
+
+                    let map_run = map_context::bind_area_to_waystone(
+                        area.clone(),
+                        pending_waystone,
+                        now_epoch_ms(),
+                    );
+
+                    area = map_run.area.clone();
+                    Some(map_run)
+                } else {
+                    None
+                };
+
                 let mut locked_state = state.lock().await;
                 locked_state.current_zone = area.name.clone();
                 locked_state.current_area = Some(area.clone());
+                locked_state.active_map_run = active_map_run.clone();
+
                 let _ = app_handle.emit("scan://zone-updated", &area.name);
                 let _ = app_handle.emit("scan://area-updated", &area);
+
+                if let Some(map_run) = active_map_run {
+                    let _ = app_handle.emit("scan://map-run-updated", map_run);
+                }
+
                 return;
             }
         }
@@ -2214,6 +2279,9 @@ async fn process_log_line(
         };
         locked_state.current_zone = zone.clone();
         locked_state.current_area = Some(area.clone());
+        if area.area_type != "map" {
+            locked_state.active_map_run = None;
+        }
         let _ = app_handle.emit("scan://zone-updated", zone);
         let _ = app_handle.emit("scan://area-updated", area);
     }
