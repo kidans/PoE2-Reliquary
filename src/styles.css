@@ -3362,13 +3362,21 @@ kbd {
 
 .trade-sidebar-scroll {
   min-height: 0;
+  overflow-y: auto;
+}
+
+.trade-category-group {
+  display: grid;
+  gap: 5px;
+}
+
+.trade-category-group + .trade-category-group {
+  margin-top: 10px;
 }
 
 .trade-category-list {
   display: grid;
   gap: 4px;
-  max-height: 100%;
-  overflow-y: auto;
   padding-right: 2px;
 }
 
@@ -3385,11 +3393,11 @@ kbd {
 .trade-category-button,
 .trade-favorite-button {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+  grid-template-columns: 26px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   border-radius: 10px;
-  padding: 8px 9px;
+  padding: 7px 9px;
   text-align: left;
 }
 
@@ -3427,6 +3435,13 @@ kbd {
     radial-gradient(circle at 35% 35%, rgba(255, 198, 204, 0.78), transparent 30%),
     linear-gradient(180deg, hsl(var(--accent-hue, 355) 64% 48% / 0.95), hsl(var(--accent-hue, 355) 62% 20% / 0.95));
   box-shadow: 0 0 10px hsl(var(--accent-hue, 355) 62% 36% / 0.26);
+}
+
+.trade-category-icon {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55));
 }
 
 .trade-market-main {

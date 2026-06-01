@@ -14,106 +14,231 @@ const POE_NINJA_BASE: &str = "https://poe.ninja";
 const POE_CDN_BASE: &str = "https://web.poecdn.com";
 const POE_NINJA_EXCHANGE_OVERVIEW_URL: &str =
     "https://poe.ninja/poe2/api/economy/exchange/current/overview";
+const POE_NINJA_STASH_OVERVIEW_URL: &str =
+    "https://poe.ninja/poe2/api/economy/stash/current/item/overview";
+const POE_NINJA_INDEX_STATE_URL: &str = "https://poe.ninja/poe2/api/data/index-state";
 const EXCHANGE_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 const DEFAULT_CATEGORY_ID: &str = "currency";
 
 static EXCHANGE_CATEGORY_MANIFEST: &[ExchangeCategoryManifestEntry] = &[
     ExchangeCategoryManifestEntry {
         id: "currency",
+        group: "General",
         label: "Currency",
+        feed: "exchange",
         poe_ninja_type: Some("Currency"),
         poe_ninja_slug: Some("currency"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lNb2RWYWx1ZXMiLCJzY2FsZSI6MSwicmVhbG0iOiJwb2UyIn1d/2986e220b3/CurrencyModValues.png"),
         available: true,
     },
     ExchangeCategoryManifestEntry {
-        id: "essences",
-        label: "Essences",
-        poe_ninja_type: Some("Essences"),
-        poe_ninja_slug: Some("essences"),
-        available: true,
-    },
-    ExchangeCategoryManifestEntry {
-        id: "delirium",
-        label: "Delirium",
-        poe_ninja_type: Some("Delirium"),
-        poe_ninja_slug: Some("liquid-emotions"),
-        available: true,
-    },
-    ExchangeCategoryManifestEntry {
-        id: "breach",
-        label: "Breach",
-        poe_ninja_type: Some("Breach"),
-        poe_ninja_slug: Some("breach-catalyst"),
-        available: true,
-    },
-    ExchangeCategoryManifestEntry {
-        id: "ritual",
-        label: "Ritual",
-        poe_ninja_type: Some("Ritual"),
-        poe_ninja_slug: Some("omens"),
-        available: true,
-    },
-    ExchangeCategoryManifestEntry {
-        id: "expedition",
-        label: "Expedition",
-        poe_ninja_type: Some("Expedition"),
-        poe_ninja_slug: Some("expedition"),
+        id: "fragments",
+        group: "General",
+        label: "Fragments",
+        feed: "exchange",
+        poe_ninja_type: Some("Fragments"),
+        poe_ninja_slug: Some("fragments"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQnJlYWNoL0JyZWFjaHN0b25lIiwic2NhbGUiOjEsInJlYWxtIjoicG9lMiJ9XQ/d60587d724/Breachstone.png"),
         available: true,
     },
     ExchangeCategoryManifestEntry {
         id: "abyss",
-        label: "Abyss",
+        group: "General",
+        label: "Abyssal Bones",
+        feed: "exchange",
         poe_ninja_type: Some("Abyss"),
         poe_ninja_slug: Some("abyssal-bones"),
-        available: true,
-    },
-    ExchangeCategoryManifestEntry {
-        id: "incursion",
-        label: "Incursion",
-        poe_ninja_type: None,
-        poe_ninja_slug: None,
-        available: false,
-    },
-    ExchangeCategoryManifestEntry {
-        id: "fragments",
-        label: "Fragments",
-        poe_ninja_type: Some("Fragments"),
-        poe_ninja_slug: Some("fragments"),
-        available: true,
-    },
-    ExchangeCategoryManifestEntry {
-        id: "runes",
-        label: "Runes",
-        poe_ninja_type: Some("Runes"),
-        poe_ninja_slug: Some("runes"),
-        available: true,
-    },
-    ExchangeCategoryManifestEntry {
-        id: "soul-cores",
-        label: "Soul Cores",
-        poe_ninja_type: Some("SoulCores"),
-        poe_ninja_slug: Some("soul-cores"),
-        available: true,
-    },
-    ExchangeCategoryManifestEntry {
-        id: "idols",
-        label: "Idols",
-        poe_ninja_type: Some("Idols"),
-        poe_ninja_slug: Some("idols"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQWJ5c3NhbEV5ZVNvY2tldGFibGVzL1RlY3JvZHNHYXplIiwic2NhbGUiOjEsInJlYWxtIjoicG9lMiJ9XQ/ef2a9355b4/TecrodsGaze.png"),
         available: true,
     },
     ExchangeCategoryManifestEntry {
         id: "uncut-gems",
+        group: "General",
         label: "Uncut Gems",
+        feed: "exchange",
         poe_ninja_type: Some("UncutGems"),
         poe_ninja_slug: Some("uncut-gems"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvR2Vtcy9VbmN1dFN1cHBvcnRHZW0iLCJzY2FsZSI6MSwicmVhbG0iOiJwb2UyIn1d/d1ffe1c951/UncutSupportGem.png"),
         available: true,
     },
     ExchangeCategoryManifestEntry {
         id: "gems",
-        label: "Gems",
+        group: "General",
+        label: "Lineage Gems",
+        feed: "exchange",
         poe_ninja_type: Some("LineageSupportGems"),
         poe_ninja_slug: Some("lineage-support-gems"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvR2Vtcy9OZXcvTmV3U3VwcG9ydC9MaW5lYWdlL1dpbGRzaGFyZHMiLCJzY2FsZSI6MSwicmVhbG0iOiJwb2UyIn1d/6d700adf17/Wildshards.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "essences",
+        group: "General",
+        label: "Essences",
+        feed: "exchange",
+        poe_ninja_type: Some("Essences"),
+        poe_ninja_slug: Some("essences"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvRXNzZW5jZS9HcmVhdGVyQXR0cmlidXRlRXNzZW5jZSIsInNjYWxlIjoxLCJyZWFsbSI6InBvZTIifV0/8a8cb823af/GreaterAttributeEssence.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "soul-cores",
+        group: "General",
+        label: "Soul Cores",
+        feed: "exchange",
+        poe_ninja_type: Some("SoulCores"),
+        poe_ninja_slug: Some("soul-cores"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvU291bENvcmVzL0dyZWF0ZXJTb3VsQ29yZU1hbmEiLCJzY2FsZSI6MSwicmVhbG0iOiJwb2UyIn1d/1437190de2/GreaterSoulCoreMana.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "idols",
+        group: "General",
+        label: "Idols",
+        feed: "exchange",
+        poe_ninja_type: Some("Idols"),
+        poe_ninja_slug: Some("idols"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvVG9ybWVudGVkU3Bpcml0U29ja2V0YWJsZXMvQXptZXJpU29ja2V0YWJsZU1vbmtleVNwZWNpYWwiLCJzY2FsZSI6MSwicmVhbG0iOiJwb2UyIn1d/8ffc9986a0/AzmeriSocketableMonkeySpecial.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "runes",
+        group: "General",
+        label: "Runes",
+        feed: "exchange",
+        poe_ninja_type: Some("Runes"),
+        poe_ninja_slug: Some("runes"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvUnVuZXMvTGlnaHRuaW5nUnVuZSIsInNjYWxlIjoxLCJyZWFsbSI6InBvZTIifV0/98319b3998/LightningRune.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "ritual",
+        group: "General",
+        label: "Omens",
+        feed: "exchange",
+        poe_ninja_type: Some("Ritual"),
+        poe_ninja_slug: Some("omens"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvT21lbnMvVm9vZG9vT21lbnMzUmVkIiwic2NhbGUiOjEsInJlYWxtIjoicG9lMiJ9XQ/9cfdcc9e1a/VoodooOmens3Red.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "expedition",
+        group: "General",
+        label: "Expedition",
+        feed: "exchange",
+        poe_ninja_type: Some("Expedition"),
+        poe_ninja_slug: Some("expedition"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvRXhwZWRpdGlvbi9CYXJ0ZXJSZWZyZXNoQ3VycmVuY3kiLCJzY2FsZSI6MSwicmVhbG0iOiJwb2UyIn1d/8a4fe1f468/BarterRefreshCurrency.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "delirium",
+        group: "General",
+        label: "Liquid Emotions",
+        feed: "exchange",
+        poe_ninja_type: Some("Delirium"),
+        poe_ninja_slug: Some("liquid-emotions"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvRGlzdGlsbGVkRW1vdGlvbnMvRGlzdGlsbGVkUGFyYW5vaWEiLCJzY2FsZSI6MSwicmVhbG0iOiJwb2UyIn1d/279e807e8f/DistilledParanoia.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "breach",
+        group: "General",
+        label: "Catalysts",
+        feed: "exchange",
+        poe_ninja_type: Some("Breach"),
+        poe_ninja_slug: Some("breach-catalyst"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQnJlYWNoL0JyZWFjaENhdGFseXN0TWFuYSIsInNjYWxlIjoxLCJyZWFsbSI6InBvZTIifV0/61d3a7a832/BreachCatalystMana.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "verisium",
+        group: "General",
+        label: "Verisium",
+        feed: "exchange",
+        poe_ninja_type: Some("Verisium"),
+        poe_ninja_slug: Some("verisium"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvRXhwZWRpdGlvbjIvUmVmaW5lZFZlcmlzaXVtIiwic2NhbGUiOjEsInJlYWxtIjoicG9lMiJ9XQ/35616acb9f/RefinedVerisium.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "unique-weapons",
+        group: "Equipment",
+        label: "Unique Weapons",
+        feed: "stash",
+        poe_ninja_type: Some("UniqueWeapons"),
+        poe_ninja_slug: Some("unique-weapons"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvV2VhcG9ucy9PbmVIYW5kV2VhcG9ucy9PbmVIYW5kTWFjZXMvVW5pcXVlcy9Nam9sbmVyIiwidyI6MiwiaCI6Mywic2NhbGUiOjEsInJlYWxtIjoicG9lMiJ9XQ/9216de28a2/Mjolner.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "unique-armours",
+        group: "Equipment",
+        label: "Unique Armours",
+        feed: "stash",
+        poe_ninja_type: Some("UniqueArmours"),
+        poe_ninja_slug: Some("unique-armours"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQXJtb3Vycy9HbG92ZXMvVW5pcXVlcy9NYWxpZ2Fyb3NWaXJ0dW9zaXR5IiwidyI6MiwiaCI6Miwic2NhbGUiOjEsInJlYWxtIjoicG9lMiJ9XQ/08f6808733/MaligarosVirtuosity.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "unique-accessories",
+        group: "Equipment",
+        label: "Unique Accessories",
+        feed: "stash",
+        poe_ninja_type: Some("UniqueAccessories"),
+        poe_ninja_slug: Some("unique-accessories"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQmVsdHMvVW5pcXVlcy9IZWFkaHVudGVyIiwidyI6MiwiaCI6MSwic2NhbGUiOjEsInJlYWxtIjoicG9lMiJ9XQ/24accb4eec/Headhunter.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "unique-flasks",
+        group: "Equipment",
+        label: "Unique Flasks",
+        feed: "stash",
+        poe_ninja_type: Some("UniqueFlasks"),
+        poe_ninja_slug: Some("unique-flasks"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzksMTQseyJmIjoiMkRJdGVtcy9GbGFza3MvVW5pcXVlcy9MYXZpYW5nYXNTcGlyaXQiLCJ3IjoxLCJoIjoyLCJzY2FsZSI6MSwicmVhbG0iOiJwb2UyIiwibGV2ZWwiOjF9XQ/ef79cd6b0d/LaviangasSpirit.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "unique-charms",
+        group: "Equipment",
+        label: "Unique Charms",
+        feed: "stash",
+        poe_ninja_type: Some("UniqueCharms"),
+        poe_ninja_slug: Some("unique-charms"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ2hhcm1zL1VuaXF1ZXMvUnVieVVuaXF1ZUNoYXJtIiwidyI6MSwiaCI6MSwic2NhbGUiOjEsInJlYWxtIjoicG9lMiJ9XQ/f88d02b00c/RubyUniqueCharm.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "unique-jewels",
+        group: "Equipment",
+        label: "Unique Jewels",
+        feed: "stash",
+        poe_ninja_type: Some("UniqueJewels"),
+        poe_ninja_slug: Some("unique-jewels"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvSmV3ZWxzL1VuaXF1ZXMvR3JhbmRTcGVjdHJ1bV9SdWJ5IiwidyI6MSwiaCI6MSwic2NhbGUiOjEsInJlYWxtIjoicG9lMiJ9XQ/8d964b3e88/GrandSpectrum_Ruby.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "unique-maps",
+        group: "Equipment",
+        label: "Unique Maps",
+        feed: "stash",
+        poe_ninja_type: Some("UniqueMaps"),
+        poe_ninja_slug: Some("unique-maps"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvUHJlY3Vyc29yVGFibGV0cy9QcmVjdXJzb3JUYWJsZXRBYnlzc1VuaXF1ZTEiLCJ3IjoxLCJoIjoxLCJzY2FsZSI6MSwicmVhbG0iOiJwb2UyIn1d/a5c2d8a638/PrecursorTabletAbyssUnique1.png"),
+        available: true,
+    },
+    ExchangeCategoryManifestEntry {
+        id: "unique-relics",
+        group: "Equipment",
+        label: "Unique Relics",
+        feed: "stash",
+        poe_ninja_type: Some("UniqueSanctumRelics"),
+        poe_ninja_slug: Some("unique-relics"),
+        icon_url: Some("https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvUmVsaWNzL1JlbGljVW5pcXVlMXgzIiwidyI6MSwiaCI6Mywic2NhbGUiOjEsInJlYWxtIjoicG9lMiJ9XQ/9a0c871b8b/RelicUnique1x3.png"),
         available: true,
     },
 ];
@@ -121,22 +246,30 @@ static EXCHANGE_CATEGORY_MANIFEST: &[ExchangeCategoryManifestEntry] = &[
 static EXCHANGE_CACHE: Lazy<Mutex<HashMap<String, CachedExchangeOverview>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 static ICON_CACHE: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static LEAGUE_SLUG_CACHE: Lazy<Mutex<HashMap<String, String>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone, Copy)]
 struct ExchangeCategoryManifestEntry {
     id: &'static str,
+    group: &'static str,
     label: &'static str,
+    feed: &'static str,
     poe_ninja_type: Option<&'static str>,
     poe_ninja_slug: Option<&'static str>,
+    icon_url: Option<&'static str>,
     available: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExchangeCategory {
     pub id: String,
+    pub group: String,
     pub label: String,
+    pub feed: String,
     pub poe_ninja_type: Option<String>,
     pub poe_ninja_slug: Option<String>,
+    pub icon_url: Option<String>,
     pub available: bool,
 }
 
@@ -210,6 +343,12 @@ struct PoeNinjaExchangeOverviewResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct PoeNinjaStashOverviewResponse {
+    core: PoeNinjaExchangeCore,
+    lines: Vec<PoeNinjaStashLine>,
+}
+
+#[derive(Debug, Deserialize)]
 struct PoeNinjaExchangeCore {
     items: Vec<PoeNinjaExchangeItem>,
     primary: String,
@@ -236,6 +375,27 @@ struct PoeNinjaExchangeLine {
     primary_value: Option<f64>,
     #[serde(rename = "volumePrimaryValue")]
     volume_primary_value: Option<f64>,
+    #[serde(alias = "sparkLine")]
+    sparkline: Option<PoeNinjaSparkline>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PoeNinjaStashLine {
+    id: serde_json::Value,
+    #[serde(rename = "itemId")]
+    item_id: Option<String>,
+    #[serde(rename = "detailsId")]
+    details_id: Option<String>,
+    name: String,
+    #[serde(rename = "baseType")]
+    base_type: Option<String>,
+    icon: Option<String>,
+    category: Option<String>,
+    #[serde(rename = "primaryValue")]
+    primary_value: Option<f64>,
+    #[serde(rename = "listingCount")]
+    listing_count: Option<f64>,
+    #[serde(alias = "sparkLine")]
     sparkline: Option<PoeNinjaSparkline>,
 }
 
@@ -246,11 +406,27 @@ struct PoeNinjaSparkline {
     data: Vec<Option<f64>>,
 }
 
+#[derive(Debug, Deserialize)]
+struct PoeNinjaIndexStateResponse {
+    #[serde(rename = "economyLeagues", default)]
+    economy_leagues: Vec<PoeNinjaLeague>,
+    #[serde(rename = "oldEconomyLeagues", default)]
+    old_economy_leagues: Vec<PoeNinjaLeague>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PoeNinjaLeague {
+    name: String,
+    url: String,
+    #[serde(rename = "displayName")]
+    display_name: Option<String>,
+}
+
 pub fn is_exchange_item(item: &Item) -> bool {
     match item.family.as_str() {
         "currency" => true,
-        "accessory" | "armour" | "belt" | "charm" | "flask" | "jewel" | "offhand"
-        | "relic" | "tablet" | "waystone" | "weapon" => false,
+        "accessory" | "armour" | "belt" | "charm" | "flask" | "jewel" | "offhand" | "relic"
+        | "tablet" | "waystone" | "weapon" => false,
         _ => {
             let haystacks = [
                 item.item_class.as_deref().unwrap_or(""),
@@ -285,9 +461,12 @@ pub fn categories() -> Vec<ExchangeCategory> {
         .iter()
         .map(|entry| ExchangeCategory {
             id: entry.id.to_string(),
+            group: entry.group.to_string(),
             label: entry.label.to_string(),
+            feed: entry.feed.to_string(),
             poe_ninja_type: entry.poe_ninja_type.map(str::to_string),
             poe_ninja_slug: entry.poe_ninja_slug.map(str::to_string),
+            icon_url: entry.icon_url.map(str::to_string),
             available: entry.available,
         })
         .collect()
@@ -298,14 +477,11 @@ pub fn default_tab_state() -> ExchangeTabState {
 }
 
 pub fn loading_tab_state_for_item(item: &Item) -> ExchangeTabState {
-    let selected_category_id = item
-        .exchange_category_id
-        .clone()
-        .unwrap_or_else(|| {
-            category_id_for_item(item)
-                .unwrap_or(DEFAULT_CATEGORY_ID)
-                .to_string()
-        });
+    let selected_category_id = item.exchange_category_id.clone().unwrap_or_else(|| {
+        category_id_for_item(item)
+            .unwrap_or(DEFAULT_CATEGORY_ID)
+            .to_string()
+    });
 
     ExchangeTabState {
         categories: categories(),
@@ -517,9 +693,12 @@ fn category_by_id(category_id: &str) -> Option<ExchangeCategory> {
         .find(|entry| entry.id.eq_ignore_ascii_case(category_id))
         .map(|entry| ExchangeCategory {
             id: entry.id.to_string(),
+            group: entry.group.to_string(),
             label: entry.label.to_string(),
+            feed: entry.feed.to_string(),
             poe_ninja_type: entry.poe_ninja_type.map(str::to_string),
             poe_ninja_slug: entry.poe_ninja_slug.map(str::to_string),
+            icon_url: entry.icon_url.map(str::to_string),
             available: entry.available,
         })
 }
@@ -537,6 +716,11 @@ async fn fetch_exchange_overview(
         .user_agent("Reliquary/0.1 poe-ninja-exchange")
         .build()
         .map_err(|error| error.to_string())?;
+
+    if category.feed == "stash" {
+        return fetch_stash_overview(&client, league, &overview_type, category).await;
+    }
+
     let response = fetch_poe_ninja_overview(&client, league, &overview_type).await?;
 
     let fetched_at_epoch_ms = now_epoch_ms();
@@ -593,13 +777,16 @@ async fn fetch_exchange_overview(
         });
     }
 
+    let source_league_slug = fetch_poe_ninja_league_slug(&client, league)
+        .await
+        .unwrap_or_else(|| league_slug(league));
     let source_url = category
         .poe_ninja_slug
         .as_deref()
         .map(|slug| {
             format!(
                 "https://poe.ninja/poe2/economy/{}/{slug}",
-                league_slug(league)
+                source_league_slug
             )
         })
         .unwrap_or_else(|| "https://poe.ninja/poe2/economy/".to_string());
@@ -619,6 +806,103 @@ async fn fetch_exchange_overview(
         category_label: category.label,
         league: league.to_string(),
         source: "poe.ninja cache (PoE2 exchange overview)".to_string(),
+        source_url,
+        fetched_at_epoch_ms,
+        primary_currency,
+        secondary_currency,
+        quote_currencies,
+        entries,
+    })
+}
+
+async fn fetch_stash_overview(
+    client: &reqwest::Client,
+    league: &str,
+    overview_type: &str,
+    category: ExchangeCategory,
+) -> Result<ExchangeOverview, String> {
+    let response = fetch_poe_ninja_stash_overview(client, league, overview_type).await?;
+    let fetched_at_epoch_ms = now_epoch_ms();
+    let primary_currency = match response
+        .core
+        .items
+        .iter()
+        .find(|item| item.id == response.core.primary)
+    {
+        Some(item) => Some(currency_meta_from_poe_ninja_item(client, item).await?),
+        None => None,
+    };
+    let secondary_currency = match response
+        .core
+        .items
+        .iter()
+        .find(|item| item.id == response.core.secondary)
+    {
+        Some(item) => Some(currency_meta_from_poe_ninja_item(client, item).await?),
+        None => None,
+    };
+    let quote_currencies = build_quote_currencies(client, &response.core).await?;
+
+    let mut entries = Vec::with_capacity(response.lines.len());
+    for line in response.lines {
+        let icon_url = match line.icon.as_deref() {
+            Some(url) => Some(icon_data_url_or_fallback(client, url).await),
+            None => None,
+        };
+        let id = line
+            .details_id
+            .clone()
+            .or(line.item_id.clone())
+            .unwrap_or_else(|| line.id.to_string().trim_matches('"').to_string());
+
+        entries.push(ExchangeEntry {
+            id,
+            name: line.name,
+            icon_url,
+            details_id: line.details_id,
+            item_category: line
+                .category
+                .or(line.base_type)
+                .map(|value| value.trim_matches(['[', ']']).to_string()),
+            price_in_primary: line.primary_value,
+            quantity: line.listing_count,
+            history_change_percent: line.sparkline.as_ref().and_then(|spark| spark.total_change),
+            sparkline: line
+                .sparkline
+                .map(|spark| sanitize_sparkline(spark.data))
+                .unwrap_or_default(),
+        });
+    }
+
+    let source_league_slug = fetch_poe_ninja_league_slug(client, league)
+        .await
+        .unwrap_or_else(|| league_slug(league));
+    let source_url = category
+        .poe_ninja_slug
+        .as_deref()
+        .map(|slug| {
+            format!(
+                "https://poe.ninja/poe2/economy/{}/{slug}",
+                source_league_slug
+            )
+        })
+        .unwrap_or_else(|| "https://poe.ninja/poe2/economy/".to_string());
+
+    debug_log::append(
+        "exchange.stash_overview.loaded",
+        json!({
+            "league": league,
+            "category": category.id,
+            "entries": entries.len(),
+            "source_url": source_url,
+        }),
+    );
+
+    Ok(ExchangeOverview {
+        category_id: category.id,
+        category_label: category.label,
+        league: league.to_string(),
+        source: "poe.ninja cache (PoE2 unique overview)".to_string(),
         source_url,
         fetched_at_epoch_ms,
         primary_currency,
@@ -774,6 +1058,96 @@ async fn fetch_poe_ninja_overview(
     Err(last_error.unwrap_or_else(|| "unknown exchange overview error".to_string()))
 }
 
+async fn fetch_poe_ninja_stash_overview(
+    client: &reqwest::Client,
+    league: &str,
+    overview_type: &str,
+) -> Result<PoeNinjaStashOverviewResponse, String> {
+    let mut last_error = None;
+
+    for attempt in 0..3 {
+        let result = async {
+            let response = client
+                .get(POE_NINJA_STASH_OVERVIEW_URL)
+                .query(&[
+                    ("league", league),
+                    ("type", overview_type),
+                    ("version", "current"),
+                ])
+                .send()
+                .await
+                .map_err(|error| error.to_string())?
+                .error_for_status()
+                .map_err(|error| error.to_string())?;
+            let body = response.text().await.map_err(|error| error.to_string())?;
+            serde_json::from_str::<PoeNinjaStashOverviewResponse>(&body)
+                .map_err(|error| format!("failed to parse unique overview JSON: {error}"))
+        }
+        .await;
+
+        match result {
+            Ok(response) => return Ok(response),
+            Err(error) => {
+                debug_log::append(
+                    "exchange.stash_overview.retry",
+                    json!({
+                        "league": league,
+                        "overview_type": overview_type,
+                        "attempt": attempt + 1,
+                        "error": error,
+                    }),
+                );
+                last_error = Some(error);
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| "unknown unique overview error".to_string()))
+}
+
+async fn fetch_poe_ninja_league_slug(client: &reqwest::Client, league: &str) -> Option<String> {
+    let cache_key = league.trim().to_ascii_lowercase();
+    if cache_key.is_empty() {
+        return None;
+    }
+
+    if let Some(cached) = LEAGUE_SLUG_CACHE.lock().await.get(&cache_key).cloned() {
+        return Some(cached);
+    }
+
+    let response = client
+        .get(POE_NINJA_INDEX_STATE_URL)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json::<PoeNinjaIndexStateResponse>()
+        .await
+        .ok()?;
+
+    let needle = league.trim().to_ascii_lowercase();
+    let slug = response
+        .economy_leagues
+        .into_iter()
+        .chain(response.old_economy_leagues.into_iter())
+        .find(|candidate| {
+            candidate.name.eq_ignore_ascii_case(&needle)
+                || candidate
+                    .display_name
+                    .as_deref()
+                    .map(|display| display.eq_ignore_ascii_case(&needle))
+                    .unwrap_or(false)
+        })
+        .map(|candidate| candidate.url)?;
+
+    LEAGUE_SLUG_CACHE
+        .lock()
+        .await
+        .insert(cache_key, slug.clone());
+    Some(slug)
+}
+
 async fn icon_data_url_from_url(client: &reqwest::Client, url: &str) -> Result<String, String> {
     let absolute = absolutize_url(url);
     if let Some(cached) = ICON_CACHE.lock().await.get(&absolute).cloned() {
@@ -923,9 +1297,12 @@ mod tests {
     }
 
     #[test]
-    fn incursion_category_is_present_but_unavailable() {
-        let category = category_by_id("incursion").expect("category should exist");
-        assert!(!category.available);
+    fn unique_equipment_categories_use_stash_feed() {
+        let category = category_by_id("unique-weapons").expect("category should exist");
+        assert_eq!(category.group, "Equipment");
+        assert_eq!(category.feed, "stash");
+        assert_eq!(category.poe_ninja_type.as_deref(), Some("UniqueWeapons"));
+        assert!(category.available);
     }
 
     #[test]

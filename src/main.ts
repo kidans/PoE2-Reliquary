@@ -276,9 +276,12 @@ type Poe2DbAdapterStatus = {
 
 type ExchangeCategory = {
   id: string;
+  group: string;
   label: string;
+  feed: string;
   poe_ninja_type: string | null;
   poe_ninja_slug: string | null;
+  icon_url: string | null;
   available: boolean;
 };
 
@@ -365,6 +368,7 @@ let selectedPriceProfile: PriceProfileId = "quick";
 let appliedWindowLayout: "scan" | "trade" | "settings" | "temple" | "campaign" | "atlas" | "idle" | "default" | "compact" | null = null;
 let evaluateLayoutFrame = 0;
 let tradeSearchQuery = "";
+let tradeSidebarScrollTop = 0;
 let loadingMoreMarketplaceResults = false;
 let hoveredListingPreview: ListingPreviewRequest | null = null;
 let pinnedListingPreviewIndex: number | null = null;
@@ -827,6 +831,19 @@ if (!panelElement || (!isListingPreviewWindow && (!zoneElement || !leagueElement
   throw new Error("Reliquary UI shell failed to initialize.");
 }
 
+if (!isListingPreviewWindow) {
+  root.addEventListener(
+    "scroll",
+    (event) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.classList.contains("trade-sidebar-scroll")) {
+        tradeSidebarScrollTop = target.scrollTop;
+      }
+    },
+    true,
+  );
+}
+
 function render() {
   if (isListingPreviewWindow) {
     panelElement!.innerHTML = renderListingPreviewWindow(hoveredListingPreview);
@@ -888,7 +905,13 @@ function render() {
     }
 
     if (activeTab === "trade") {
+      const previousSidebarScrollTop =
+        panelElement!.querySelector<HTMLElement>(".trade-sidebar-scroll")?.scrollTop ?? tradeSidebarScrollTop;
       panelElement!.innerHTML = renderTradePanel(state.exchange_tab);
+      const nextSidebar = panelElement!.querySelector<HTMLElement>(".trade-sidebar-scroll");
+      if (nextSidebar) {
+        nextSidebar.scrollTop = previousSidebarScrollTop;
+      }
       hoveredListingPreview = null;
       void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
 
@@ -967,8 +990,6 @@ function renderLeagueOptions() {
     : state.trade_leagues.length
       ? state.trade_leagues
     : [
-        { id: "Fate of the Vaal", text: "Fate of the Vaal" },
-        { id: "HC Fate of the Vaal", text: "HC Fate of the Vaal" },
         { id: "Standard", text: "Standard" },
         { id: "Hardcore", text: "Hardcore" },
       ];
@@ -2390,6 +2411,7 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
   const currencyIcons = exchangeHeaderCurrencies(exchangeTab);
   const sourceLabel = overview?.source ?? "poe.ninja cache";
   const statusText = exchangeTab.error ?? exchangeTab.status;
+  const quantityLabel = selectedCategory?.feed === "stash" ? "Listings" : "Quantity";
   const updatedAt = overview
     ? `Last updated at ${formatTimestamp(overview.fetched_at_epoch_ms)}`
     : "Waiting for cached exchange snapshot";
@@ -2403,9 +2425,7 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
         </div>
         <div class="trade-sidebar-section trade-sidebar-scroll">
           <p class="section-label">General</p>
-          <div class="trade-category-list">
-            ${categories.map((category) => renderExchangeCategoryButton(category, exchangeTab.selected_category_id)).join("")}
-          </div>
+          ${renderExchangeCategoryGroups(categories, exchangeTab.selected_category_id)}
         </div>
       </aside>
 
@@ -2435,7 +2455,7 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
           <div class="trade-table-header">
             <span>Item</span>
             <span>Price</span>
-            <span>Quantity</span>
+            <span>${escapeHtml(quantityLabel)}</span>
             <span>History</span>
             <span>Actions</span>
           </div>
@@ -2450,6 +2470,27 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
       </div>
     </section>
   `;
+}
+
+function renderExchangeCategoryGroups(categories: ExchangeCategory[], selectedCategoryId: string) {
+  const groups = categories.reduce<Map<string, ExchangeCategory[]>>((acc, category) => {
+    const group = category.group || "General";
+    acc.set(group, [...(acc.get(group) ?? []), category]);
+    return acc;
+  }, new Map());
+
+  return [...groups.entries()]
+    .map(
+      ([group, groupedCategories]) => `
+        <div class="trade-category-group">
+          <p class="section-label">${escapeHtml(group)}</p>
+          <div class="trade-category-list">
+            ${groupedCategories.map((category) => renderExchangeCategoryButton(category, selectedCategoryId)).join("")}
+          </div>
+        </div>
+      `,
+    )
+    .join("");
 }
 
 function renderExchangeCategoryButton(category: ExchangeCategory, selectedCategoryId: string) {
@@ -2470,7 +2511,11 @@ function renderExchangeCategoryButton(category: ExchangeCategory, selectedCatego
       ${category.available ? "" : "disabled"}
       title="${category.available ? category.label : `${category.label} feed is not available yet`}"
     >
-      <span class="trade-category-glyph" aria-hidden="true"></span>
+      ${
+        category.icon_url
+          ? `<img class="trade-category-icon" src="${escapeAttribute(category.icon_url)}" alt="" />`
+          : `<span class="trade-category-glyph" aria-hidden="true"></span>`
+      }
       <span>${escapeHtml(category.label)}</span>
     </button>
   `;
@@ -2494,18 +2539,27 @@ function exchangeCategoryLabel(categoryId: string) {
   const labels: Record<string, string> = {
     currency: "Currency",
     essences: "Essences",
-    delirium: "Delirium",
-    breach: "Breach",
-    ritual: "Ritual",
+    delirium: "Liquid Emotions",
+    breach: "Catalysts",
+    ritual: "Omens",
     expedition: "Expedition",
-    abyss: "Abyss",
+    abyss: "Abyssal Bones",
     incursion: "Incursion",
     fragments: "Fragments",
     runes: "Runes",
     "soul-cores": "Soul Cores",
     idols: "Idols",
     "uncut-gems": "Uncut Gems",
-    gems: "Gems",
+    gems: "Lineage Gems",
+    verisium: "Verisium",
+    "unique-weapons": "Unique Weapons",
+    "unique-armours": "Unique Armours",
+    "unique-accessories": "Unique Accessories",
+    "unique-flasks": "Unique Flasks",
+    "unique-charms": "Unique Charms",
+    "unique-jewels": "Unique Jewels",
+    "unique-maps": "Unique Maps",
+    "unique-relics": "Unique Relics",
   };
 
   return labels[categoryId] ?? categoryId;
@@ -3720,25 +3774,36 @@ function fallbackExchangeTab(): ExchangeTabState {
   return {
     categories: [
       "currency",
-      "essences",
-      "delirium",
-      "breach",
-      "ritual",
-      "expedition",
-      "abyss",
-      "incursion",
       "fragments",
-      "runes",
-      "soul-cores",
-      "idols",
+      "abyss",
       "uncut-gems",
       "gems",
+      "essences",
+      "soul-cores",
+      "idols",
+      "runes",
+      "ritual",
+      "expedition",
+      "delirium",
+      "breach",
+      "verisium",
+      "unique-weapons",
+      "unique-armours",
+      "unique-accessories",
+      "unique-flasks",
+      "unique-charms",
+      "unique-jewels",
+      "unique-maps",
+      "unique-relics",
     ].map((id) => ({
       id,
+      group: id.startsWith("unique-") ? "Equipment" : "General",
       label: exchangeCategoryLabel(id),
+      feed: id.startsWith("unique-") ? "stash" : "exchange",
       poe_ninja_type: null,
       poe_ninja_slug: null,
-      available: id !== "incursion",
+      icon_url: null,
+      available: true,
     })),
     selected_category_id: "currency",
     selected_item_id: null,
@@ -3770,7 +3835,14 @@ function normalizeExchangeTab(exchangeTab: ExchangeTabState | null | undefined):
   }
 
   return {
-    categories: exchangeTab.categories?.length ? exchangeTab.categories : fallback.categories,
+    categories: exchangeTab.categories?.length
+      ? exchangeTab.categories.map((category) => ({
+          ...category,
+          group: category.group || (category.id.startsWith("unique-") ? "Equipment" : "General"),
+          feed: category.feed || (category.id.startsWith("unique-") ? "stash" : "exchange"),
+          icon_url: category.icon_url ?? null,
+        }))
+      : fallback.categories,
     selected_category_id: exchangeTab.selected_category_id || fallback.selected_category_id,
     selected_item_id: exchangeTab.selected_item_id ?? null,
     selected_quote_currency_id:
@@ -4261,12 +4333,22 @@ if (!isListingPreviewWindow && leagueElement) {
     }
 
     if (exchangeCategoryButton?.dataset.exchangeCategory) {
-      state.exchange_tab.selected_category_id = exchangeCategoryButton.dataset.exchangeCategory;
-      state.exchange_tab.status = `Loading ${exchangeCategoryButton.textContent?.trim() ?? "exchange"} overview...`;
+      const categoryId = exchangeCategoryButton.dataset.exchangeCategory;
+      const categoryLabel = exchangeCategoryButton.textContent?.trim() ?? exchangeCategoryLabel(categoryId);
+      tradeSidebarScrollTop =
+        exchangeCategoryButton.closest<HTMLElement>(".trade-sidebar-scroll")?.scrollTop ?? tradeSidebarScrollTop;
+      state.exchange_tab = {
+        ...state.exchange_tab,
+        selected_category_id: categoryId,
+        selected_item_id: null,
+        overview: null,
+        error: null,
+        status: `Loading ${categoryLabel} overview...`,
+      };
       activeTab = "trade";
       render();
       await invoke("set_exchange_category", {
-        categoryId: exchangeCategoryButton.dataset.exchangeCategory,
+        categoryId,
       }).catch((error) => pushStatus("exchange", String(error)));
       return;
     }
@@ -4785,6 +4867,15 @@ if (!isListingPreviewWindow && leagueElement) {
 
   void listen<string>("scan://trade-league-updated", (event) => {
     state.trade_league = event.payload;
+    if (state.exchange_tab.overview && state.exchange_tab.overview.league !== event.payload) {
+      state.exchange_tab = {
+        ...state.exchange_tab,
+        overview: null,
+        selected_item_id: null,
+        status: `Loading ${exchangeCategoryLabel(state.exchange_tab.selected_category_id)} overview for ${event.payload}...`,
+        error: null,
+      };
+    }
     render();
   });
 

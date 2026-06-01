@@ -88,6 +88,7 @@ const LISTING_PREVIEW_GAP: f64 = 12.0;
 static LISTING_PREVIEW_VISIBLE: AtomicBool = AtomicBool::new(false);
 static LISTING_PREVIEW_SHOWN_AT_MS: AtomicU64 = AtomicU64::new(0);
 const REPOE_WORLD_AREAS_URL: &str = "https://repoe-fork.github.io/poe2/world_areas.min.json";
+const REPOE_WORLD_AREAS_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 const SNAP_MARGIN: f64 = 8.0;
 const FULL_SNAP_LEFT: f64 = 0.0;
 const FULL_SNAP_TOP_RATIO: f64 = 0.09;
@@ -191,7 +192,7 @@ impl AppState {
         Self {
             trade_league: configured_league
                 .clone()
-                .unwrap_or_else(|| "Fate of the Vaal".to_string()),
+                .unwrap_or_else(|| "Standard".to_string()),
             league_catalog: Vec::new(),
             exchange_tab: exchange::default_tab_state().into(),
             price_currency: "exalted".to_string(),
@@ -1447,6 +1448,7 @@ async fn refresh_league_sources(app_handle: &tauri::AppHandle, state: &SharedApp
     let mut trade_count = None;
     let mut data_count = None;
     let mut catalog_count = None;
+    let mut refresh_exchange_after_league_change = None;
 
     match trade_result {
         Ok(leagues) => {
@@ -1459,10 +1461,20 @@ async fn refresh_league_sources(app_handle: &tauri::AppHandle, state: &SharedApp
 
             {
                 let mut locked_state = state.lock().await;
+                let previous_league = locked_state.trade_league.clone();
                 locked_state.trade_leagues = leagues.clone();
                 locked_state.data_leagues = data_leagues.clone();
                 if !locked_state.trade_league_locked {
                     locked_state.trade_league = selected;
+                }
+                if previous_league != locked_state.trade_league
+                    && locked_state.scanned_item.is_none()
+                    && !locked_state.exchange_tab.selected_category_id.is_empty()
+                {
+                    refresh_exchange_after_league_change = Some((
+                        locked_state.trade_league.clone(),
+                        locked_state.exchange_tab.selected_category_id.clone(),
+                    ));
                 }
             }
 
@@ -1473,6 +1485,15 @@ async fn refresh_league_sources(app_handle: &tauri::AppHandle, state: &SharedApp
                 locked_state.trade_league.clone()
             };
             let _ = app_handle.emit("scan://trade-league-updated", league);
+            if let Some((league, category_id)) = refresh_exchange_after_league_change.take() {
+                spawn_exchange_category_worker(
+                    app_handle.clone(),
+                    state.clone(),
+                    league,
+                    category_id,
+                    false,
+                );
+            }
         }
         Err(error) => emit_worker_status(
             app_handle,
@@ -2615,21 +2636,27 @@ fn init_world_areas() -> WorldAreaStatus {
     let path = world_areas_cache_path();
     let mut source = "empty";
     let mut fetch_error: Option<String> = None;
-    let data = read_cached_world_areas(&path)
-        .map(|map| {
+
+    let data = if world_areas_cache_is_fresh(&path) {
+        read_cached_world_areas(&path).map(|map| {
             source = "cache";
             map
         })
-        .or_else(|| match fetch_world_areas_cache(&path) {
+    } else {
+        match fetch_world_areas_cache(&path) {
             Ok(map) => {
                 source = "repoe";
                 Some(map)
             }
             Err(error) => {
                 fetch_error = Some(error);
-                None
+                read_cached_world_areas(&path).map(|map| {
+                    source = "stale-cache";
+                    map
+                })
             }
-        });
+        }
+    };
     let map = data.unwrap_or_default();
     let status = WorldAreaStatus {
         state: if map.is_empty() {
@@ -2651,6 +2678,7 @@ fn init_world_areas() -> WorldAreaStatus {
             "count": map.len(),
             "has_g1_2": map.contains_key("G1_2"),
             "has_g1_town": map.contains_key("G1_town"),
+            "cache_fresh": world_areas_cache_is_fresh(&path),
             "fetch_error": fetch_error,
         }),
     );
@@ -2663,6 +2691,15 @@ fn read_cached_world_areas(path: &PathBuf) -> Option<HashMap<String, AreaMeta>> 
         .ok()
         .and_then(|text| parse_world_areas(&text))
         .filter(|map| !map.is_empty())
+}
+
+fn world_areas_cache_is_fresh(path: &PathBuf) -> bool {
+    path.metadata()
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|modified| modified.elapsed().ok())
+        .map(|age| age < REPOE_WORLD_AREAS_CACHE_TTL)
+        .unwrap_or(false)
 }
 
 fn fetch_world_areas_cache(path: &PathBuf) -> Result<HashMap<String, AreaMeta>, String> {
