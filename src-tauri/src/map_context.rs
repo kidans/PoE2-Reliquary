@@ -121,6 +121,21 @@ pub fn snapshot_from_item(
     })
 }
 
+pub fn refresh_snapshot_hazards(
+    snapshot: &WaystoneSnapshot,
+    hazard_profile_id: &str,
+) -> WaystoneSnapshot {
+    let profile = profile_by_id(hazard_profile_id);
+    let profile_hazards = check_waystone_profile_hazards(&snapshot.explicit_mods, &profile);
+    let profile_hazard_summary = HazardSummary::from_warnings(&profile_hazards);
+
+    let mut refreshed = snapshot.clone();
+    refreshed.hazard_count = profile_hazard_summary.total();
+    refreshed.profile_hazards = profile_hazards;
+    refreshed.profile_hazard_summary = profile_hazard_summary;
+    refreshed
+}
+
 pub fn bind_area_to_waystone(
     area: CurrentAreaInfo,
     pending_waystone: Option<WaystoneSnapshot>,
@@ -181,4 +196,114 @@ fn stable_text_hash(text: &str) -> String {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("{hash:016x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn map_area() -> CurrentAreaInfo {
+        CurrentAreaInfo {
+            name: "Heart of the Tribe".to_string(),
+            area_level: Some(80),
+            area_type: "map".to_string(),
+            entered_at_epoch_ms: 2_000,
+            act: None,
+            waystone_mod_count: None,
+            waystone_quantity: None,
+            waystone_rarity: None,
+            waystone_pack_size: None,
+            waystone_hazard_count: None,
+            boss: Some("Unknown".to_string()),
+        }
+    }
+
+    fn waystone_item(mods: Vec<&str>) -> Item {
+        Item {
+            name: "Warped Carving Waystone".to_string(),
+            rarity: "Rare".to_string(),
+            family: "waystone".to_string(),
+            item_class: Some("Waystone".to_string()),
+            base_type: Some("Waystone (Tier 15)".to_string()),
+            item_level: Some(80),
+            property_lines: vec![
+                "Waystone Tier: 15".to_string(),
+                "Monster Pack Size: +9%".to_string(),
+            ],
+            explicit_mods: mods.into_iter().map(str::to_string).collect(),
+            sockets: None,
+            spirit: None,
+            hazards: Vec::new(),
+            trade_url: None,
+            raw_text:
+                "Waystone Tier: 15\nMonster Pack Size: +9%\nPlayers have 50% reduced Recovery Rate"
+                    .to_string(),
+            is_exchange: false,
+            exchange_category_id: None,
+        }
+    }
+
+    #[test]
+    fn bind_area_without_pending_is_area_only() {
+        let run = bind_area_to_waystone(map_area(), None, 2_000);
+        assert_eq!(run.confidence, MapRunConfidence::AreaOnly);
+        assert!(run.waystone.is_none());
+    }
+
+    #[test]
+    fn bind_area_with_fresh_pending_is_armed() {
+        let waystone = snapshot_from_item(&waystone_item(vec![]), 1_000, "general_safe_mapping")
+            .expect("waystone snapshot");
+
+        let run =
+            bind_area_to_waystone(map_area(), Some(waystone), 1_000 + WAYSTONE_ARM_TIMEOUT_MS);
+
+        assert_eq!(run.confidence, MapRunConfidence::Armed);
+        assert!(run.waystone.is_some());
+        assert_eq!(run.area.waystone_mod_count, Some(0));
+        assert_eq!(run.area.waystone_pack_size, Some(9));
+    }
+
+    #[test]
+    fn bind_area_with_expired_pending_is_stale() {
+        let waystone = snapshot_from_item(&waystone_item(vec![]), 1_000, "general_safe_mapping")
+            .expect("waystone snapshot");
+
+        let run =
+            bind_area_to_waystone(map_area(), Some(waystone), 1_001 + WAYSTONE_ARM_TIMEOUT_MS);
+
+        assert_eq!(run.confidence, MapRunConfidence::Stale);
+        assert!(run.waystone.is_none());
+    }
+
+    #[test]
+    fn snapshot_from_item_ignores_non_waystones() {
+        let mut item = waystone_item(vec![]);
+        item.family = "armour".to_string();
+        item.base_type = Some("Body Armour".to_string());
+
+        assert!(snapshot_from_item(&item, 1_000, "general_safe_mapping").is_none());
+    }
+
+    #[test]
+    fn refresh_snapshot_hazards_recalculates_profile_summary() {
+        let snapshot = snapshot_from_item(
+            &waystone_item(vec!["Players have 50% reduced Recovery Rate"]),
+            1_000,
+            "general_safe_mapping",
+        )
+        .expect("waystone snapshot");
+
+        assert_eq!(snapshot.profile_hazard_summary.danger, 1);
+        assert_eq!(snapshot.profile_hazard_summary.build_breaking, 0);
+
+        let refreshed = refresh_snapshot_hazards(&snapshot, "energy_shield_recovery");
+
+        assert_eq!(refreshed.profile_hazard_summary.build_breaking, 1);
+        assert_eq!(refreshed.raw_hash, snapshot.raw_hash);
+        assert_eq!(
+            refreshed.captured_at_epoch_ms,
+            snapshot.captured_at_epoch_ms
+        );
+    }
 }

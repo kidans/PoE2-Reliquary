@@ -329,6 +329,7 @@ type ExchangeTabState = {
 const root = document.querySelector<HTMLDivElement>("#root");
 const previewMode = new URLSearchParams(window.location.search).get("preview");
 const isListingPreviewWindow = previewMode === "listing";
+const WAYSTONE_ARM_TIMEOUT_MS = 15 * 60 * 1000;
 
 if (!root) {
   throw new Error("Lumen-Scan root element was not found.");
@@ -3039,14 +3040,36 @@ function atlasContext() {
   const run = state.active_map_run;
   const area = run?.area ?? state.current_area;
   const waystone = run?.waystone ?? state.pending_waystone;
-  const confidence: MapRunConfidence = run?.confidence ?? (state.pending_waystone ? "unknown" : "area_only");
+  const confidence: MapRunConfidence = run?.confidence ?? pendingWaystoneConfidence(state.pending_waystone);
   return { run, area, waystone, confidence };
+}
+
+function pendingWaystoneConfidence(waystone: WaystoneSnapshot | null): MapRunConfidence {
+  if (!waystone) return "area_only";
+  return Date.now() - waystone.captured_at_epoch_ms > WAYSTONE_ARM_TIMEOUT_MS ? "stale" : "unknown";
+}
+
+function atlasActionTitle(waystone: WaystoneSnapshot | null | undefined, confidence: MapRunConfidence) {
+  if (!waystone) return "Arm a waystone before mapping";
+  if (confidence === "stale") return "Armed waystone is stale";
+  if (confidence === "armed") return "Active map is bound to this waystone";
+  return "Waystone armed for the next map";
+}
+
+function atlasActionCopy(waystone: WaystoneSnapshot | null | undefined, confidence: MapRunConfidence) {
+  if (!waystone) return "Copy a waystone first so Atlas can show tier, quant, pack size, and build-aware warnings.";
+  if (confidence === "stale") {
+    return "This waystone has been armed for more than 15 minutes. Clear it or copy the current waystone again before entering a map.";
+  }
+  if (confidence === "armed") return "Reliquary consumed this waystone when Client.txt reported the generated map.";
+  return "Reliquary will consume this armed waystone exactly once when Client.txt reports the next generated map.";
 }
 
 function renderAtlasOverviewDashboard() {
   const { area, waystone, confidence } = atlasContext();
   const summary = waystone?.profile_hazard_summary ?? { info: 0, warning: 0, danger: 0, build_breaking: 0 };
   const warnings = waystone?.profile_hazards ?? [];
+  const pendingWaystone = state.pending_waystone;
 
   return `
     <div class="atlas-dashboard">
@@ -3085,12 +3108,17 @@ function renderAtlasOverviewDashboard() {
 
         <section class="atlas-card atlas-card-full atlas-next-action-card">
           <p class="section-label">Next Action</p>
-          <h3>${waystone ? "Enter the next map to bind this waystone" : "Arm a waystone before mapping"}</h3>
-          <p>${
-            waystone
-              ? "Reliquary will consume the armed waystone when Client.txt reports the next generated map."
-              : "Copy a waystone first so Atlas can show tier, quant, pack size, and build-aware warnings."
-          }</p>
+          <div class="atlas-action-heading">
+            <h3>${escapeHtml(atlasActionTitle(waystone, confidence))}</h3>
+            <span class="atlas-state-pill confidence-${escapeAttribute(confidence)}">${escapeHtml(mapConfidenceLabel(confidence))}</span>
+          </div>
+          <p>${escapeHtml(atlasActionCopy(waystone, confidence))}</p>
+          ${pendingWaystone ? `
+            <div class="atlas-action-row">
+              <button class="atlas-secondary-action" type="button" data-clear-pending-waystone>Clear armed waystone</button>
+              <span>${escapeHtml(pendingWaystone.name)}${pendingWaystone.tier ? ` · T${pendingWaystone.tier}` : ""}</span>
+            </div>
+          ` : ""}
         </section>
       </div>
     </div>
@@ -4209,6 +4237,7 @@ if (!isListingPreviewWindow && leagueElement) {
     const campaignActButton = target.closest<HTMLButtonElement>("[data-campaign-act]");
     const campaignZoneResetButton = target.closest<HTMLButtonElement>("[data-campaign-zone-reset]");
     const campaignMapResetButton = target.closest<HTMLButtonElement>("[data-campaign-map-reset]");
+    const clearPendingWaystoneButton = target.closest<HTMLButtonElement>("[data-clear-pending-waystone]");
 
     const atlasSectionButton = target.closest<HTMLButtonElement>("[data-atlas-section]");
     if (atlasSectionButton?.dataset.atlasSection) {
@@ -4224,6 +4253,13 @@ if (!isListingPreviewWindow && leagueElement) {
       void invoke("set_hazard_profile", { profileId: hazardProfileButton.dataset.hazardProfile }).catch((error) =>
         pushStatus("hazards", String(error)),
       );
+      return;
+    }
+
+    if (clearPendingWaystoneButton) {
+      state.pending_waystone = null;
+      render();
+      void invoke("clear_pending_waystone").catch((error) => pushStatus("map-context", String(error)));
       return;
     }
 
@@ -4831,6 +4867,9 @@ if (!isListingPreviewWindow && leagueElement) {
   void listen<CurrentAreaInfo>("scan://area-updated", (event) => {
     const prevArea = state.current_area;
     state.current_area = event.payload;
+    if (event.payload.area_type !== "map") {
+      state.active_map_run = null;
+    }
     const rawAct = event.payload.act ?? 0;
     const newAct = remapCampaignAct(rawAct);
     if (newAct !== campaignGuideAct) {
@@ -4952,9 +4991,15 @@ if (!isListingPreviewWindow && leagueElement) {
     render();
   });
 
+  listen("scan://pending-waystone-cleared", () => {
+    state.pending_waystone = null;
+    render();
+  });
+
   listen<MapRunContext>("scan://map-run-updated", (event) => {
     state.active_map_run = event.payload;
     state.current_area = event.payload.area;
+    state.pending_waystone = null;
     render();
   });
 
@@ -4976,6 +5021,8 @@ if (!isListingPreviewWindow && leagueElement) {
       state.trade_queue = initialState.trade_queue;
       state.current_zone = initialState.current_zone || "Unknown";
       state.current_area = initialState.current_area || null;
+      state.pending_waystone = initialState.pending_waystone || null;
+      state.active_map_run = initialState.active_map_run || null;
       state.world_area_status = initialState.world_area_status || state.world_area_status;
       if (state.current_area) {
         const rawAct = state.current_area.act ?? 0;

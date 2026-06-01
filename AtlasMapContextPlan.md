@@ -158,6 +158,60 @@ Turn the existing map context foundation into a complete in-game flow.
 - UI smoke test through `npm run build`.
 - Rust test through `cargo test`.
 
+## Phase 1B: Tab Overlay OCR Fallback
+
+### Objective
+
+Add an optional fallback path for players who enter a map without explicitly arming a waystone. When the player presses `Tab`, Reliquary may read the right-side area/waystone modifier overlay and enrich the current area-only run.
+
+This is a fallback, not the source of truth. The explicit clipboard flow remains primary:
+
+```text
+Copy waystone -> armed -> enter map -> active run
+```
+
+OCR can only upgrade an area-only run into a labelled partial/confirmed overlay match. It must not overwrite an explicitly armed waystone unless the user manually requests a rescan.
+
+### Failure Modes To Design Around
+
+- OCR may misread separators, punctuation, braces, slashes, or percent symbols. Raw OCR text must never be treated as code or direct query syntax.
+- The in-game `Tab` overlay expands vertically and can bleed unrelated labels, NPC names, chest text, or quest text into the capture region.
+- `Tab` can be pressed many times during a map. Repeated reads must not thrash map context, spam fetches, or override confirmed state.
+
+### Rules
+
+- OCR output is evidence, not truth.
+- Normalize OCR lines into canonical candidate strings before matching.
+- Match against known waystone/map modifier templates instead of trusting raw OCR lines.
+- Reject lines that do not match known map-mod vocabulary or expected visual clusters.
+- Use confidence states: `none`, `pending`, `partial`, `confirmed`, `locked`.
+- Lock one OCR result per map run after confirmation.
+- Reset the OCR lock only when Client.txt reports a new generated map, the user manually rescans, or the run ends.
+- Keep OCR opt-in from Settings until it proves reliable in live maps.
+- Display OCR confidence clearly in Atlas and compact HUD.
+
+### Implementation Shape
+
+- Rust owns screenshot capture, PoE2 foreground validation, OCR invocation, and rate/cooldown gates.
+- TypeScript owns confidence copy, visual markers, and manual rescan controls.
+- The OCR adapter should return normalized candidates plus confidence, not a final fake waystone.
+- The map-context binder decides whether OCR can enrich the current `area-only` run.
+
+### Acceptance Criteria
+
+- Armed waystone runs are never overwritten by OCR.
+- Area-only runs can show `OCR partial` or `OCR confirmed` without pretending they were clipboard-armed.
+- Pressing `Tab` repeatedly in one map does not create duplicate state transitions.
+- Bad OCR text degrades to `Area-only` with a clear reason.
+- Manual rescan exists once the feature is enabled.
+
+### Tests
+
+- OCR candidate normalization rejects unrelated UI text.
+- OCR lock allows only one confirmed result per active map run.
+- OCR reset occurs when a new generated map is detected.
+- Explicit armed waystone state wins over OCR fallback.
+
 ## Phase 2: Persisted Run History
 
 ### Objective
@@ -352,4 +406,4 @@ Why:
 - It closes the trust gap in the current map loop.
 - It is small enough to test thoroughly.
 - It improves both Atlas and compact HUD without touching risky scan pricing logic.
-
+- It creates the stable state machine that Phase 1B OCR fallback must attach to.

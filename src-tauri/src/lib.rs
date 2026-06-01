@@ -739,21 +739,32 @@ async fn set_hazard_profile(
 
     let selected = hazards::profile_by_id(normalized);
     let mut pending = None;
+    let mut active_map_run = None;
+    let mut active_area = None;
+    let profile_id = selected.id.clone();
 
     {
         let mut locked_state = state.lock().await;
-        locked_state.hazard_profile_id = selected.id.clone();
+        locked_state.hazard_profile_id = profile_id.clone();
 
-        if let Some(scanned_item) = locked_state.scanned_item.as_ref() {
-            pending = map_context::snapshot_from_item(
-                scanned_item,
-                now_epoch_ms(),
-                &locked_state.hazard_profile_id,
-            );
+        if let Some(snapshot) = locked_state.pending_waystone.as_ref() {
+            let refreshed = map_context::refresh_snapshot_hazards(snapshot, &profile_id);
+            locked_state.pending_waystone = Some(refreshed.clone());
+            pending = Some(refreshed);
         }
 
-        if pending.is_some() {
-            locked_state.pending_waystone = pending.clone();
+        if let Some(run) = locked_state.active_map_run.as_mut() {
+            if let Some(waystone) = run.waystone.as_ref() {
+                let refreshed = map_context::refresh_snapshot_hazards(waystone, &profile_id);
+                run.area.waystone_hazard_count = Some(refreshed.profile_hazard_summary.total());
+                run.waystone = Some(refreshed);
+                active_area = Some(run.area.clone());
+                active_map_run = Some(run.clone());
+            }
+        }
+
+        if let Some(area) = active_area.as_ref() {
+            locked_state.current_area = Some(area.clone());
         }
     }
 
@@ -761,6 +772,36 @@ async fn set_hazard_profile(
 
     if let Some(snapshot) = pending {
         let _ = app_handle.emit("scan://pending-waystone-updated", snapshot);
+    }
+
+    if let Some(area) = active_area {
+        let _ = app_handle.emit("scan://area-updated", area);
+    }
+
+    if let Some(map_run) = active_map_run {
+        let _ = app_handle.emit("scan://map-run-updated", map_run);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_pending_waystone(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, SharedAppState>,
+) -> Result<(), String> {
+    let had_pending = {
+        let mut locked_state = state.lock().await;
+        locked_state.pending_waystone.take().is_some()
+    };
+
+    if had_pending {
+        let _ = app_handle.emit("scan://pending-waystone-cleared", ());
+        emit_worker_status(
+            &app_handle,
+            "map-context",
+            "armed waystone cleared".to_string(),
+        );
     }
 
     Ok(())
@@ -1164,6 +1205,7 @@ pub fn run() {
             set_active_price_filters,
             set_exchange_category,
             set_hazard_profile,
+            clear_pending_waystone,
             set_trade_league,
             set_compact_mode,
             set_window_layout,
@@ -2135,8 +2177,15 @@ async fn stream_client_log(
                     Ok(0) => break,
                     Ok(_) => {
                         let content = line_buf.trim_end().to_string();
-                        process_log_line(&content, &generating_re, &death_re, false, &app_handle, &state)
-                            .await;
+                        process_log_line(
+                            &content,
+                            &generating_re,
+                            &death_re,
+                            false,
+                            &app_handle,
+                            &state,
+                        )
+                        .await;
                     }
                     Err(_) => break,
                 }
