@@ -1,6 +1,6 @@
 [package]
 name = "reliquary"
-version = "0.1.0"
+version = "0.1.2"
 description = "A lightweight Path of Exile 2 overlay built with Rust and Tauri."
 authors = ["Reliquary Contributors"]
 edition = "2021"

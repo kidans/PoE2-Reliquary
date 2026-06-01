@@ -71,7 +71,8 @@ type GuideAct = {
   zones: GuideZone[];
 };
 
-type TabId = "scan" | "trade" | "data" | "settings" | "temple";
+type TabId = "scan" | "trade" | "campaign" | "atlas" | "data" | "settings" | "temple";
+type CampaignSubTab = "timer" | "map-runs";
 
 type CurrentAreaInfo = {
   name: string;
@@ -87,6 +88,53 @@ type CurrentAreaInfo = {
   boss: string | null;
 };
 
+type MapRunConfidence = "armed" | "area_only" | "stale" | "unknown";
+
+type HazardSummary = {
+  info: number;
+  warning: number;
+  danger: number;
+  build_breaking: number;
+};
+
+type WaystoneHazardWarning = {
+  modifier: string;
+  matched_pattern: string;
+  severity: "info" | "warning" | "danger" | "build_breaking";
+  profile_id: string;
+  profile_label: string;
+  reason: string;
+};
+
+type WaystoneSnapshot = {
+  name: string;
+  base_type: string | null;
+  tier: number | null;
+  item_level: number | null;
+  explicit_mods: string[];
+  quantity: number | null;
+  rarity: number | null;
+  pack_size: number | null;
+  hazard_count: number;
+  profile_hazards: WaystoneHazardWarning[];
+  profile_hazard_summary: HazardSummary;
+  raw_hash: string;
+  captured_at_epoch_ms: number;
+};
+
+type MapRunContext = {
+  area: CurrentAreaInfo;
+  waystone: WaystoneSnapshot | null;
+  confidence: MapRunConfidence;
+  started_at_epoch_ms: number;
+};
+
+type HazardProfile = {
+  id: string;
+  label: string;
+  rules: { pattern: string; severity: string; reason: string }[];
+};
+
 type WorldAreaStatus = {
   state: string;
   source: string;
@@ -100,6 +148,9 @@ type AppState = {
   trade_queue: TradeWhisper[];
   current_zone: string;
   current_area: CurrentAreaInfo | null;
+  pending_waystone: WaystoneSnapshot | null;
+  active_map_run: MapRunContext | null;
+  hazard_profile_id: string;
   world_area_status: WorldAreaStatus;
   trade_league: string;
   league_catalog: LeagueCatalogEntry[];
@@ -225,9 +276,12 @@ type Poe2DbAdapterStatus = {
 
 type ExchangeCategory = {
   id: string;
+  group: string;
   label: string;
+  feed: string;
   poe_ninja_type: string | null;
   poe_ninja_slug: string | null;
+  icon_url: string | null;
   available: boolean;
 };
 
@@ -284,6 +338,9 @@ const state: AppState = {
   trade_queue: [],
   current_zone: "Unknown",
   current_area: null,
+  pending_waystone: null,
+  active_map_run: null,
+  hazard_profile_id: "general_safe_mapping",
   world_area_status: {
     state: "warming",
     source: "unknown",
@@ -308,14 +365,17 @@ let workerMessages: WorkerStatus[] = [];
 let compactMode = false;
 let selectedSpecKeys = new Set<string>();
 let selectedPriceProfile: PriceProfileId = "quick";
-let appliedWindowLayout: "scan" | "trade" | "settings" | "temple" | "idle" | "default" | "compact" | null = null;
+let appliedWindowLayout: "scan" | "trade" | "settings" | "temple" | "campaign" | "atlas" | "idle" | "default" | "compact" | null = null;
 let evaluateLayoutFrame = 0;
 let tradeSearchQuery = "";
+let tradeSidebarScrollTop = 0;
 let loadingMoreMarketplaceResults = false;
 let hoveredListingPreview: ListingPreviewRequest | null = null;
 let pinnedListingPreviewIndex: number | null = null;
 let previewPollHandle = 0;
 let latestRequestedFilterSignature: string | null = null;
+let hazardProfiles: HazardProfile[] = [];
+let selectedAtlasSection: "overview" | "safety" | "profile" | "focus" | "history" = "overview";
 let activeFilterPushTimer = 0;
 
 const campaignGuideActs = guideData.acts;
@@ -329,6 +389,22 @@ let campaignTimerHandle = 0;
 let campaignCompletedSteps = new Set<string>();
 let campaignCurrentZone = "";
 const CAMPAIGN_STORAGE_KEY = "reliquary.campaign.progress";
+const CAMPAIGN_ZONES_KEY = "reliquary.campaign.zones";
+
+type MapRun = {
+  name: string;
+  tier: number | null;
+  boss: string | null;
+  elapsed_ms: number;
+  entered_at: number;
+};
+
+let activeCampaignSubTab: CampaignSubTab = "timer";
+let campaignSelectedAct = 1;
+let campaignZoneTimes: Map<string, number> = new Map();
+let campaignCurrentZoneEnteredAt = 0;
+let campaignMapRuns: MapRun[] = [];
+let campaignResetConfirmHandle = 0;
 
 const INTERLUDE_ZONE_MAP: Record<string, string> = {
   "scorched farmlands": "Interlude 5.1 — Ogham, The Refuge",
@@ -385,6 +461,34 @@ function loadCampaignProgress() {
       }
     }
   } catch { /* ignore */ }
+}
+
+function saveCampaignZoneData() {
+  try {
+    localStorage.setItem(CAMPAIGN_ZONES_KEY, JSON.stringify({
+      zoneTimes: Object.fromEntries(campaignZoneTimes),
+      mapRuns: campaignMapRuns,
+    }));
+  } catch { /* ignore */ }
+}
+
+function loadCampaignZoneData() {
+  try {
+    const raw = localStorage.getItem(CAMPAIGN_ZONES_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      campaignZoneTimes = new Map(Object.entries(data.zoneTimes ?? {}));
+      campaignMapRuns = Array.isArray(data.mapRuns) ? data.mapRuns : [];
+    }
+  } catch { /* ignore */ }
+}
+
+function normalizeZoneName(name: string) {
+  return name
+    .toLowerCase()
+    .replace(/^the\s+/i, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function readTempleLayout() {
@@ -586,6 +690,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
 let appSettings = readAppSettings();
 applyAppSettings(appSettings);
 loadCampaignProgress();
+loadCampaignZoneData();
 
 let templeLayout: TempleLayoutState = readTempleLayout();
 let selectedTempleRoomId: TempleRoomId = "path";
@@ -671,6 +776,18 @@ root.innerHTML = isListingPreviewWindow
             </span>
             <span class="tab-label">Trade</span>
           </button>
+          <button class="tab-button" data-tab="campaign" type="button" title="Campaign">
+            <span class="tab-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            </span>
+            <span class="tab-label">Campaign</span>
+          </button>
+          <button class="tab-button" data-tab="atlas" type="button" title="Atlas">
+            <span class="tab-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 2 4 6v12l8 4 8-4V6Z"/><path d="M12 2v20M4 6l8 4 8-4M4 18l8-4 8 4"/></svg>
+            </span>
+            <span class="tab-label">Atlas</span>
+          </button>
           <button class="tab-button" data-tab="data" type="button" title="Data">
             <span class="tab-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M5 6c0-1.7 3.1-3 7-3s7 1.3 7 3-3.1 3-7 3-7-1.3-7-3Z"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
@@ -712,6 +829,19 @@ const tabButtons = isListingPreviewWindow
 
 if (!panelElement || (!isListingPreviewWindow && (!zoneElement || !leagueElement || !hudElement || !compactTitleElement || !compactMetaElement))) {
   throw new Error("Reliquary UI shell failed to initialize.");
+}
+
+if (!isListingPreviewWindow) {
+  root.addEventListener(
+    "scroll",
+    (event) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.classList.contains("trade-sidebar-scroll")) {
+        tradeSidebarScrollTop = target.scrollTop;
+      }
+    },
+    true,
+  );
 }
 
 function render() {
@@ -775,7 +905,13 @@ function render() {
     }
 
     if (activeTab === "trade") {
+      const previousSidebarScrollTop =
+        panelElement!.querySelector<HTMLElement>(".trade-sidebar-scroll")?.scrollTop ?? tradeSidebarScrollTop;
       panelElement!.innerHTML = renderTradePanel(state.exchange_tab);
+      const nextSidebar = panelElement!.querySelector<HTMLElement>(".trade-sidebar-scroll");
+      if (nextSidebar) {
+        nextSidebar.scrollTop = previousSidebarScrollTop;
+      }
       hoveredListingPreview = null;
       void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
 
@@ -814,6 +950,18 @@ function render() {
       void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
     }
 
+    if (activeTab === "campaign") {
+      panelElement!.innerHTML = renderCampaignTabPanel();
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
+
+    if (activeTab === "atlas") {
+      panelElement!.innerHTML = renderAtlasPanel();
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
+
     if (activeTab === "settings") {
       panelElement!.innerHTML = renderSettingsPanel();
       hoveredListingPreview = null;
@@ -842,8 +990,6 @@ function renderLeagueOptions() {
     : state.trade_leagues.length
       ? state.trade_leagues
     : [
-        { id: "Fate of the Vaal", text: "Fate of the Vaal" },
-        { id: "HC Fate of the Vaal", text: "HC Fate of the Vaal" },
         { id: "Standard", text: "Standard" },
         { id: "Hardcore", text: "Hardcore" },
       ];
@@ -2265,6 +2411,7 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
   const currencyIcons = exchangeHeaderCurrencies(exchangeTab);
   const sourceLabel = overview?.source ?? "poe.ninja cache";
   const statusText = exchangeTab.error ?? exchangeTab.status;
+  const quantityLabel = selectedCategory?.feed === "stash" ? "Listings" : "Quantity";
   const updatedAt = overview
     ? `Last updated at ${formatTimestamp(overview.fetched_at_epoch_ms)}`
     : "Waiting for cached exchange snapshot";
@@ -2278,9 +2425,7 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
         </div>
         <div class="trade-sidebar-section trade-sidebar-scroll">
           <p class="section-label">General</p>
-          <div class="trade-category-list">
-            ${categories.map((category) => renderExchangeCategoryButton(category, exchangeTab.selected_category_id)).join("")}
-          </div>
+          ${renderExchangeCategoryGroups(categories, exchangeTab.selected_category_id)}
         </div>
       </aside>
 
@@ -2310,7 +2455,7 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
           <div class="trade-table-header">
             <span>Item</span>
             <span>Price</span>
-            <span>Quantity</span>
+            <span>${escapeHtml(quantityLabel)}</span>
             <span>History</span>
             <span>Actions</span>
           </div>
@@ -2325,6 +2470,27 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
       </div>
     </section>
   `;
+}
+
+function renderExchangeCategoryGroups(categories: ExchangeCategory[], selectedCategoryId: string) {
+  const groups = categories.reduce<Map<string, ExchangeCategory[]>>((acc, category) => {
+    const group = category.group || "General";
+    acc.set(group, [...(acc.get(group) ?? []), category]);
+    return acc;
+  }, new Map());
+
+  return [...groups.entries()]
+    .map(
+      ([group, groupedCategories]) => `
+        <div class="trade-category-group">
+          <p class="section-label">${escapeHtml(group)}</p>
+          <div class="trade-category-list">
+            ${groupedCategories.map((category) => renderExchangeCategoryButton(category, selectedCategoryId)).join("")}
+          </div>
+        </div>
+      `,
+    )
+    .join("");
 }
 
 function renderExchangeCategoryButton(category: ExchangeCategory, selectedCategoryId: string) {
@@ -2345,7 +2511,11 @@ function renderExchangeCategoryButton(category: ExchangeCategory, selectedCatego
       ${category.available ? "" : "disabled"}
       title="${category.available ? category.label : `${category.label} feed is not available yet`}"
     >
-      <span class="trade-category-glyph" aria-hidden="true"></span>
+      ${
+        category.icon_url
+          ? `<img class="trade-category-icon" src="${escapeAttribute(category.icon_url)}" alt="" />`
+          : `<span class="trade-category-glyph" aria-hidden="true"></span>`
+      }
       <span>${escapeHtml(category.label)}</span>
     </button>
   `;
@@ -2369,18 +2539,27 @@ function exchangeCategoryLabel(categoryId: string) {
   const labels: Record<string, string> = {
     currency: "Currency",
     essences: "Essences",
-    delirium: "Delirium",
-    breach: "Breach",
-    ritual: "Ritual",
+    delirium: "Liquid Emotions",
+    breach: "Catalysts",
+    ritual: "Omens",
     expedition: "Expedition",
-    abyss: "Abyss",
+    abyss: "Abyssal Bones",
     incursion: "Incursion",
     fragments: "Fragments",
     runes: "Runes",
     "soul-cores": "Soul Cores",
     idols: "Idols",
     "uncut-gems": "Uncut Gems",
-    gems: "Gems",
+    gems: "Lineage Gems",
+    verisium: "Verisium",
+    "unique-weapons": "Unique Weapons",
+    "unique-armours": "Unique Armours",
+    "unique-accessories": "Unique Accessories",
+    "unique-flasks": "Unique Flasks",
+    "unique-charms": "Unique Charms",
+    "unique-jewels": "Unique Jewels",
+    "unique-maps": "Unique Maps",
+    "unique-relics": "Unique Relics",
   };
 
   return labels[categoryId] ?? categoryId;
@@ -2556,6 +2735,145 @@ function formatTimestamp(epochMs: number) {
   });
 }
 
+function renderCampaignTabPanel() {
+  const subTab = activeCampaignSubTab;
+  const isZoneResetPending = campaignResetConfirmHandle > 0;
+
+  return `
+    <section class="campaign-panel-shell">
+      <nav class="campaign-sub-tabs">
+        <button type="button" data-campaign-sub-tab="timer" class="${subTab === "timer" ? "is-active" : ""}">Timer</button>
+        <button type="button" data-campaign-sub-tab="map-runs" class="${subTab === "map-runs" ? "is-active" : ""}">Map Runs</button>
+      </nav>
+      <div class="campaign-sub-content">
+        ${subTab === "timer" ? renderCampaignTimerSubTab(isZoneResetPending) : ""}
+        ${subTab === "map-runs" ? renderCampaignMapRunsSubTab(isZoneResetPending) : ""}
+      </div>
+    </section>
+  `;
+}
+
+function renderCampaignTimerSubTab(isZoneResetPending: boolean) {
+  const acts = campaignGuideActs.filter(a => a.act >= 1 && a.act <= 4);
+  const interlude = campaignGuideActs.find(a => a.act === 5);
+  const selectedAct = campaignSelectedAct === 5
+    ? interlude
+    : acts.find(a => a.act === campaignSelectedAct) ?? acts.find(a => a.act === 1);
+  const actRows = acts.map(act => {
+    const isActive = act.act === (selectedAct?.act ?? 1) && campaignSelectedAct !== 5;
+    const actIdx = Math.max(0, act.act - 1);
+    const time = formatCampaignTime(campaignActTimes[actIdx] ?? 0);
+    return `<button type="button" class="campaign-act-button${isActive ? " is-active" : ""}" data-campaign-act="${act.act}">
+      <span>${actDisplayName(act.act)}</span><strong>${time}</strong>
+    </button>`;
+  }).join("");
+
+  const interludeTime = formatCampaignTime(campaignActTimes[4] ?? 0);
+  const interludeActive = campaignSelectedAct === 5;
+  const interludeRow = `<button type="button" class="campaign-act-button${interludeActive ? " is-active" : ""}" data-campaign-act="5">
+    <span>INTERLUDE</span><strong>${interludeTime}</strong>
+  </button>`;
+
+  let zoneRows = "";
+  if (selectedAct) {
+    const zones = selectedAct.zones;
+    zoneRows = zones.map(zone => {
+      const normalizedName = normalizeZoneName(zone.name);
+      const zoneTime = campaignZoneTimes.get(normalizedName) ?? 0;
+      const currentName = normalizeZoneName(state.current_area?.name ?? "");
+      const isCurrentZone = currentName === normalizedName
+        || currentName.includes(normalizedName)
+        || normalizedName.includes(currentName);
+      const liveTime = isCurrentZone && campaignCurrentZoneEnteredAt > 0
+        ? Date.now() - campaignCurrentZoneEnteredAt
+        : 0;
+      const totalTime = zoneTime + liveTime;
+      const wp = zone.waypoint ? `<span class="campaign-zone-wp" title="Waypoint">W</span>` : "";
+      const current = isCurrentZone ? " is-current" : "";
+      return `<div class="campaign-zone-row${current}">
+        <span class="campaign-zone-name">${escapeHtml(zone.name)}${wp}</span>
+        <span class="campaign-zone-level">L${escapeHtml(zone.level)}</span>
+        <span class="campaign-zone-time">${totalTime > 0 ? formatZoneTime(totalTime) : "\u2014"}</span>
+      </div>`;
+    }).join("");
+  }
+
+  const totalText = formatCampaignTime(campaignTotalMs);
+  const actText = selectedAct ? formatCampaignTime(campaignActTimes[Math.max(0, (selectedAct.act <= 4 ? selectedAct.act : 5) - 1)] ?? 0) : "0:00";
+  const resetLabel = isZoneResetPending ? "Are you sure?" : "Reset All";
+
+  return `
+    <aside class="campaign-sidebar">
+      ${actRows}${interludeRow}
+      <div class="campaign-sidebar-footer">
+        <button type="button" class="campaign-reset-button${isZoneResetPending ? " confirm" : ""}" data-campaign-zone-reset>${escapeHtml(resetLabel)}</button>
+      </div>
+    </aside>
+    <div class="campaign-main">
+      <header class="campaign-main-header">
+        <h2>${selectedAct ? escapeHtml(selectedAct.name) : "Select an act"}</h2>
+        <span>Total: ${totalText} · Act: ${actText}</span>
+      </header>
+      <div class="campaign-zone-list">
+        ${zoneRows || "<div class=\"campaign-zone-empty\">No zones for this act.</div>"}
+      </div>
+    </div>
+  `;
+}
+
+function renderCampaignMapRunsSubTab(isZoneResetPending: boolean) {
+  if (!campaignMapRuns.length) {
+    return `<div class="campaign-maps-empty">
+      <p class="section-label">Map Runs</p>
+      <p>No endgame map runs recorded yet. Enter a map to start tracking.</p>
+    </div>`;
+  }
+
+  const maxTime = Math.max(...campaignMapRuns.map(r => r.elapsed_ms || 1));
+  const cards = campaignMapRuns.map(run => {
+    const time = run.elapsed_ms > 0 ? formatZoneTime(run.elapsed_ms) : "In progress";
+    const boss = run.boss ? `<small>${escapeHtml(run.boss)}</small>` : "";
+    const barPct = run.elapsed_ms > 0 ? Math.round((run.elapsed_ms / maxTime) * 100) : 0;
+    const bar = `<div class="campaign-map-bar"><div class="campaign-map-bar-fill" style="width:${barPct}%"></div></div>`;
+    return `<div class="campaign-map-card">
+      <div class="campaign-map-header">
+        <strong>${escapeHtml(run.name)}</strong>
+        <span>T${run.tier ?? "?"}</span>
+      </div>
+      ${boss}
+      <span class="campaign-map-time">${time}</span>
+      ${bar}
+    </div>`;
+  }).join("");
+
+  const resetLabel = isZoneResetPending ? "Are you sure?" : "Reset Map History";
+
+  return `
+    <div class="campaign-maps-content">
+      <header class="campaign-maps-header">
+        <h2>Recent Map Runs</h2>
+        <span>Last ${campaignMapRuns.length} maps</span>
+      </header>
+      <div class="campaign-maps-grid">${cards}</div>
+      <div class="campaign-maps-footer">
+        <button type="button" class="campaign-reset-button${isZoneResetPending ? " confirm" : ""}" data-campaign-map-reset>${escapeHtml(resetLabel)}</button>
+      </div>
+    </div>
+  `;
+}
+
+function formatZoneTime(ms: number) {
+  const totalSec = Math.floor(ms / 1000);
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  if (mins >= 60) {
+    const hours = Math.floor(mins / 60);
+    const remainMins = mins % 60;
+    return `${hours}:${remainMins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  }
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
 function renderDataPanel() {
   const sourceTruth = state.source_truth_snapshot;
   const worldAreas = state.world_area_status;
@@ -2587,7 +2905,6 @@ function renderDataPanel() {
 
   return `
     <div class="data-grid">
-      ${renderCampaignSection()}
       <div class="data-source-card">
         <span>Sources</span>
         <strong>Live data health</strong>
@@ -2628,6 +2945,247 @@ function formatCampaignTime(totalMs: number) {
   const secs = Math.floor((totalMs % 60000) / 1000);
   if (hours > 0) return `${hours}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function renderAtlasPanel() {
+  const sections: { id: typeof selectedAtlasSection; label: string }[] = [
+    { id: "overview", label: "Overview" },
+    { id: "safety", label: "Waystone Safety" },
+    { id: "profile", label: "Danger Profile" },
+    { id: "focus", label: "Endgame Focus" },
+    { id: "history", label: "Run History" },
+  ];
+
+  const sidebar = sections.map((section) => `
+    <button class="trade-category-button ${selectedAtlasSection === section.id ? "is-active" : ""}" data-atlas-section="${section.id}" type="button">
+      <span class="trade-category-glyph" aria-hidden="true"></span>
+      <span>${escapeHtml(section.label)}</span>
+    </button>
+  `).join("");
+
+  return `
+    <section class="trade-market atlas-shell">
+      <aside class="trade-sidebar">
+        <div class="trade-sidebar-section trade-sidebar-scroll">
+          <p class="section-label">Atlas</p>
+          <div class="trade-category-list">
+            ${sidebar}
+          </div>
+        </div>
+      </aside>
+      <div class="trade-market-main atlas-main">
+        <header class="trade-market-header">
+          <div>
+            <h2>Atlas</h2>
+            <p>Current run context · build-aware waystone safety</p>
+          </div>
+        </header>
+        ${renderAtlasDashboard()}
+      </div>
+    </section>
+  `;
+}
+
+function renderAtlasDashboard() {
+  if (selectedAtlasSection === "safety") return renderAtlasSafetyDashboard();
+  if (selectedAtlasSection === "profile") return renderAtlasProfileDashboard();
+  if (selectedAtlasSection === "focus") return renderAtlasFocusDashboard();
+  if (selectedAtlasSection === "history") return renderAtlasHistoryDashboard();
+  return renderAtlasOverviewDashboard();
+}
+
+function atlasContext() {
+  const run = state.active_map_run;
+  const area = run?.area ?? state.current_area;
+  const waystone = run?.waystone ?? state.pending_waystone;
+  const confidence: MapRunConfidence = run?.confidence ?? (state.pending_waystone ? "unknown" : "area_only");
+  return { run, area, waystone, confidence };
+}
+
+function renderAtlasOverviewDashboard() {
+  const { area, waystone, confidence } = atlasContext();
+  const summary = waystone?.profile_hazard_summary ?? { info: 0, warning: 0, danger: 0, build_breaking: 0 };
+  const warnings = waystone?.profile_hazards ?? [];
+
+  return `
+    <div class="atlas-dashboard">
+      <div class="atlas-summary-grid">
+        ${renderAtlasStatCard("Area", area?.name ?? "No active area", area?.area_level ? `Area Lv ${area.area_level}` : "Waiting for Client.txt")}
+        ${renderAtlasStatCard("Waystone", waystone?.base_type ?? waystone?.name ?? "Not armed", renderWaystoneStatsText(waystone))}
+        ${renderAtlasStatCard("Safety", safetySummaryLabel(summary), `${summary.build_breaking} breaking · ${summary.danger} danger · ${summary.warning} warning`)}
+        ${renderAtlasStatCard("Profile", profileLabel(state.hazard_profile_id), mapConfidenceLabel(confidence))}
+      </div>
+
+      <div class="atlas-overview-grid">
+        <section class="atlas-card atlas-card-large">
+          <p class="section-label">Current Run</p>
+          <h3>${escapeHtml(area?.name ?? "Atlas")}</h3>
+          <div class="atlas-detail-list">
+            <span><strong>Type</strong>${escapeHtml(area?.area_type ?? "unknown")}</span>
+            <span><strong>Level</strong>${area?.area_level ?? "-"}</span>
+            <span><strong>Boss</strong>${escapeHtml(area?.boss ?? "Unknown")}</span>
+            <span><strong>Confidence</strong>${escapeHtml(mapConfidenceLabel(confidence))}</span>
+          </div>
+          <p>${escapeHtml(mapConfidenceDescription(confidence))}</p>
+        </section>
+
+        <section class="atlas-card atlas-card-large">
+          <p class="section-label">Quick Safety</p>
+          <h3>${escapeHtml(safetySummaryLabel(summary))}</h3>
+          <div class="atlas-safety-strip">
+            <span class="atlas-danger-pill breaking">${summary.build_breaking} breaking</span>
+            <span class="atlas-danger-pill danger">${summary.danger} danger</span>
+            <span class="atlas-danger-pill warning">${summary.warning} warning</span>
+          </div>
+          <div class="atlas-warning-list compact">
+            ${warnings.length ? warnings.slice(0, 3).map(renderAtlasWarning).join("") : `<div class="empty-listing">No profile warnings for the armed/current waystone.</div>`}
+          </div>
+        </section>
+
+        <section class="atlas-card atlas-card-full atlas-next-action-card">
+          <p class="section-label">Next Action</p>
+          <h3>${waystone ? "Enter the next map to bind this waystone" : "Arm a waystone before mapping"}</h3>
+          <p>${
+            waystone
+              ? "Reliquary will consume the armed waystone when Client.txt reports the next generated map."
+              : "Copy a waystone first so Atlas can show tier, quant, pack size, and build-aware warnings."
+          }</p>
+        </section>
+      </div>
+    </div>
+  `;
+}
+
+function renderAtlasSafetyDashboard() {
+  const { waystone } = atlasContext();
+  const summary = waystone?.profile_hazard_summary ?? { info: 0, warning: 0, danger: 0, build_breaking: 0 };
+  const warnings = waystone?.profile_hazards ?? [];
+
+  return `
+    <div class="atlas-dashboard">
+      <div class="atlas-summary-grid three">
+        ${renderAtlasStatCard("Build-breaking", String(summary.build_breaking), "Usually reroll")}
+        ${renderAtlasStatCard("Danger", String(summary.danger), "High-risk for profile")}
+        ${renderAtlasStatCard("Warning", String(summary.warning), "Playable but notable")}
+      </div>
+      <section class="atlas-card atlas-card-full">
+        <p class="section-label">Waystone Safety</p>
+        <h3>${escapeHtml(profileLabel(state.hazard_profile_id))}</h3>
+        <div class="atlas-warning-list">
+          ${warnings.length ? warnings.map(renderAtlasWarning).join("") : `<div class="empty-listing">No profile warnings for the armed/current waystone.</div>`}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAtlasProfileDashboard() {
+  const profiles = hazardProfiles.length ? hazardProfiles : [
+    { id: "general_safe_mapping", label: "General Safe Mapping", rules: [] },
+    { id: "energy_shield_recovery", label: "Energy Shield / Recovery", rules: [] },
+    { id: "minion", label: "Minion", rules: [] },
+  ];
+
+  return `
+    <div class="atlas-dashboard">
+      <section class="atlas-card atlas-card-full">
+        <p class="section-label">Danger Profile</p>
+        <h3>${escapeHtml(profileLabel(state.hazard_profile_id))}</h3>
+        <div class="atlas-profile-grid">
+          ${profiles.map((profile) => `
+            <button class="atlas-profile-card ${profile.id === state.hazard_profile_id ? "is-active" : ""}" data-hazard-profile="${escapeAttribute(profile.id)}" type="button">
+              <p class="section-label">${profile.id === state.hazard_profile_id ? "Active" : "Profile"}</p>
+              <strong>${escapeHtml(profile.label)}</strong>
+              <span>${profile.rules.length} safety rules</span>
+            </button>
+          `).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAtlasFocusDashboard() {
+  return `
+    <div class="atlas-dashboard">
+      <section class="atlas-card atlas-card-full">
+        <p class="section-label">Endgame Focus</p>
+        <h3>0.5 Atlas companion</h3>
+        <p>Mechanic focus, boss/Fortress checklists, and economy watchlist hooks will land here after the map-context foundation is tested.</p>
+      </section>
+    </div>
+  `;
+}
+
+function renderAtlasHistoryDashboard() {
+  return `
+    <div class="atlas-dashboard">
+      <section class="atlas-card atlas-card-full">
+        <p class="section-label">Run History</p>
+        <h3>Mapping log</h3>
+        <div class="empty-listing">Run history will be wired after active map runs are persisted.</div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAtlasStatCard(label: string, value: string, detail: string) {
+  return `
+    <section class="atlas-stat-card">
+      <p class="section-label">${escapeHtml(label)}</p>
+      <strong>${escapeHtml(value)}</strong>
+      <span>${escapeHtml(detail)}</span>
+    </section>
+  `;
+}
+
+function renderAtlasWarning(warning: WaystoneHazardWarning) {
+  return `
+    <article class="price-filter atlas-warning severity-${escapeAttribute(warning.severity)}">
+      <span>
+        <strong>${escapeHtml(warning.modifier)}</strong>
+        <small>${escapeHtml(warning.profile_label)} · ${escapeHtml(warning.reason)}</small>
+      </span>
+      <em>${escapeHtml(warning.severity.replace("_", " "))}</em>
+    </article>
+  `;
+}
+
+function renderWaystoneStatsText(waystone: WaystoneSnapshot | null | undefined) {
+  if (!waystone) return "Arm a waystone before entering a map.";
+  const parts = [
+    waystone.tier ? `T${waystone.tier}` : null,
+    waystone.quantity != null ? `Q:${waystone.quantity}%` : null,
+    waystone.rarity != null ? `R:${waystone.rarity}%` : null,
+    waystone.pack_size != null ? `Pack:${waystone.pack_size}%` : null,
+    waystone.hazard_count ? `${waystone.hazard_count} warnings` : null,
+  ].filter(Boolean);
+  return parts.join(" · ") || "Waystone armed.";
+}
+
+function safetySummaryLabel(summary: HazardSummary) {
+  if (summary.build_breaking > 0) return "Build-breaking";
+  if (summary.danger > 0) return "Danger";
+  if (summary.warning > 0) return "Warning";
+  return "No warnings";
+}
+
+function mapConfidenceLabel(confidence: MapRunConfidence) {
+  if (confidence === "armed") return "Armed";
+  if (confidence === "stale") return "Stale";
+  if (confidence === "unknown") return "Pending";
+  return "Area-only";
+}
+
+function mapConfidenceDescription(confidence: MapRunConfidence) {
+  if (confidence === "armed") return "This run consumed an explicitly armed waystone.";
+  if (confidence === "stale") return "A waystone existed, but it was too old to trust.";
+  if (confidence === "unknown") return "A waystone is armed and waiting for the next generated map.";
+  return "Client.txt detected the area, but no waystone was armed.";
+}
+
+function profileLabel(profileId: string) {
+  return hazardProfiles.find((profile) => profile.id === profileId)?.label ?? profileId.replace(/_/g, " ");
 }
 
 function renderSettingsPanel() {
@@ -3216,25 +3774,36 @@ function fallbackExchangeTab(): ExchangeTabState {
   return {
     categories: [
       "currency",
-      "essences",
-      "delirium",
-      "breach",
-      "ritual",
-      "expedition",
-      "abyss",
-      "incursion",
       "fragments",
-      "runes",
-      "soul-cores",
-      "idols",
+      "abyss",
       "uncut-gems",
       "gems",
+      "essences",
+      "soul-cores",
+      "idols",
+      "runes",
+      "ritual",
+      "expedition",
+      "delirium",
+      "breach",
+      "verisium",
+      "unique-weapons",
+      "unique-armours",
+      "unique-accessories",
+      "unique-flasks",
+      "unique-charms",
+      "unique-jewels",
+      "unique-maps",
+      "unique-relics",
     ].map((id) => ({
       id,
+      group: id.startsWith("unique-") ? "Equipment" : "General",
       label: exchangeCategoryLabel(id),
+      feed: id.startsWith("unique-") ? "stash" : "exchange",
       poe_ninja_type: null,
       poe_ninja_slug: null,
-      available: id !== "incursion",
+      icon_url: null,
+      available: true,
     })),
     selected_category_id: "currency",
     selected_item_id: null,
@@ -3266,7 +3835,14 @@ function normalizeExchangeTab(exchangeTab: ExchangeTabState | null | undefined):
   }
 
   return {
-    categories: exchangeTab.categories?.length ? exchangeTab.categories : fallback.categories,
+    categories: exchangeTab.categories?.length
+      ? exchangeTab.categories.map((category) => ({
+          ...category,
+          group: category.group || (category.id.startsWith("unique-") ? "Equipment" : "General"),
+          feed: category.feed || (category.id.startsWith("unique-") ? "stash" : "exchange"),
+          icon_url: category.icon_url ?? null,
+        }))
+      : fallback.categories,
     selected_category_id: exchangeTab.selected_category_id || fallback.selected_category_id,
     selected_item_id: exchangeTab.selected_item_id ?? null,
     selected_quote_currency_id:
@@ -3361,7 +3937,7 @@ function rarityClassName(rarity: string) {
 
 
 
-function desiredWindowLayout(): "scan" | "trade" | "settings" | "temple" | "idle" | "default" | "compact" {
+function desiredWindowLayout(): "scan" | "trade" | "settings" | "temple" | "campaign" | "atlas" | "idle" | "default" | "compact" {
   if (compactMode) {
     return "compact";
   }
@@ -3372,6 +3948,14 @@ function desiredWindowLayout(): "scan" | "trade" | "settings" | "temple" | "idle
 
   if (activeTab === "temple") {
     return "temple";
+  }
+
+  if (activeTab === "atlas") {
+    return "atlas";
+  }
+
+  if (activeTab === "campaign") {
+    return "campaign";
   }
 
   if (activeTab === "settings") {
@@ -3580,6 +4164,80 @@ if (!isListingPreviewWindow && leagueElement) {
     const templeLockButton = target.closest<HTMLButtonElement>("[data-temple-lock-toggle]");
     const templeDestabilizeButton = target.closest<HTMLButtonElement>("[data-temple-destabilize]");
     const templeDestabilizeUndoButton = target.closest<HTMLButtonElement>("[data-temple-destabilize-undo]");
+    const campaignSubTabButton = target.closest<HTMLButtonElement>("[data-campaign-sub-tab]");
+    const campaignActButton = target.closest<HTMLButtonElement>("[data-campaign-act]");
+    const campaignZoneResetButton = target.closest<HTMLButtonElement>("[data-campaign-zone-reset]");
+    const campaignMapResetButton = target.closest<HTMLButtonElement>("[data-campaign-map-reset]");
+
+    const atlasSectionButton = target.closest<HTMLButtonElement>("[data-atlas-section]");
+    if (atlasSectionButton?.dataset.atlasSection) {
+      selectedAtlasSection = atlasSectionButton.dataset.atlasSection as typeof selectedAtlasSection;
+      render();
+      return;
+    }
+
+    const hazardProfileButton = target.closest<HTMLButtonElement>("[data-hazard-profile]");
+    if (hazardProfileButton?.dataset.hazardProfile) {
+      state.hazard_profile_id = hazardProfileButton.dataset.hazardProfile;
+      render();
+      void invoke("set_hazard_profile", { profileId: hazardProfileButton.dataset.hazardProfile }).catch((error) =>
+        pushStatus("hazards", String(error)),
+      );
+      return;
+    }
+
+    if (campaignSubTabButton?.dataset.campaignSubTab) {
+      activeCampaignSubTab = campaignSubTabButton.dataset.campaignSubTab as CampaignSubTab;
+      render();
+      return;
+    }
+
+    if (campaignActButton?.dataset.campaignAct) {
+      const act = Number(campaignActButton.dataset.campaignAct);
+      if (act >= 1 && act <= 5) {
+        campaignSelectedAct = act;
+        render();
+      }
+      return;
+    }
+
+    if (campaignZoneResetButton) {
+      if (campaignResetConfirmHandle > 0) {
+        window.clearTimeout(campaignResetConfirmHandle);
+        campaignResetConfirmHandle = 0;
+        campaignZoneTimes.clear();
+        campaignMapRuns = [];
+        campaignActTimes = [0, 0, 0, 0, 0, 0, 0, 0];
+        campaignTotalMs = 0;
+        saveCampaignZoneData();
+        saveCampaignProgress();
+        render();
+      } else {
+        campaignResetConfirmHandle = window.setTimeout(() => {
+          campaignResetConfirmHandle = 0;
+          render();
+        }, 3000);
+        render();
+      }
+      return;
+    }
+
+    if (campaignMapResetButton) {
+      if (campaignResetConfirmHandle > 0) {
+        window.clearTimeout(campaignResetConfirmHandle);
+        campaignResetConfirmHandle = 0;
+        campaignMapRuns = [];
+        saveCampaignZoneData();
+        render();
+      } else {
+        campaignResetConfirmHandle = window.setTimeout(() => {
+          campaignResetConfirmHandle = 0;
+          render();
+        }, 3000);
+        render();
+      }
+      return;
+    }
 
     if (templeRoomButton?.dataset.templeRoom) {
       const roomId = templeRoomButton.dataset.templeRoom as TempleRoomId;
@@ -3675,12 +4333,22 @@ if (!isListingPreviewWindow && leagueElement) {
     }
 
     if (exchangeCategoryButton?.dataset.exchangeCategory) {
-      state.exchange_tab.selected_category_id = exchangeCategoryButton.dataset.exchangeCategory;
-      state.exchange_tab.status = `Loading ${exchangeCategoryButton.textContent?.trim() ?? "exchange"} overview...`;
+      const categoryId = exchangeCategoryButton.dataset.exchangeCategory;
+      const categoryLabel = exchangeCategoryButton.textContent?.trim() ?? exchangeCategoryLabel(categoryId);
+      tradeSidebarScrollTop =
+        exchangeCategoryButton.closest<HTMLElement>(".trade-sidebar-scroll")?.scrollTop ?? tradeSidebarScrollTop;
+      state.exchange_tab = {
+        ...state.exchange_tab,
+        selected_category_id: categoryId,
+        selected_item_id: null,
+        overview: null,
+        error: null,
+        status: `Loading ${categoryLabel} overview...`,
+      };
       activeTab = "trade";
       render();
       await invoke("set_exchange_category", {
-        categoryId: exchangeCategoryButton.dataset.exchangeCategory,
+        categoryId,
       }).catch((error) => pushStatus("exchange", String(error)));
       return;
     }
@@ -4119,6 +4787,7 @@ if (!isListingPreviewWindow && leagueElement) {
   });
 
   void listen<CurrentAreaInfo>("scan://area-updated", (event) => {
+    const prevArea = state.current_area;
     state.current_area = event.payload;
     const rawAct = event.payload.act ?? 0;
     const newAct = remapCampaignAct(rawAct);
@@ -4126,6 +4795,39 @@ if (!isListingPreviewWindow && leagueElement) {
       campaignGuideAct = newAct;
       campaignGuidePage = 0;
     }
+
+    const eventTime = event.payload.entered_at_epoch_ms;
+    const eventAgeMs = Date.now() - eventTime;
+    const isReplay = eventAgeMs > 10_000;
+
+    if (!isReplay && campaignCurrentZoneEnteredAt > 0 && prevArea && prevArea.area_type !== "hideout") {
+      const elapsed = eventTime - campaignCurrentZoneEnteredAt;
+      const prevName = normalizeZoneName(prevArea.name);
+      campaignZoneTimes.set(prevName, (campaignZoneTimes.get(prevName) ?? 0) + elapsed);
+      if (prevArea.area_type === "map" && campaignMapRuns.length > 0) {
+        const lastRun = campaignMapRuns[0];
+        if (lastRun.elapsed_ms === 0) {
+          lastRun.elapsed_ms = elapsed;
+        }
+      }
+    }
+
+    if (event.payload.area_type === "map") {
+      campaignMapRuns.unshift({
+        name: event.payload.name,
+        tier: event.payload.area_level ?? null,
+        boss: event.payload.boss ?? null,
+        elapsed_ms: 0,
+        entered_at: eventTime,
+      });
+      if (campaignMapRuns.length > 5) campaignMapRuns.pop();
+    }
+
+    if (!isReplay) {
+      campaignCurrentZoneEnteredAt = event.payload.area_type === "hideout" ? 0 : eventTime;
+      saveCampaignZoneData();
+    }
+
     if (event.payload.area_type === "hideout") {
       if (campaignTimerRunning) stopCampaignTimer();
       saveCampaignProgress();
@@ -4165,6 +4867,15 @@ if (!isListingPreviewWindow && leagueElement) {
 
   void listen<string>("scan://trade-league-updated", (event) => {
     state.trade_league = event.payload;
+    if (state.exchange_tab.overview && state.exchange_tab.overview.league !== event.payload) {
+      state.exchange_tab = {
+        ...state.exchange_tab,
+        overview: null,
+        selected_item_id: null,
+        status: `Loading ${exchangeCategoryLabel(state.exchange_tab.selected_category_id)} overview for ${event.payload}...`,
+        error: null,
+      };
+    }
     render();
   });
 
@@ -4176,6 +4887,29 @@ if (!isListingPreviewWindow && leagueElement) {
     pushStatus(event.payload.worker, event.payload.message);
   });
 
+  listen<WaystoneSnapshot>("scan://pending-waystone-updated", (event) => {
+    state.pending_waystone = event.payload;
+    render();
+  });
+
+  listen<MapRunContext>("scan://map-run-updated", (event) => {
+    state.active_map_run = event.payload;
+    state.current_area = event.payload.area;
+    render();
+  });
+
+  listen<string>("scan://hazard-profile-updated", (event) => {
+    state.hazard_profile_id = event.payload;
+    render();
+  });
+
+  void invoke<HazardProfile[]>("get_hazard_profiles")
+    .then((profiles) => {
+      hazardProfiles = profiles;
+      render();
+    })
+    .catch((error) => pushStatus("hazards", String(error)));
+
   invoke<AppState>("get_app_state")
     .then((initialState) => {
       state.scanned_item = initialState.scanned_item;
@@ -4186,6 +4920,9 @@ if (!isListingPreviewWindow && leagueElement) {
       if (state.current_area) {
         const rawAct = state.current_area.act ?? 0;
         campaignGuideAct = remapCampaignAct(rawAct);
+        if (state.current_area.area_type !== "hideout") {
+          campaignCurrentZoneEnteredAt = state.current_area.entered_at_epoch_ms || Date.now();
+        }
         if (campaignGuideAct > 0 && state.current_area.area_type !== "hideout") {
           startCampaignTimer();
         }
