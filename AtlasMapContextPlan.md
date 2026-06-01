@@ -196,6 +196,7 @@ OCR can only upgrade an area-only run into a labelled partial/confirmed overlay 
 - TypeScript owns confidence copy, visual markers, and manual rescan controls.
 - The OCR adapter should return normalized candidates plus confidence, not a final fake waystone.
 - The map-context binder decides whether OCR can enrich the current `area-only` run.
+- Initial codebase scaffolding should add OCR evidence fields to `MapRunContext` before capture exists, so Phase 2 history can persist OCR confidence without another schema break.
 
 ### Acceptance Criteria
 
@@ -211,6 +212,7 @@ OCR can only upgrade an area-only run into a labelled partial/confirmed overlay 
 - OCR lock allows only one confirmed result per active map run.
 - OCR reset occurs when a new generated map is detected.
 - Explicit armed waystone state wins over OCR fallback.
+- Map-run history stores OCR evidence as optional data even when no OCR engine is enabled yet.
 
 ## Phase 2: Persisted Run History
 
@@ -222,6 +224,7 @@ Make Atlas Run History real, not placeholder text.
 
 - Persist active/completed map runs locally.
 - Include area name, level, boss, entered time, elapsed time, confidence, waystone snapshot summary, hazard summary, and deaths.
+- Persist optional OCR evidence/confidence so Phase 1B overlay reads can be audited later.
 - Move or mirror campaign map-run history into Atlas where appropriate.
 - Add a compact run-history list/table in Atlas.
 - Add clear history confirmation.
@@ -232,6 +235,7 @@ Make Atlas Run History real, not placeholder text.
 - Atlas Run History shows recent runs after app restart.
 - Runs with armed waystones show waystone stats.
 - Area-only runs remain honest and do not display fake waystone stats.
+- OCR partial/confirmed runs remain visibly distinct from explicitly armed runs.
 - Death counts are visible per run.
 - Clearing run history does not reset campaign act timers unless explicitly requested.
 
@@ -244,11 +248,51 @@ Make Atlas Run History real, not placeholder text.
 
 ### Objective
 
-Make hazard profiles useful enough for actual builds while keeping defaults safe.
+Make hazard profiles useful enough for actual builds while keeping defaults safe and OAuth-free inside Reliquary.
+
+Preferred source of truth:
+
+```text
+PoE.ninja character snapshot URL -> local build fingerprint -> build-risk matrix -> waystone hazard profile
+```
+
+Reliquary should not embed PoE.ninja login, store PoE/GGG credentials, or manage OAuth cookies. Users can connect their account on PoE.ninja, let PoE.ninja refresh the character from PoE2 servers, then paste a public/profile character snapshot URL into Reliquary.
+
+Provider priority:
+
+```text
+PoE.ninja character snapshot > pasted PoB code > manual build profile > generic meta profile
+```
 
 ### Tasks
 
-- Expand built-in profiles beyond current minimal set:
+- Add a build provider layer:
+  - `poe_ninja_character_url`
+  - `pob_code`
+  - `manual_profile`
+- Add `BuildSnapshot` schema:
+  - source
+  - account/character/league
+  - class/ascendancy/level
+  - life/energy shield/mana
+  - keystones
+  - main skills
+  - defensive layers
+  - equipped uniques
+  - recovery systems
+  - fetched_at
+- Add `BuildFingerprint` inference:
+  - chaos_inoculation
+  - energy_shield_primary
+  - life_based
+  - recovery_dependent
+  - minion_build
+  - armour_stack
+  - evasion_layered
+  - flask_sustain
+  - ailment_sensitive
+- Add a build-risk matrix that maps fingerprint tags to waystone hazard rules.
+- Keep built-in defaults for users who do not connect a build:
   - General Safe Mapping
   - Energy Shield / Recovery
   - Minion
@@ -257,6 +301,7 @@ Make hazard profiles useful enough for actual builds while keeping defaults safe
   - Flask Sustain
   - Bossing
   - XP-safe
+- Add PoE.ninja meta seeding after personal snapshots are stable. Meta should generate starter templates, not override a user's own imported character.
 - Add severity counts to Atlas and compact HUD:
   - info
   - warning
@@ -269,6 +314,10 @@ Make hazard profiles useful enough for actual builds while keeping defaults safe
 ### Acceptance Criteria
 
 - Profile switching updates pending/current waystone warnings.
+- Pasting a PoE.ninja character URL creates a local build snapshot without asking Reliquary to log in.
+- Personal snapshot rules win over PoE.ninja meta defaults.
+- PoB code import works as an OAuth-free fallback for users who do not want PoE.ninja snapshots.
+- Manual profile remains available when no external build source is configured.
 - Hazard warnings include modifier text, severity, profile, matched rule, and reason.
 - Compact HUD prioritizes build-breaking and danger counts.
 - Atlas Safety explains why a mod is dangerous.
@@ -277,6 +326,9 @@ Make hazard profiles useful enough for actual builds while keeping defaults safe
 
 - Existing hazard tests must continue passing.
 - Add profile-specific tests for each built-in profile once rules are expanded.
+- Add tests for PoE.ninja URL parsing and rejected/private/unknown URL shapes.
+- Add tests for build fingerprint inference from synthetic snapshots.
+- Add tests proving user build snapshot rules override generic meta rules.
 - Add fuzzy-match false-positive tests for common safe mods.
 
 ## Phase 4: Atlas UX Completion

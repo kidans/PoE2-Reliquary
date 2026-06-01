@@ -16,6 +16,28 @@ pub enum MapRunConfidence {
     AreaOnly,
     Stale,
     Unknown,
+    OcrPartial,
+    OcrConfirmed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MapOcrEvidenceState {
+    None,
+    Pending,
+    Partial,
+    Confirmed,
+    Locked,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MapOcrEvidence {
+    pub state: MapOcrEvidenceState,
+    pub normalized_mods: Vec<String>,
+    pub raw_lines: Vec<String>,
+    pub confidence_score: Option<f32>,
+    pub reason: Option<String>,
+    pub captured_at_epoch_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +62,7 @@ pub struct MapRunContext {
     pub area: CurrentAreaInfo,
     pub waystone: Option<WaystoneSnapshot>,
     pub confidence: MapRunConfidence,
+    pub ocr_evidence: Option<MapOcrEvidence>,
     pub started_at_epoch_ms: u64,
 }
 
@@ -49,6 +72,7 @@ impl MapRunContext {
             area,
             waystone: None,
             confidence: MapRunConfidence::AreaOnly,
+            ocr_evidence: None,
             started_at_epoch_ms,
         }
     }
@@ -67,6 +91,7 @@ impl MapRunContext {
             area,
             waystone: Some(waystone),
             confidence: MapRunConfidence::Armed,
+            ocr_evidence: None,
             started_at_epoch_ms,
         }
     }
@@ -76,6 +101,7 @@ impl MapRunContext {
             area,
             waystone: None,
             confidence: MapRunConfidence::Stale,
+            ocr_evidence: None,
             started_at_epoch_ms,
         }
     }
