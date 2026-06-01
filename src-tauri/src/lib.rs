@@ -168,6 +168,7 @@ pub struct AppState {
     pub price_currency: String,
     pub price_option: String,
     pub active_price_filters: Vec<ActivePriceFilter>,
+    pub deaths: std::collections::HashMap<u32, u32>,
     #[serde(skip)]
     pub trade_league_locked: bool,
     #[serde(skip)]
@@ -2110,6 +2111,7 @@ async fn stream_client_log(
 
     let generating_re = Regex::new(r#"Generating level (\d+) area "([^"]+)""#)
         .expect("valid area generation regex");
+    let death_re = Regex::new(r"has been slain").expect("valid death regex");
 
     let mut last_size = tokio::fs::metadata(&client_log_path)
         .await
@@ -2133,7 +2135,8 @@ async fn stream_client_log(
                     Ok(0) => break,
                     Ok(_) => {
                         let content = line_buf.trim_end().to_string();
-                        process_log_line(&content, &generating_re, &app_handle, &state).await;
+                        process_log_line(&content, &generating_re, &death_re, false, &app_handle, &state)
+                            .await;
                     }
                     Err(_) => break,
                 }
@@ -2166,8 +2169,15 @@ async fn stream_client_log(
                                     "client-log.line",
                                     serde_json::json!({ "c": &content }),
                                 );
-                                process_log_line(&content, &generating_re, &app_handle, &state)
-                                    .await;
+                                process_log_line(
+                                    &content,
+                                    &generating_re,
+                                    &death_re,
+                                    true,
+                                    &app_handle,
+                                    &state,
+                                )
+                                .await;
                             }
                             Err(_) => break,
                         }
@@ -2182,9 +2192,41 @@ async fn stream_client_log(
 async fn process_log_line(
     content: &str,
     generating_re: &Regex,
+    death_re: &Regex,
+    count_deaths: bool,
     app_handle: &tauri::AppHandle,
     state: &SharedAppState,
 ) {
+    if count_deaths && death_re.is_match(content) {
+        let mut locked_state = state.lock().await;
+        let act = locked_state
+            .current_area
+            .as_ref()
+            .and_then(|area| {
+                if area.area_type == "map" {
+                    None
+                } else {
+                    area.act
+                }
+            })
+            .unwrap_or(0);
+
+        if act > 0 {
+            *locked_state.deaths.entry(act).or_insert(0) += 1;
+        }
+
+        let total: u32 = locked_state.deaths.values().sum();
+        debug_log::append(
+            "client-log.death",
+            serde_json::json!({ "act": act, "total": total }),
+        );
+        let _ = app_handle.emit(
+            "scan://death",
+            serde_json::json!({ "total": total, "act": act }),
+        );
+        return;
+    }
+
     if let Some(caps) = generating_re.captures(content) {
         if let (Some(level_str), Some(id)) = (caps.get(1), caps.get(2)) {
             if let Ok(level) = level_str.as_str().parse::<u32>() {

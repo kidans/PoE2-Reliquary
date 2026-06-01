@@ -162,6 +162,7 @@ type AppState = {
   price_currency: string;
   price_option: string;
   debug_log_path: string | null;
+  deaths: Record<number, number>;
 };
 
 
@@ -358,6 +359,7 @@ const state: AppState = {
   price_currency: "exalted",
   price_option: "equivalent",
   debug_log_path: null,
+  deaths: {},
 };
 
 let activeTab: TabId = "scan";
@@ -397,6 +399,7 @@ type MapRun = {
   boss: string | null;
   elapsed_ms: number;
   entered_at: number;
+  deaths: number;
 };
 
 let activeCampaignSubTab: CampaignSubTab = "timer";
@@ -441,6 +444,7 @@ function saveCampaignProgress() {
       guidePage: campaignGuidePage,
       actTimes: campaignActTimes,
       totalMs: campaignTotalMs,
+      deaths: state.deaths,
     }));
   } catch { /* ignore */ }
 }
@@ -458,6 +462,9 @@ function loadCampaignProgress() {
       }
       if (typeof data.totalMs === "number") {
         campaignTotalMs = data.totalMs;
+      }
+      if (data.deaths && typeof data.deaths === "object") {
+        state.deaths = normalizeDeathRecord(data.deaths);
       }
     }
   } catch { /* ignore */ }
@@ -478,9 +485,34 @@ function loadCampaignZoneData() {
     if (raw) {
       const data = JSON.parse(raw);
       campaignZoneTimes = new Map(Object.entries(data.zoneTimes ?? {}));
-      campaignMapRuns = Array.isArray(data.mapRuns) ? data.mapRuns : [];
+      campaignMapRuns = Array.isArray(data.mapRuns)
+        ? data.mapRuns.map((run: Partial<MapRun>) => ({
+            name: String(run.name ?? "Unknown Map"),
+            tier: typeof run.tier === "number" ? run.tier : null,
+            boss: typeof run.boss === "string" ? run.boss : null,
+            elapsed_ms: typeof run.elapsed_ms === "number" ? run.elapsed_ms : 0,
+            entered_at: typeof run.entered_at === "number" ? run.entered_at : 0,
+            deaths: typeof run.deaths === "number" ? run.deaths : 0,
+          }))
+        : [];
     }
   } catch { /* ignore */ }
+}
+
+function normalizeDeathRecord(record: unknown): Record<number, number> {
+  if (!record || typeof record !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(record as Record<string, unknown>)
+      .map(([key, value]) => [Number(key), Number(value)])
+      .filter(([key, value]) => Number.isFinite(key) && key > 0 && Number.isFinite(value) && value > 0),
+  ) as Record<number, number>;
+}
+
+function totalCampaignDeaths() {
+  return Object.values(state.deaths).reduce((sum, count) => sum + count, 0);
 }
 
 function normalizeZoneName(name: string) {
@@ -2763,15 +2795,19 @@ function renderCampaignTimerSubTab(isZoneResetPending: boolean) {
     const isActive = act.act === (selectedAct?.act ?? 1) && campaignSelectedAct !== 5;
     const actIdx = Math.max(0, act.act - 1);
     const time = formatCampaignTime(campaignActTimes[actIdx] ?? 0);
+    const deaths = state.deaths[act.act] ?? 0;
+    const deathBadge = deaths > 0 ? `<small class="act-deaths-badge">Deaths ${deaths}</small>` : "";
     return `<button type="button" class="campaign-act-button${isActive ? " is-active" : ""}" data-campaign-act="${act.act}">
-      <span>${actDisplayName(act.act)}</span><strong>${time}</strong>
+      <span>${actDisplayName(act.act)}${deathBadge}</span><strong>${time}</strong>
     </button>`;
   }).join("");
 
   const interludeTime = formatCampaignTime(campaignActTimes[4] ?? 0);
+  const interludeDeaths = (state.deaths[5] ?? 0) + (state.deaths[6] ?? 0);
+  const interludeDeathBadge = interludeDeaths > 0 ? `<small class="act-deaths-badge">Deaths ${interludeDeaths}</small>` : "";
   const interludeActive = campaignSelectedAct === 5;
   const interludeRow = `<button type="button" class="campaign-act-button${interludeActive ? " is-active" : ""}" data-campaign-act="5">
-    <span>INTERLUDE</span><strong>${interludeTime}</strong>
+    <span>INTERLUDE${interludeDeathBadge}</span><strong>${interludeTime}</strong>
   </button>`;
 
   let zoneRows = "";
@@ -2801,6 +2837,7 @@ function renderCampaignTimerSubTab(isZoneResetPending: boolean) {
   const totalText = formatCampaignTime(campaignTotalMs);
   const actText = selectedAct ? formatCampaignTime(campaignActTimes[Math.max(0, (selectedAct.act <= 4 ? selectedAct.act : 5) - 1)] ?? 0) : "0:00";
   const resetLabel = isZoneResetPending ? "Are you sure?" : "Reset All";
+  const deathText = totalCampaignDeaths();
 
   return `
     <aside class="campaign-sidebar">
@@ -2812,6 +2849,7 @@ function renderCampaignTimerSubTab(isZoneResetPending: boolean) {
     <div class="campaign-main">
       <header class="campaign-main-header">
         <h2>${selectedAct ? escapeHtml(selectedAct.name) : "Select an act"}</h2>
+        <span>Deaths: ${deathText}</span>
         <span>Total: ${totalText} · Act: ${actText}</span>
       </header>
       <div class="campaign-zone-list">
@@ -2835,16 +2873,19 @@ function renderCampaignMapRunsSubTab(isZoneResetPending: boolean) {
     const boss = run.boss ? `<small>${escapeHtml(run.boss)}</small>` : "";
     const barPct = run.elapsed_ms > 0 ? Math.round((run.elapsed_ms / maxTime) * 100) : 0;
     const bar = `<div class="campaign-map-bar"><div class="campaign-map-bar-fill" style="width:${barPct}%"></div></div>`;
+    const deaths = (run.deaths ?? 0) > 0 ? `<span class="campaign-map-deaths">Deaths ${run.deaths}</span>` : "";
     return `<div class="campaign-map-card">
       <div class="campaign-map-header">
         <strong>${escapeHtml(run.name)}</strong>
         <span>T${run.tier ?? "?"}</span>
       </div>
       ${boss}
-      <span class="campaign-map-time">${time}</span>
+      <div class="campaign-map-meta"><span class="campaign-map-time">${time}</span>${deaths}</div>
       ${bar}
     </div>`;
   }).join("");
+  const totalDeaths = campaignMapRuns.reduce((sum, run) => sum + (run.deaths ?? 0), 0);
+  const averageDeaths = campaignMapRuns.length ? (totalDeaths / campaignMapRuns.length).toFixed(1) : "0.0";
 
   const resetLabel = isZoneResetPending ? "Are you sure?" : "Reset Map History";
 
@@ -2852,7 +2893,7 @@ function renderCampaignMapRunsSubTab(isZoneResetPending: boolean) {
     <div class="campaign-maps-content">
       <header class="campaign-maps-header">
         <h2>Recent Map Runs</h2>
-        <span>Last ${campaignMapRuns.length} maps</span>
+        <span>Last ${campaignMapRuns.length} maps · Avg deaths ${averageDeaths}</span>
       </header>
       <div class="campaign-maps-grid">${cards}</div>
       <div class="campaign-maps-footer">
@@ -4209,6 +4250,7 @@ if (!isListingPreviewWindow && leagueElement) {
         campaignMapRuns = [];
         campaignActTimes = [0, 0, 0, 0, 0, 0, 0, 0];
         campaignTotalMs = 0;
+        state.deaths = {};
         saveCampaignZoneData();
         saveCampaignProgress();
         render();
@@ -4819,6 +4861,7 @@ if (!isListingPreviewWindow && leagueElement) {
         boss: event.payload.boss ?? null,
         elapsed_ms: 0,
         entered_at: eventTime,
+        deaths: 0,
       });
       if (campaignMapRuns.length > 5) campaignMapRuns.pop();
     }
@@ -4835,6 +4878,23 @@ if (!isListingPreviewWindow && leagueElement) {
       startCampaignTimer();
     }
     render();
+  });
+
+  void listen<{ total: number; act: number }>("scan://death", (event) => {
+    const act = Number(event.payload.act ?? 0);
+    if (act > 0) {
+      state.deaths = { ...state.deaths, [act]: (state.deaths[act] ?? 0) + 1 };
+      saveCampaignProgress();
+    }
+
+    if (state.current_area?.area_type === "map" && campaignMapRuns.length > 0) {
+      campaignMapRuns[0].deaths = (campaignMapRuns[0].deaths ?? 0) + 1;
+      saveCampaignZoneData();
+    }
+
+    if (activeTab === "campaign") {
+      render();
+    }
   });
 
   void listen<TradeWhisper>("scan://trade-whisper", (event) => {
@@ -4936,6 +4996,10 @@ if (!isListingPreviewWindow && leagueElement) {
       state.exchange_tab = normalizeExchangeTab(initialState.exchange_tab);
       state.price_currency = initialState.price_currency || state.price_currency;
       state.price_option = initialState.price_option || state.price_option;
+      const backendDeaths = normalizeDeathRecord(initialState.deaths);
+      if (Object.keys(backendDeaths).length) {
+        state.deaths = { ...state.deaths, ...backendDeaths };
+      }
       if (state.scanned_item && !state.scanned_item.is_exchange) {
         applyProfileSelection(state.scanned_item);
         latestRequestedFilterSignature = currentRequestedFilterSignature();

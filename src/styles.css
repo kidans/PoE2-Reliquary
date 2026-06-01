@@ -2098,6 +2098,9 @@ kbd {
 }
 
 .campaign-act-button span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--vellum-dim);
   font-size: 10px;
   text-transform: uppercase;
@@ -2107,6 +2110,19 @@ kbd {
   text-overflow: ellipsis;
   min-width: 0;
   line-height: 1;
+}
+
+.act-deaths-badge {
+  flex: 0 0 auto;
+  border: 1px solid hsl(var(--accent-hue, 355) 70% 58% / 0.32);
+  border-radius: 999px;
+  padding: 2px 5px;
+  color: #ff8f9a;
+  background: hsl(var(--accent-hue, 355) 72% 18% / 0.34);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .campaign-act-button strong {
@@ -2373,12 +2389,31 @@ kbd {
   margin-bottom: 6px;
 }
 
+.campaign-map-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
 .campaign-map-time {
-  display: block;
+  display: inline-block;
   color: var(--gold-bright);
   font-size: 16px;
   font-variant-numeric: tabular-nums;
-  margin-bottom: 6px;
+}
+
+.campaign-map-deaths {
+  border: 1px solid hsl(var(--accent-hue, 355) 70% 58% / 0.28);
+  border-radius: 999px;
+  padding: 3px 7px;
+  color: #ff8f9a;
+  background: hsl(var(--accent-hue, 355) 70% 18% / 0.3);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .campaign-map-bar {
