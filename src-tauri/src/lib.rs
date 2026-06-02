@@ -1621,6 +1621,26 @@ async fn finish_map_overlay_ocr(
         run.clone()
     };
 
+    debug_log::append(
+        "map_ocr.evidence",
+        serde_json::json!({
+            "state": evidence.state.clone(),
+            "confidence_score": evidence.confidence_score,
+            "normalized_count": evidence.normalized_mods.len(),
+            "raw_count": evidence.raw_lines.len(),
+            "normalized_mods": &evidence.normalized_mods,
+            "raw_lines": &evidence.raw_lines,
+            "reason": &evidence.reason,
+            "captured_at_epoch_ms": evidence.captured_at_epoch_ms,
+            "area": {
+                "name": &updated_run.area.name,
+                "level": updated_run.area.area_level,
+                "area_type": &updated_run.area.area_type,
+                "boss": &updated_run.area.boss,
+            }
+        }),
+    );
+
     let status = match evidence.state {
         map_context::MapOcrEvidenceState::Confirmed => format!(
             "Tab OCR confirmed {} map modifiers",

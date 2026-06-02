@@ -3272,12 +3272,15 @@ function renderAtlasOverviewDashboard() {
 
 function renderAtlasOcrEvidence(evidence: MapOcrEvidence) {
   const score = evidence.confidence_score == null ? "" : ` · ${(evidence.confidence_score * 100).toFixed(0)}%`;
+  const count = evidence.normalized_mods.length
+    ? ` - ${evidence.normalized_mods.length}/${evidence.raw_lines.length || evidence.normalized_mods.length} lines`
+    : "";
   const mods = evidence.normalized_mods.length
-    ? evidence.normalized_mods.slice(0, 3).map((mod) => `<li>${escapeHtml(mod)}</li>`).join("")
+    ? evidence.normalized_mods.map((mod) => `<li>${escapeHtml(mod)}</li>`).join("")
     : `<li>${escapeHtml(evidence.reason ?? "No recognized map modifier lines yet.")}</li>`;
   return `
     <div class="atlas-ocr-evidence state-${escapeAttribute(evidence.state)}">
-      <strong>Tab OCR: ${escapeHtml(evidence.state.replace("_", " "))}${escapeHtml(score)}</strong>
+      <strong>Tab OCR: ${escapeHtml(evidence.state.replace("_", " "))}${escapeHtml(score)}${escapeHtml(count)}</strong>
       <ul>${mods}</ul>
     </div>
   `;
