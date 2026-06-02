@@ -1564,7 +1564,10 @@ async fn process_map_overlay_ocr(app_handle: tauri::AppHandle, state: SharedAppS
     emit_worker_status(
         &app_handle,
         "map-ocr",
-        "reading Tab overlay modifiers".to_string(),
+        format!(
+            "reading Tab overlay modifiers from x={} y={} w={} h={}",
+            rect.left, rect.top, rect.width, rect.height
+        ),
     );
 
     let evidence =
@@ -2170,24 +2173,65 @@ fn active_poe2_overlay_capture_rect() -> Option<map_ocr::OcrCaptureRect> {
         if GetWindowRect(hwnd, &mut rect) == 0 {
             return None;
         }
-        let width = rect.right.saturating_sub(rect.left);
-        let height = rect.bottom.saturating_sub(rect.top);
-        if width < 640 || height < 480 {
-            return None;
-        }
-
-        Some(map_ocr::OcrCaptureRect {
-            left: rect.left + (width * 48 / 100),
-            top: rect.top + (height * 5 / 100),
-            width: (width * 49 / 100).max(420),
-            height: (height * 62 / 100).max(320),
-        })
+        map_overlay_capture_rect_from_bounds(rect.left, rect.top, rect.right, rect.bottom)
     }
 }
 
 #[cfg(not(target_os = "windows"))]
 fn active_poe2_overlay_capture_rect() -> Option<map_ocr::OcrCaptureRect> {
     None
+}
+
+fn map_overlay_capture_rect_from_bounds(
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+) -> Option<map_ocr::OcrCaptureRect> {
+    let width = right.saturating_sub(left);
+    let height = bottom.saturating_sub(top);
+    if width < 640 || height < 480 {
+        return None;
+    }
+
+    let capture_top = top + (height * 5 / 100);
+    let capture_right = right.saturating_sub(8);
+    let mut capture_left = left + (width * 42 / 100);
+    if capture_right.saturating_sub(capture_left) < 420 {
+        capture_left = capture_right.saturating_sub(420).max(left);
+    }
+
+    Some(map_ocr::OcrCaptureRect {
+        left: capture_left,
+        top: capture_top,
+        width: capture_right.saturating_sub(capture_left).max(420),
+        height: (height * 62 / 100).max(320),
+    })
+}
+
+#[cfg(test)]
+mod overlay_capture_tests {
+    use super::*;
+
+    #[test]
+    fn tab_ocr_capture_reaches_the_window_right_edge() {
+        let rect = map_overlay_capture_rect_from_bounds(0, 0, 2048, 1152)
+            .expect("large PoE2 window should produce an OCR crop");
+
+        assert_eq!(rect.left, 860);
+        assert_eq!(rect.width, 1180);
+        assert_eq!(rect.left + rect.width, 2040);
+    }
+
+    #[test]
+    fn tab_ocr_capture_keeps_small_windows_wide_enough() {
+        let rect = map_overlay_capture_rect_from_bounds(10, 20, 650, 500)
+            .expect("minimum supported window should produce an OCR crop");
+
+        assert!(rect.width >= 420);
+        assert!(rect.left >= 10);
+        assert!(rect.left + rect.width <= 642);
+    }
 }
 
 fn is_overlay_window_title(title: &str) -> bool {
