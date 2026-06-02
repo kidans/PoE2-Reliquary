@@ -2194,7 +2194,7 @@ fn map_overlay_capture_rect_from_bounds(
         return None;
     }
 
-    let capture_top = top + (height * 5 / 100);
+    let capture_top = top + (height * 18 / 100);
     let capture_right = right.saturating_sub(8);
     let mut capture_left = left + (width * 42 / 100);
     if capture_right.saturating_sub(capture_left) < 420 {
@@ -2205,7 +2205,7 @@ fn map_overlay_capture_rect_from_bounds(
         left: capture_left,
         top: capture_top,
         width: capture_right.saturating_sub(capture_left).max(420),
-        height: (height * 62 / 100).max(320),
+        height: (height * 33 / 100).max(260),
     })
 }
 
@@ -2221,6 +2221,8 @@ mod overlay_capture_tests {
         assert_eq!(rect.left, 860);
         assert_eq!(rect.width, 1180);
         assert_eq!(rect.left + rect.width, 2040);
+        assert_eq!(rect.top, 207);
+        assert_eq!(rect.height, 380);
     }
 
     #[test]

@@ -99,6 +99,27 @@ fn normalize_ocr_line(line: &str) -> String {
 
 fn looks_like_map_modifier(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
+    let known_overlay_noise = [
+        "monsters remain",
+        "monster level",
+        "short allocation",
+        "league",
+        "realm",
+        "map objectives",
+        "map content",
+        "frame",
+        "fps",
+        "cpu:",
+        "gpu:",
+        "network:",
+        "server",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    if known_overlay_noise {
+        return false;
+    }
+
     let has_map_subject = [
         "monster",
         "monsters",
@@ -259,6 +280,8 @@ mod tests {
     fn normalizes_map_modifier_lines_and_rejects_noise() {
         let lines = vec![
             "Monsters take 29% reduced Extra Damage from Critical Hits".to_string(),
+            "More than 50 monsters remain".to_string(),
+            "Monster Level: 79".to_string(),
             "Chest".to_string(),
             "Zelina".to_string(),
             "25% More Waystones Found in Area".to_string(),
