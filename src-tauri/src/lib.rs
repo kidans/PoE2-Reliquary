@@ -23,8 +23,10 @@ use tauri::{
 use thiserror::Error;
 use tokio::sync::{mpsc, Mutex};
 #[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::RECT;
+#[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
+    GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
 };
 
 pub mod debug_log;
@@ -33,6 +35,7 @@ mod hazards;
 mod item_parser;
 mod macros;
 mod map_context;
+mod map_ocr;
 mod price_check;
 pub mod source_truth;
 mod trade_search;
@@ -85,6 +88,7 @@ const LISTING_PREVIEW_WINDOW_LABEL: &str = "listing-preview";
 const LISTING_PREVIEW_WIDTH: f64 = 360.0;
 const LISTING_PREVIEW_HEIGHT: f64 = 660.0;
 const LISTING_PREVIEW_GAP: f64 = 12.0;
+const MAP_OCR_COOLDOWN_MS: u64 = 2_500;
 static LISTING_PREVIEW_VISIBLE: AtomicBool = AtomicBool::new(false);
 static LISTING_PREVIEW_SHOWN_AT_MS: AtomicU64 = AtomicU64::new(0);
 const REPOE_WORLD_AREAS_URL: &str = "https://repoe-fork.github.io/poe2/world_areas.min.json";
@@ -177,6 +181,8 @@ pub struct AppState {
     price_check_fetch_in_flight: bool,
     #[serde(skip)]
     current_listing_preview: Option<ListingPreviewRequest>,
+    #[serde(skip)]
+    last_map_ocr_attempt_epoch_ms: u64,
     #[serde(skip)]
     scan_key: char,
     #[serde(skip)]
@@ -423,6 +429,7 @@ struct WorkerStatus<'a> {
 enum InputAction {
     ClipboardScan(String),
     OpenTradeSearch,
+    ReadMapOverlayOcr,
     DismissListingPreview,
 }
 
@@ -804,6 +811,15 @@ async fn clear_pending_waystone(
         );
     }
 
+    Ok(())
+}
+
+#[tauri::command]
+async fn request_map_overlay_ocr(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, SharedAppState>,
+) -> Result<(), String> {
+    process_map_overlay_ocr(app_handle, state.inner().clone()).await;
     Ok(())
 }
 
@@ -1206,6 +1222,7 @@ pub fn run() {
             set_exchange_category,
             set_hazard_profile,
             clear_pending_waystone,
+            request_map_overlay_ocr,
             set_trade_league,
             set_compact_mode,
             set_window_layout,
@@ -1418,6 +1435,9 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
                         );
                     }
                 }
+                InputAction::ReadMapOverlayOcr => {
+                    process_map_overlay_ocr(app_handle.clone(), state.clone()).await;
+                }
                 InputAction::DismissListingPreview => {
                     let shown_at = LISTING_PREVIEW_SHOWN_AT_MS.load(Ordering::SeqCst);
                     let age_ms = now_epoch_ms().saturating_sub(shown_at);
@@ -1446,6 +1466,173 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
             }
         }
     });
+}
+
+async fn process_map_overlay_ocr(app_handle: tauri::AppHandle, state: SharedAppState) {
+    let now = now_epoch_ms();
+    let pending_run = {
+        let mut locked_state = state.lock().await;
+        if now.saturating_sub(locked_state.last_map_ocr_attempt_epoch_ms) < MAP_OCR_COOLDOWN_MS {
+            emit_worker_status(
+                &app_handle,
+                "map-ocr",
+                "Tab OCR ignored during cooldown".to_string(),
+            );
+            return;
+        }
+        locked_state.last_map_ocr_attempt_epoch_ms = now;
+
+        let Some(run) = locked_state.active_map_run.as_mut() else {
+            emit_worker_status(
+                &app_handle,
+                "map-ocr",
+                "Tab OCR ignored because no active map run is detected".to_string(),
+            );
+            return;
+        };
+
+        if run.area.area_type != "map" {
+            emit_worker_status(
+                &app_handle,
+                "map-ocr",
+                "Tab OCR ignored outside generated maps".to_string(),
+            );
+            return;
+        }
+
+        if run.waystone.is_some() || matches!(run.confidence, map_context::MapRunConfidence::Armed)
+        {
+            emit_worker_status(
+                &app_handle,
+                "map-ocr",
+                "Tab OCR skipped because this run already has an armed waystone".to_string(),
+            );
+            return;
+        }
+
+        if run
+            .ocr_evidence
+            .as_ref()
+            .map(|evidence| {
+                matches!(
+                    evidence.state,
+                    map_context::MapOcrEvidenceState::Confirmed
+                        | map_context::MapOcrEvidenceState::Locked
+                )
+            })
+            .unwrap_or(false)
+        {
+            emit_worker_status(
+                &app_handle,
+                "map-ocr",
+                "Tab OCR locked for this map; enter a new map to reset".to_string(),
+            );
+            return;
+        }
+
+        run.ocr_evidence = Some(map_context::MapOcrEvidence {
+            state: map_context::MapOcrEvidenceState::Pending,
+            normalized_mods: Vec::new(),
+            raw_lines: Vec::new(),
+            confidence_score: None,
+            reason: Some("reading the Tab overlay".to_string()),
+            captured_at_epoch_ms: now,
+        });
+        run.clone()
+    };
+
+    let _ = app_handle.emit("scan://map-run-updated", pending_run.clone());
+
+    let Some(rect) = active_poe2_overlay_capture_rect() else {
+        finish_map_overlay_ocr(
+            &app_handle,
+            &state,
+            pending_run.started_at_epoch_ms,
+            map_context::MapOcrEvidence {
+                state: map_context::MapOcrEvidenceState::Partial,
+                normalized_mods: Vec::new(),
+                raw_lines: Vec::new(),
+                confidence_score: Some(0.0),
+                reason: Some("could not locate the active PoE2 window for OCR capture".to_string()),
+                captured_at_epoch_ms: now,
+            },
+        )
+        .await;
+        return;
+    };
+
+    emit_worker_status(
+        &app_handle,
+        "map-ocr",
+        "reading Tab overlay modifiers".to_string(),
+    );
+
+    let evidence =
+        tauri::async_runtime::spawn_blocking(move || map_ocr::read_overlay_mods(rect, now))
+            .await
+            .unwrap_or_else(|error| map_context::MapOcrEvidence {
+                state: map_context::MapOcrEvidenceState::Partial,
+                normalized_mods: Vec::new(),
+                raw_lines: Vec::new(),
+                confidence_score: Some(0.0),
+                reason: Some(format!("OCR worker failed: {error}")),
+                captured_at_epoch_ms: now,
+            });
+
+    finish_map_overlay_ocr(
+        &app_handle,
+        &state,
+        pending_run.started_at_epoch_ms,
+        evidence,
+    )
+    .await;
+}
+
+async fn finish_map_overlay_ocr(
+    app_handle: &tauri::AppHandle,
+    state: &SharedAppState,
+    started_at_epoch_ms: u64,
+    evidence: map_context::MapOcrEvidence,
+) {
+    let updated_run = {
+        let mut locked_state = state.lock().await;
+        let Some(run) = locked_state.active_map_run.as_mut() else {
+            return;
+        };
+        if run.started_at_epoch_ms != started_at_epoch_ms || run.waystone.is_some() {
+            return;
+        }
+
+        run.confidence = match evidence.state {
+            map_context::MapOcrEvidenceState::Confirmed
+            | map_context::MapOcrEvidenceState::Locked => {
+                map_context::MapRunConfidence::OcrConfirmed
+            }
+            map_context::MapOcrEvidenceState::Partial
+            | map_context::MapOcrEvidenceState::Pending => {
+                map_context::MapRunConfidence::OcrPartial
+            }
+            map_context::MapOcrEvidenceState::None => map_context::MapRunConfidence::AreaOnly,
+        };
+        run.ocr_evidence = Some(evidence.clone());
+        run.clone()
+    };
+
+    let status = match evidence.state {
+        map_context::MapOcrEvidenceState::Confirmed => format!(
+            "Tab OCR confirmed {} map modifiers",
+            evidence.normalized_mods.len()
+        ),
+        map_context::MapOcrEvidenceState::Partial => format!(
+            "Tab OCR partial: {} map-like modifiers found",
+            evidence.normalized_mods.len()
+        ),
+        map_context::MapOcrEvidenceState::None => "Tab OCR found no map modifiers".to_string(),
+        map_context::MapOcrEvidenceState::Pending => "Tab OCR still pending".to_string(),
+        map_context::MapOcrEvidenceState::Locked => "Tab OCR locked".to_string(),
+    };
+    emit_worker_status(app_handle, "map-ocr", status);
+    let _ = app_handle.emit("scan://map-run-updated", updated_run);
 }
 
 fn spawn_window_attachment_worker(app_handle: tauri::AppHandle) {
@@ -1837,6 +2024,10 @@ fn handle_global_input_event(
             if SIMULATING.load(Ordering::SeqCst) {
                 return;
             }
+            if key == &Key::Tab {
+                let _ = input_tx.send(InputAction::ReadMapOverlayOcr);
+                return;
+            }
             let hotkeys = hotkey_config_snapshot();
             let Some(scan_key) = shortcut_key_to_rdev(hotkeys.scan_key) else {
                 return;
@@ -1957,6 +2148,46 @@ fn active_window_allows_overlay_visibility() -> bool {
 
 fn active_window_is_poe2() -> bool {
     foreground_window_is_poe2()
+}
+
+#[cfg(target_os = "windows")]
+fn active_poe2_overlay_capture_rect() -> Option<map_ocr::OcrCaptureRect> {
+    if !foreground_window_is_poe2() {
+        return None;
+    }
+
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return None;
+        }
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        if GetWindowRect(hwnd, &mut rect) == 0 {
+            return None;
+        }
+        let width = rect.right.saturating_sub(rect.left);
+        let height = rect.bottom.saturating_sub(rect.top);
+        if width < 640 || height < 480 {
+            return None;
+        }
+
+        Some(map_ocr::OcrCaptureRect {
+            left: rect.left + (width * 48 / 100),
+            top: rect.top + (height * 5 / 100),
+            width: (width * 49 / 100).max(420),
+            height: (height * 62 / 100).max(320),
+        })
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn active_poe2_overlay_capture_rect() -> Option<map_ocr::OcrCaptureRect> {
+    None
 }
 
 fn is_overlay_window_title(title: &str) -> bool {

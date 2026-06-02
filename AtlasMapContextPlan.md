@@ -197,6 +197,7 @@ OCR can only upgrade an area-only run into a labelled partial/confirmed overlay 
 - The OCR adapter should return normalized candidates plus confidence, not a final fake waystone.
 - The map-context binder decides whether OCR can enrich the current `area-only` run.
 - Initial codebase scaffolding should add OCR evidence fields to `MapRunContext` before capture exists, so Phase 2 history can persist OCR confidence without another schema break.
+- Current implementation uses Windows built-in OCR through an isolated adapter. If live testing proves it inaccurate or slow, replace the adapter without changing `MapRunContext`.
 
 ### Acceptance Criteria
 
@@ -205,6 +206,7 @@ OCR can only upgrade an area-only run into a labelled partial/confirmed overlay 
 - Pressing `Tab` repeatedly in one map does not create duplicate state transitions.
 - Bad OCR text degrades to `Area-only` with a clear reason.
 - Manual rescan exists once the feature is enabled.
+- Atlas exposes a manual `Read Tab overlay` action for testing and fallback.
 
 ### Tests
 
@@ -213,6 +215,7 @@ OCR can only upgrade an area-only run into a labelled partial/confirmed overlay 
 - OCR reset occurs when a new generated map is detected.
 - Explicit armed waystone state wins over OCR fallback.
 - Map-run history stores OCR evidence as optional data even when no OCR engine is enabled yet.
+- Live in-game testing must validate crop placement, Windows OCR reliability, and whether the Tab overlay remains visible long enough after the keypress.
 
 ## Phase 2: Persisted Run History
 

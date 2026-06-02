@@ -4600,6 +4600,12 @@ kbd {
   padding-top: 10px;
 }
 
+.atlas-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
 .atlas-action-row span {
   min-width: 0;
   overflow: hidden;
@@ -4625,6 +4631,39 @@ kbd {
 .atlas-secondary-action:hover {
   border-color: var(--accent);
   box-shadow: 0 0 16px hsl(var(--accent-hue, 355) var(--accent-sat, 70%) 48% / 0.18);
+}
+
+.atlas-ocr-evidence {
+  border: 1px solid hsl(var(--accent-hue, 355) var(--accent-sat, 70%) 58% / 0.2);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.atlas-ocr-evidence strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.atlas-ocr-evidence ul {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.atlas-ocr-evidence li {
+  color: var(--vellum-dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.atlas-ocr-evidence.state-confirmed {
+  border-color: rgba(158, 227, 110, 0.35);
 }
 
 .atlas-card {

@@ -3205,10 +3205,12 @@ function atlasActionCopy(waystone: WaystoneSnapshot | null | undefined, confiden
 }
 
 function renderAtlasOverviewDashboard() {
-  const { area, waystone, confidence } = atlasContext();
+  const { run, area, waystone, confidence } = atlasContext();
   const summary = waystone?.profile_hazard_summary ?? { info: 0, warning: 0, danger: 0, build_breaking: 0 };
   const warnings = waystone?.profile_hazards ?? [];
   const pendingWaystone = state.pending_waystone;
+  const canRequestOcr = Boolean(run && run.area.area_type === "map" && !run.waystone && confidence !== "armed");
+  const showActionRow = pendingWaystone || canRequestOcr;
 
   return `
     <div class="atlas-dashboard">
@@ -3252,14 +3254,31 @@ function renderAtlasOverviewDashboard() {
             <span class="atlas-state-pill confidence-${escapeAttribute(confidence)}">${escapeHtml(mapConfidenceLabel(confidence))}</span>
           </div>
           <p>${escapeHtml(atlasActionCopy(waystone, confidence))}</p>
-          ${pendingWaystone ? `
+          ${run?.ocr_evidence ? renderAtlasOcrEvidence(run.ocr_evidence) : ""}
+          ${showActionRow ? `
             <div class="atlas-action-row">
-              <button class="atlas-secondary-action" type="button" data-clear-pending-waystone>Clear armed waystone</button>
-              <span>${escapeHtml(pendingWaystone.name)}${pendingWaystone.tier ? ` · T${pendingWaystone.tier}` : ""}</span>
+              <div class="atlas-action-buttons">
+                ${pendingWaystone ? `<button class="atlas-secondary-action" type="button" data-clear-pending-waystone>Clear armed waystone</button>` : ""}
+                ${canRequestOcr ? `<button class="atlas-secondary-action" type="button" data-request-map-ocr>Read Tab overlay</button>` : ""}
+              </div>
+              <span>${pendingWaystone ? `${escapeHtml(pendingWaystone.name)}${pendingWaystone.tier ? ` · T${pendingWaystone.tier}` : ""}` : "Area-only run can be enriched from the in-game Tab overlay."}</span>
             </div>
           ` : ""}
         </section>
       </div>
+    </div>
+  `;
+}
+
+function renderAtlasOcrEvidence(evidence: MapOcrEvidence) {
+  const score = evidence.confidence_score == null ? "" : ` · ${(evidence.confidence_score * 100).toFixed(0)}%`;
+  const mods = evidence.normalized_mods.length
+    ? evidence.normalized_mods.slice(0, 3).map((mod) => `<li>${escapeHtml(mod)}</li>`).join("")
+    : `<li>${escapeHtml(evidence.reason ?? "No recognized map modifier lines yet.")}</li>`;
+  return `
+    <div class="atlas-ocr-evidence state-${escapeAttribute(evidence.state)}">
+      <strong>Tab OCR: ${escapeHtml(evidence.state.replace("_", " "))}${escapeHtml(score)}</strong>
+      <ul>${mods}</ul>
     </div>
   `;
 }
@@ -4411,6 +4430,7 @@ if (!isListingPreviewWindow && leagueElement) {
     const campaignZoneResetButton = target.closest<HTMLButtonElement>("[data-campaign-zone-reset]");
     const campaignMapResetButton = target.closest<HTMLButtonElement>("[data-campaign-map-reset]");
     const clearPendingWaystoneButton = target.closest<HTMLButtonElement>("[data-clear-pending-waystone]");
+    const requestMapOcrButton = target.closest<HTMLButtonElement>("[data-request-map-ocr]");
 
     const atlasSectionButton = target.closest<HTMLButtonElement>("[data-atlas-section]");
     if (atlasSectionButton?.dataset.atlasSection) {
@@ -4433,6 +4453,11 @@ if (!isListingPreviewWindow && leagueElement) {
       state.pending_waystone = null;
       render();
       void invoke("clear_pending_waystone").catch((error) => pushStatus("map-context", String(error)));
+      return;
+    }
+
+    if (requestMapOcrButton) {
+      void invoke("request_map_overlay_ocr").catch((error) => pushStatus("map-ocr", String(error)));
       return;
     }
 
