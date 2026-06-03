@@ -5,6 +5,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -27,11 +29,7 @@ pub struct OcrCaptureRect {
 pub fn read_overlay_mods(rect: OcrCaptureRect, captured_at_epoch_ms: u64) -> MapOcrEvidence {
     match read_overlay_capture(rect, captured_at_epoch_ms) {
         Ok(capture) => {
-            let raw_lines = capture
-                .lines
-                .iter()
-                .map(|line| line.text.clone())
-                .collect::<Vec<_>>();
+            let raw_lines = modifier_line_texts_from_capture(&capture);
             let evidence = evidence_from_lines(raw_lines, captured_at_epoch_ms);
             log_ocr_capture(&capture, &evidence);
             evidence
@@ -74,6 +72,52 @@ pub struct OcrDebugWord {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+}
+
+pub fn modifier_line_texts_from_capture(capture: &OcrDebugCapture) -> Vec<String> {
+    let mut lines = capture.lines.clone();
+    lines.sort_by(|left, right| {
+        left.y
+            .partial_cmp(&right.y)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                left.x
+                    .partial_cmp(&right.x)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+
+    let right_edge = lines
+        .iter()
+        .map(|line| line.x + line.width)
+        .fold(0.0_f64, f64::max);
+    let panel_min_x = right_edge * 0.42;
+    let objective_cutoff_y = lines
+        .iter()
+        .filter(|line| line.y > 40.0)
+        .find(|line| is_overlay_section_boundary(&line.text))
+        .map(|line| line.y);
+
+    lines
+        .into_iter()
+        .filter(|line| {
+            let text = normalize_ocr_line(&line.text);
+            if text.is_empty() || is_overlay_section_boundary(&text) {
+                return false;
+            }
+            if let Some(cutoff_y) = objective_cutoff_y {
+                if line.y >= cutoff_y {
+                    return false;
+                }
+            }
+
+            // The Tab panel lives on the right side of the crop. This rejects
+            // left-side world labels/objectives that bleed into wide captures.
+            let line_right_edge = line.x + line.width;
+            line.x >= panel_min_x || line_right_edge >= right_edge * 0.72
+        })
+        .map(|line| line.text)
+        .collect()
 }
 
 pub fn evidence_from_lines(raw_lines: Vec<String>, captured_at_epoch_ms: u64) -> MapOcrEvidence {
@@ -141,7 +185,7 @@ fn normalize_ocr_line(line: &str) -> String {
             previous_space = false;
         }
     }
-    output.trim().to_string()
+    repair_common_map_ocr_line(output.trim())
 }
 
 fn looks_like_map_modifier(line: &str) -> bool {
@@ -160,6 +204,10 @@ fn looks_like_map_modifier(line: &str) -> bool {
         "gpu:",
         "network:",
         "server",
+        "checkpoint",
+        "defeat ",
+        "complete all",
+        "map device",
     ]
     .iter()
     .any(|needle| lower.contains(needle));
@@ -179,6 +227,20 @@ fn looks_like_map_modifier(line: &str) -> bool {
         "chests",
         "rare monsters",
         "magic monsters",
+        "ritual",
+        "abyss",
+        "abysses",
+        "delirium",
+        "breach",
+        "rogue exile",
+        "rogue exiles",
+        "strongbox",
+        "strongboxes",
+        "altar",
+        "altars",
+        "armoured",
+        "ground",
+        "cursed",
     ]
     .iter()
     .any(|needle| lower.contains(needle));
@@ -198,11 +260,72 @@ fn looks_like_map_modifier(line: &str) -> bool {
         "found",
         "pack size",
         "chance",
+        "contains",
+        "contain",
+        "has patches",
+        "are armoured",
+        "are mirrored",
+        "cursed with",
+        "ritual altars",
+        "mirror of delirium",
+        "strongboxes",
     ]
     .iter()
     .any(|needle| lower.contains(needle));
 
     has_map_subject && has_modifier_language
+}
+
+fn is_overlay_section_boundary(line: &str) -> bool {
+    let letters = line
+        .chars()
+        .filter(|character| character.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if letters.contains("mapobjectives") || letters.contains("mapcontent") {
+        return true;
+    }
+
+    // Windows OCR sometimes splits the word into "MAPSOB 'ECTIVES".
+    (letters.contains("objectives") || letters.contains("bectives")) && letters.contains("map")
+}
+
+fn repair_common_map_ocr_line(line: &str) -> String {
+    static MORE_FOUND_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)\b(\d+(?:\.\d+)?)%\s+more\s+found\s+in\s+area\b").unwrap());
+    static MORE_OF_ITEMS_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\b(\d+(?:\.\d+)?)%\s+more\s+of\s+items\s+found\s+in\s+this\s+area\b")
+            .unwrap()
+    });
+    static POISON_GARBLED_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\b(monsters\s+have\s+\d+(?:\.\d+)?%\s+chance\s+to)\s+.+?\s+on\b").unwrap()
+    });
+
+    let mut repaired = line
+        .replace("AITACK", "ATTACK")
+        .replace("Aitack", "Attack")
+        .replace(" Hve ", " Have ")
+        .replace(" hve ", " have ")
+        .replace(" HVE ", " HAVE ");
+
+    repaired = MORE_OF_ITEMS_RE
+        .replace_all(&repaired, "$1% more Rarity of Items found in this Area")
+        .to_string();
+    repaired = MORE_FOUND_RE
+        .replace_all(&repaired, "$1% more Waystones found in Area")
+        .to_string();
+    let upper = repaired.to_ascii_uppercase();
+    if upper.contains("CHANCE TO")
+        && upper.contains("P")
+        && (upper.contains("Q") || upper.contains("O"))
+        && upper.ends_with(" ON")
+    {
+        repaired = POISON_GARBLED_RE
+            .replace_all(&repaired, "$1 Poison on Hit")
+            .to_string();
+    }
+
+    repaired
 }
 
 fn confidence_score(raw_lines: &[String], normalized_mods: &[String]) -> f32 {
@@ -293,7 +416,17 @@ $imagePath = '{image_path}'
 $bitmap = New-Object System.Drawing.Bitmap({width}, {height})
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 $graphics.CopyFromScreen({left}, {top}, 0, 0, $bitmap.Size)
-$bitmap.Save($imagePath, [System.Drawing.Imaging.ImageFormat]::Png)
+$scale = 2
+$ocrBitmap = New-Object System.Drawing.Bitmap($bitmap.Width * $scale, $bitmap.Height * $scale)
+$ocrGraphics = [System.Drawing.Graphics]::FromImage($ocrBitmap)
+$ocrGraphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+$ocrGraphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+$ocrGraphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+$ocrGraphics.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+$ocrGraphics.DrawImage($bitmap, 0, 0, $ocrBitmap.Width, $ocrBitmap.Height)
+$ocrBitmap.Save($imagePath, [System.Drawing.Imaging.ImageFormat]::Png)
+$ocrGraphics.Dispose()
+$ocrBitmap.Dispose()
 $graphics.Dispose()
 $bitmap.Dispose()
 
@@ -444,6 +577,17 @@ fn temp_capture_path(extension: &str) -> PathBuf {
 mod tests {
     use super::*;
 
+    fn debug_line(text: &str, x: f64, y: f64, width: f64) -> OcrDebugLine {
+        OcrDebugLine {
+            text: text.to_string(),
+            x,
+            y,
+            width,
+            height: 24.0,
+            words: Vec::new(),
+        }
+    }
+
     #[test]
     fn normalizes_map_modifier_lines_and_rejects_noise() {
         let lines = vec![
@@ -460,6 +604,76 @@ mod tests {
         assert_eq!(normalized.len(), 2);
         assert!(normalized[0].contains("Monsters take 29% reduced Extra Damage"));
         assert!(normalized[1].contains("Waystones Found in Area"));
+    }
+
+    #[test]
+    fn filters_capture_to_right_tab_panel_before_objectives() {
+        let capture = OcrDebugCapture {
+            rect: OcrCaptureRect {
+                left: 1000,
+                top: 240,
+                width: 1500,
+                height: 520,
+            },
+            image_path: PathBuf::from("capture.png"),
+            json_path: PathBuf::from("capture.json"),
+            captured_at_epoch_ms: 100,
+            lines: vec![
+                debug_line("Chec", 260.0, 250.0, 80.0),
+                debug_line("19% INCREASED MONSTER DAMAGE", 930.0, 57.0, 520.0),
+                debug_line("AREA HAS PATCHES OF CHILLED GROUND", 890.0, 125.0, 660.0),
+                debug_line("MAPSOB 'ECTIVES", 930.0, 344.0, 360.0),
+                debug_line("Defeat Grudgeclash, Vile Thorn.", 780.0, 373.0, 620.0),
+                debug_line("MAP CONTENT", 980.0, 434.0, 320.0),
+            ],
+        };
+
+        let lines = modifier_line_texts_from_capture(&capture);
+
+        assert_eq!(
+            lines,
+            vec![
+                "19% INCREASED MONSTER DAMAGE".to_string(),
+                "AREA HAS PATCHES OF CHILLED GROUND".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn accepts_area_mechanics_and_repairs_common_ocr_damage() {
+        let lines = vec![
+            "AREA CONTAINS RITUAL ALTARS".to_string(),
+            "AREAS CONTAIN A MIRROR OF DELIRIUM".to_string(),
+            "MONSTERS ARE ARMOURED".to_string(),
+            "PLAYERS ARE PERIODICALLY CURSED WITH ELEMENTAL WEAKNESS".to_string(),
+            "60% MORE FOUND IN AREA".to_string(),
+            "13% MORE OF ITEMS FOUND IN THIS AREA".to_string(),
+            "MONSTERS HAVE 27% CHANCE TO .P.Q.I}QN ON".to_string(),
+        ];
+
+        let normalized = normalize_ocr_lines(&lines);
+
+        assert!(normalized
+            .iter()
+            .any(|line| line == "AREA CONTAINS RITUAL ALTARS"));
+        assert!(normalized
+            .iter()
+            .any(|line| line == "AREAS CONTAIN A MIRROR OF DELIRIUM"));
+        assert!(normalized
+            .iter()
+            .any(|line| line == "MONSTERS ARE ARMOURED"));
+        assert!(normalized
+            .iter()
+            .any(|line| line == "PLAYERS ARE PERIODICALLY CURSED WITH ELEMENTAL WEAKNESS"));
+        assert!(normalized
+            .iter()
+            .any(|line| line == "60% more Waystones found in Area"));
+        assert!(normalized
+            .iter()
+            .any(|line| line == "13% more Rarity of Items found in this Area"));
+        assert!(normalized
+            .iter()
+            .any(|line| line == "MONSTERS HAVE 27% CHANCE TO Poison on Hit"));
     }
 
     #[test]
