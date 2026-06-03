@@ -23,10 +23,11 @@ use tauri::{
 use thiserror::Error;
 use tokio::sync::{mpsc, Mutex};
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::Foundation::RECT;
+use windows_sys::Win32::Foundation::{HWND, RECT};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+    EnumWindows, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+    GetWindowThreadProcessId, IsWindowVisible,
 };
 
 pub mod debug_log;
@@ -2175,25 +2176,26 @@ fn active_window_is_poe2() -> bool {
 
 #[cfg(target_os = "windows")]
 fn active_poe2_overlay_capture_rect() -> Option<map_ocr::OcrCaptureRect> {
-    if !foreground_window_is_poe2() {
+    let (running, pid) = get_poe2_pid_cache();
+    if !running || pid == 0 {
         return None;
     }
 
     unsafe {
         let hwnd = GetForegroundWindow();
-        if hwnd.is_null() {
+        if !hwnd.is_null() {
+            let mut proc_id: u32 = 0;
+            GetWindowThreadProcessId(hwnd, &mut proc_id);
+            if proc_id == pid {
+                return capture_rect_for_window(hwnd);
+            }
+        }
+
+        if !is_overlay_window_title(&active_window_title()) {
             return None;
         }
-        let mut rect = RECT {
-            left: 0,
-            top: 0,
-            right: 0,
-            bottom: 0,
-        };
-        if GetWindowRect(hwnd, &mut rect) == 0 {
-            return None;
-        }
-        map_overlay_capture_rect_from_bounds(rect.left, rect.top, rect.right, rect.bottom)
+
+        find_poe2_window_by_pid(pid).and_then(|poe_hwnd| capture_rect_for_window(poe_hwnd))
     }
 }
 
@@ -2273,7 +2275,7 @@ fn foreground_window_is_poe2() -> bool {
             return false;
         }
         let mut proc_id: u32 = 0;
-        GetWindowThreadProcessId(hwnd as isize, &mut proc_id);
+        GetWindowThreadProcessId(hwnd, &mut proc_id);
         proc_id == pid
     }
 }
@@ -2371,11 +2373,6 @@ fn find_poe2_process() -> Option<u32> {
 }
 
 #[cfg(target_os = "windows")]
-unsafe extern "system" {
-    fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
-}
-
-#[cfg(target_os = "windows")]
 fn active_window_title() -> String {
     let hwnd = unsafe { GetForegroundWindow() };
     if hwnd.is_null() {
@@ -2394,6 +2391,78 @@ fn active_window_title() -> String {
     }
 
     String::from_utf16_lossy(&buffer[..copied as usize])
+}
+
+#[cfg(target_os = "windows")]
+fn capture_rect_for_window(hwnd: HWND) -> Option<map_ocr::OcrCaptureRect> {
+    unsafe {
+        if hwnd.is_null() {
+            return None;
+        }
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        if GetWindowRect(hwnd, &mut rect) == 0 {
+            return None;
+        }
+        map_overlay_capture_rect_from_bounds(rect.left, rect.top, rect.right, rect.bottom)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn find_poe2_window_by_pid(pid: u32) -> Option<HWND> {
+    struct SearchState {
+        pid: u32,
+        hwnd: HWND,
+    }
+
+    unsafe extern "system" fn visit_window(hwnd: HWND, lparam: isize) -> i32 {
+        let state = &mut *(lparam as *mut SearchState);
+        if IsWindowVisible(hwnd) == 0 {
+            return 1;
+        }
+
+        let mut proc_id: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut proc_id);
+        if proc_id != state.pid {
+            return 1;
+        }
+
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        if GetWindowRect(hwnd, &mut rect) == 0 {
+            return 1;
+        }
+
+        if rect.right.saturating_sub(rect.left) >= 640
+            && rect.bottom.saturating_sub(rect.top) >= 480
+        {
+            state.hwnd = hwnd;
+            return 0;
+        }
+
+        1
+    }
+
+    let mut state = SearchState {
+        pid,
+        hwnd: std::ptr::null_mut(),
+    };
+    unsafe {
+        EnumWindows(Some(visit_window), &mut state as *mut SearchState as isize);
+    }
+    if state.hwnd.is_null() {
+        None
+    } else {
+        Some(state.hwnd)
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
