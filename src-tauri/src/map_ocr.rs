@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     env, fs,
     path::PathBuf,
     process::{Command, Stdio},
@@ -16,7 +17,7 @@ use crate::{
 
 const OCR_DEBUG_DIR_NAME: &str = "ocr-debug";
 const OCR_DEBUG_ARTIFACT_PREFIX: &str = "tab-overlay-ocr";
-const MAX_OCR_DEBUG_ARTIFACTS: usize = 40;
+const MAX_OCR_DEBUG_CAPTURES: usize = 40;
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct OcrCaptureRect {
@@ -412,12 +413,15 @@ fn windows_ocr_script(image_path: &PathBuf, rect: OcrCaptureRect) -> String {
         r#"
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$ErrorActionPreference = 'Stop'
 $imagePath = '{image_path}'
 $bitmap = New-Object System.Drawing.Bitmap({width}, {height})
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 $graphics.CopyFromScreen({left}, {top}, 0, 0, $bitmap.Size)
 $scale = 2
-$ocrBitmap = New-Object System.Drawing.Bitmap($bitmap.Width * $scale, $bitmap.Height * $scale)
+$scaledWidth = [int]($bitmap.Width * $scale)
+$scaledHeight = [int]($bitmap.Height * $scale)
+$ocrBitmap = New-Object System.Drawing.Bitmap -ArgumentList $scaledWidth, $scaledHeight
 $ocrGraphics = [System.Drawing.Graphics]::FromImage($ocrBitmap)
 $ocrGraphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
 $ocrGraphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
@@ -541,27 +545,41 @@ fn prune_ocr_debug_artifacts(debug_dir: &PathBuf) {
         return;
     };
 
-    let mut files = entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            let file_name = path.file_name()?.to_string_lossy();
-            if !file_name.starts_with(OCR_DEBUG_ARTIFACT_PREFIX) {
-                return None;
-            }
-            let modified = entry.metadata().ok()?.modified().ok()?;
-            Some((path, modified))
-        })
-        .collect::<Vec<_>>();
+    let mut captures: HashMap<String, (std::time::SystemTime, Vec<PathBuf>)> = HashMap::new();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().map(|name| name.to_string_lossy()) else {
+            continue;
+        };
+        if !file_name.starts_with(OCR_DEBUG_ARTIFACT_PREFIX) {
+            continue;
+        }
+        let Some(stem) = path.file_stem().map(|stem| stem.to_string_lossy().to_string()) else {
+            continue;
+        };
+        let Some(modified) = entry.metadata().ok().and_then(|metadata| metadata.modified().ok())
+        else {
+            continue;
+        };
 
-    if files.len() <= MAX_OCR_DEBUG_ARTIFACTS {
+        let entry = captures.entry(stem).or_insert((modified, Vec::new()));
+        if modified > entry.0 {
+            entry.0 = modified;
+        }
+        entry.1.push(path);
+    }
+
+    if captures.len() <= MAX_OCR_DEBUG_CAPTURES {
         return;
     }
 
-    files.sort_by_key(|(_, modified)| *modified);
-    let remove_count = files.len().saturating_sub(MAX_OCR_DEBUG_ARTIFACTS);
-    for (path, _) in files.into_iter().take(remove_count) {
-        let _ = fs::remove_file(path);
+    let mut captures = captures.into_values().collect::<Vec<_>>();
+    captures.sort_by_key(|(modified, _)| *modified);
+    let remove_count = captures.len().saturating_sub(MAX_OCR_DEBUG_CAPTURES);
+    for (_, paths) in captures.into_iter().take(remove_count) {
+        for path in paths {
+            let _ = fs::remove_file(path);
+        }
     }
 }
 
