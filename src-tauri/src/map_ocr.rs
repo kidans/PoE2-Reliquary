@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     debug_log,
-    map_context::{MapOcrEvidence, MapOcrEvidenceState},
+    map_context::{MapOcrEvidence, MapOcrEvidenceState, MapOcrSummary},
 };
 
 const OCR_DEBUG_DIR_NAME: &str = "ocr-debug";
@@ -39,6 +39,7 @@ pub fn read_overlay_mods(rect: OcrCaptureRect, captured_at_epoch_ms: u64) -> Map
             state: MapOcrEvidenceState::Partial,
             normalized_mods: Vec::new(),
             raw_lines: Vec::new(),
+            summary: None,
             confidence_score: Some(0.0),
             reason: Some(error),
             captured_at_epoch_ms,
@@ -136,17 +137,70 @@ pub fn evidence_from_lines(raw_lines: Vec<String>, captured_at_epoch_ms: u64) ->
         MapOcrEvidenceState::Partial => {
             Some("some OCR lines looked like map modifiers, but confidence is low".to_string())
         }
-        _ => Some("OCR did not find recognizable map modifier lines".to_string()),
+        _ if raw_lines.is_empty() => Some("OCR returned no readable lines".to_string()),
+        _ => Some("OCR read non-map text; open the in-game Tab map modifier panel".to_string()),
     };
 
     MapOcrEvidence {
         state,
+        summary: (!normalized_mods.is_empty()).then(|| summarize_ocr_mods(&normalized_mods)),
         normalized_mods,
         raw_lines,
         confidence_score: Some(score),
         reason,
         captured_at_epoch_ms,
     }
+}
+
+fn summarize_ocr_mods(normalized_mods: &[String]) -> MapOcrSummary {
+    let mut summary = MapOcrSummary {
+        modifier_count: normalized_mods.len(),
+        ..MapOcrSummary::default()
+    };
+
+    for line in normalized_mods {
+        let lower = line.to_ascii_lowercase();
+
+        if lower.contains("rarity")
+            || lower.contains("quantity")
+            || lower.contains("pack size")
+            || lower.contains("waystone")
+            || lower.contains("chest")
+        {
+            summary.reward_lines.push(line.clone());
+        }
+
+        if lower.contains("players")
+            || lower.contains("cursed")
+            || lower.contains("recovery")
+            || lower.contains("flask")
+        {
+            summary.player_danger_lines.push(line.clone());
+        }
+
+        if lower.contains("monster")
+            || lower.contains("monsters")
+            || lower.contains("armoured")
+            || lower.contains("ground")
+        {
+            summary.monster_danger_lines.push(line.clone());
+        }
+
+        for (needle, label) in [
+            ("breach", "Breach"),
+            ("abyss", "Abyss"),
+            ("ritual", "Ritual"),
+            ("delirium", "Delirium"),
+            ("strongbox", "Strongbox"),
+            ("chest", "Chest"),
+        ] {
+            if lower.contains(needle) && !summary.content_flags.iter().any(|item| item == label) {
+                summary.content_flags.push(label.to_string());
+            }
+        }
+    }
+
+    summary
 }
 
 pub fn normalize_ocr_lines(raw_lines: &[String]) -> Vec<String> {
@@ -229,6 +283,8 @@ fn looks_like_map_modifier(line: &str) -> bool {
         "rare monsters",
         "magic monsters",
         "ritual",
+        "shrine",
+        "shrines",
         "abyss",
         "abysses",
         "delirium",
@@ -266,6 +322,9 @@ fn looks_like_map_modifier(line: &str) -> bool {
         "has patches",
         "are armoured",
         "are mirrored",
+        "is corrupted",
+        "corrupted",
+        "grant",
         "cursed with",
         "ritual altars",
         "mirror of delirium",
@@ -382,7 +441,7 @@ fn read_overlay_capture(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let lines = serde_json::from_str::<Vec<OcrDebugLine>>(&stdout)
+    let lines = parse_ocr_debug_lines(&stdout)
         .map_err(|error| format!("failed to parse Windows OCR JSON: {error}; output={stdout}"))?;
     let capture = OcrDebugCapture {
         rect,
@@ -396,6 +455,23 @@ fn read_overlay_capture(
     fs::write(&json_path, sidecar)
         .map_err(|error| format!("failed to write OCR debug sidecar: {error}"))?;
     Ok(capture)
+}
+
+fn parse_ocr_debug_lines(stdout: &str) -> Result<Vec<OcrDebugLine>, serde_json::Error> {
+    let trimmed = stdout.trim();
+    serde_json::from_str::<Vec<OcrDebugLine>>(trimmed).or_else(|_| {
+        let sanitized = strip_json_control_characters(trimmed);
+        serde_json::from_str::<Vec<OcrDebugLine>>(&sanitized)
+    })
+}
+
+fn strip_json_control_characters(input: &str) -> String {
+    input
+        .chars()
+        .filter(|character| {
+            !character.is_control() || matches!(character, '\n' | '\r' | '\t')
+        })
+        .collect()
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -667,6 +743,8 @@ mod tests {
             "60% MORE FOUND IN AREA".to_string(),
             "13% MORE OF ITEMS FOUND IN THIS AREA".to_string(),
             "MONSTERS HAVE 27% CHANCE TO .P.Q.I}QN ON".to_string(),
+            "SHRINES GRANT A RANDOM ADDITIONAL SHRINE EFFECT".to_string(),
+            "AREA IS CORRUPTED".to_string(),
         ];
 
         let normalized = normalize_ocr_lines(&lines);
@@ -692,6 +770,10 @@ mod tests {
         assert!(normalized
             .iter()
             .any(|line| line == "MONSTERS HAVE 27% CHANCE TO Poison on Hit"));
+        assert!(normalized
+            .iter()
+            .any(|line| line == "SHRINES GRANT A RANDOM ADDITIONAL SHRINE EFFECT"));
+        assert!(normalized.iter().any(|line| line == "AREA IS CORRUPTED"));
     }
 
     #[test]
@@ -707,5 +789,57 @@ mod tests {
 
         assert_eq!(evidence.state, MapOcrEvidenceState::Confirmed);
         assert!(evidence.confidence_score.unwrap_or_default() >= 0.58);
+    }
+
+    #[test]
+    fn parses_windows_ocr_json_after_stripping_control_characters() {
+        let lines = parse_ocr_debug_lines(
+            "[{\"text\":\"MONSTERS HAVE 31% CHANCE TO P\u{7}OISON ON HIT\",\"x\":1,\"y\":2,\"width\":3,\"height\":4,\"words\":[]}]",
+        )
+        .expect("sanitized OCR JSON should parse");
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "MONSTERS HAVE 31% CHANCE TO POISON ON HIT");
+    }
+
+    #[test]
+    fn evidence_includes_compact_summary_for_confirmed_map_mods() {
+        let evidence = evidence_from_lines(
+            vec![
+                "AREA CONTAINS BREACHES".to_string(),
+                "CHESTS HAVE 20% INCREASED ITEM QUANTITY".to_string(),
+                "18% INCREASED RARITY OF ITEMS FOUND IN THIS AREA".to_string(),
+                "9% INCREASED PACK SIZE".to_string(),
+                "35% MORE WAYSTONES FOUND IN AREA".to_string(),
+                "PLAYERS ARE PERIODICALLY CURSED WITH ENFEEBLE".to_string(),
+                "MONSTERS HAVE 30% INCREASED ACCURACY RATING".to_string(),
+            ],
+            100,
+        );
+
+        let summary = evidence.summary.expect("summary");
+        assert_eq!(summary.modifier_count, 7);
+        assert!(summary.content_flags.contains(&"Breach".to_string()));
+        assert_eq!(summary.reward_lines.len(), 4);
+        assert_eq!(summary.player_danger_lines.len(), 1);
+        assert_eq!(summary.monster_danger_lines.len(), 1);
+    }
+
+    #[test]
+    fn evidence_reason_distinguishes_non_map_ocr_text_from_empty_capture() {
+        let evidence = evidence_from_lines(
+            vec![
+                "The Grand Expedition".to_string(),
+                "Explore the Islands in search of Gwennen".to_string(),
+            ],
+            100,
+        );
+
+        assert_eq!(evidence.state, MapOcrEvidenceState::None);
+        assert!(evidence
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("non-map text"));
     }
 }

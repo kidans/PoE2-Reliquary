@@ -1535,6 +1535,7 @@ async fn process_map_overlay_ocr(app_handle: tauri::AppHandle, state: SharedAppS
             state: map_context::MapOcrEvidenceState::Pending,
             normalized_mods: Vec::new(),
             raw_lines: Vec::new(),
+            summary: None,
             confidence_score: None,
             reason: Some("reading the Tab overlay".to_string()),
             captured_at_epoch_ms: now,
@@ -1553,6 +1554,7 @@ async fn process_map_overlay_ocr(app_handle: tauri::AppHandle, state: SharedAppS
                 state: map_context::MapOcrEvidenceState::Partial,
                 normalized_mods: Vec::new(),
                 raw_lines: Vec::new(),
+                summary: None,
                 confidence_score: Some(0.0),
                 reason: Some("could not locate the active PoE2 window for OCR capture".to_string()),
                 captured_at_epoch_ms: now,
@@ -1578,6 +1580,7 @@ async fn process_map_overlay_ocr(app_handle: tauri::AppHandle, state: SharedAppS
                 state: map_context::MapOcrEvidenceState::Partial,
                 normalized_mods: Vec::new(),
                 raw_lines: Vec::new(),
+                summary: None,
                 confidence_score: Some(0.0),
                 reason: Some(format!("OCR worker failed: {error}")),
                 captured_at_epoch_ms: now,
@@ -2227,7 +2230,7 @@ fn map_overlay_capture_rect_from_bounds(
         left: capture_left,
         top: capture_top,
         width: capture_right.saturating_sub(capture_left).max(420),
-        height: (height * 33 / 100).max(260),
+        height: (height * 46 / 100).max(360),
     })
 }
 
@@ -2244,7 +2247,7 @@ mod overlay_capture_tests {
         assert_eq!(rect.width, 1180);
         assert_eq!(rect.left + rect.width, 2040);
         assert_eq!(rect.top, 207);
-        assert_eq!(rect.height, 380);
+        assert_eq!(rect.height, 529);
     }
 
     #[test]

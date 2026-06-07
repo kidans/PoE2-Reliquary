@@ -35,9 +35,19 @@ pub struct MapOcrEvidence {
     pub state: MapOcrEvidenceState,
     pub normalized_mods: Vec<String>,
     pub raw_lines: Vec<String>,
+    pub summary: Option<MapOcrSummary>,
     pub confidence_score: Option<f32>,
     pub reason: Option<String>,
     pub captured_at_epoch_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MapOcrSummary {
+    pub modifier_count: usize,
+    pub reward_lines: Vec<String>,
+    pub player_danger_lines: Vec<String>,
+    pub monster_danger_lines: Vec<String>,
+    pub content_flags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

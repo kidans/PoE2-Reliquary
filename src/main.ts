@@ -46,6 +46,12 @@ import {
 } from "./temple-engine";
 import { renderTemplePanel } from "./temple-view";
 import { TEMPLE_ROOMS, type TempleRoomId, type TempleTier } from "./temple-data";
+import {
+  atlasCompactLineState,
+  type AtlasCompactIndicator,
+  type AtlasCompactLineState,
+  type AtlasCompactSeverity,
+} from "./atlas-line-mode";
 import "./styles.css";
 
 type GuideStep = {
@@ -127,9 +133,18 @@ type MapOcrEvidence = {
   state: MapOcrEvidenceState;
   normalized_mods: string[];
   raw_lines: string[];
+  summary: MapOcrSummary | null;
   confidence_score: number | null;
   reason: string | null;
   captured_at_epoch_ms: number;
+};
+
+type MapOcrSummary = {
+  modifier_count: number;
+  reward_lines: string[];
+  player_danger_lines: string[];
+  monster_danger_lines: string[];
+  content_flags: string[];
 };
 
 type MapRunContext = {
@@ -548,10 +563,18 @@ function normalizeOcrEvidence(value: unknown): MapOcrEvidence | null {
   const source = value as Partial<MapOcrEvidence>;
   const state = source.state;
   const isValidState = state === "none" || state === "pending" || state === "partial" || state === "confirmed" || state === "locked";
+  const summary = source.summary && typeof source.summary === "object" ? source.summary : null;
   return {
     state: isValidState ? state : "none",
     normalized_mods: Array.isArray(source.normalized_mods) ? source.normalized_mods.map(String) : [],
     raw_lines: Array.isArray(source.raw_lines) ? source.raw_lines.map(String) : [],
+    summary: summary ? {
+      modifier_count: typeof summary.modifier_count === "number" ? summary.modifier_count : 0,
+      reward_lines: Array.isArray(summary.reward_lines) ? summary.reward_lines.map(String) : [],
+      player_danger_lines: Array.isArray(summary.player_danger_lines) ? summary.player_danger_lines.map(String) : [],
+      monster_danger_lines: Array.isArray(summary.monster_danger_lines) ? summary.monster_danger_lines.map(String) : [],
+      content_flags: Array.isArray(summary.content_flags) ? summary.content_flags.map(String) : [],
+    } : null,
     confidence_score: typeof source.confidence_score === "number" ? source.confidence_score : null,
     reason: typeof source.reason === "string" ? source.reason : null,
     captured_at_epoch_ms: typeof source.captured_at_epoch_ms === "number" ? source.captured_at_epoch_ms : 0,
@@ -926,10 +949,12 @@ root.innerHTML = isListingPreviewWindow
         </header>
 
         <div class="compact-strip" data-drag-handle>
-          <div>
+          <div class="compact-primary">
             <span data-compact-title>Reliquary ready</span>
             <strong data-compact-meta>Ctrl+C scan | Alt+D trade</strong>
           </div>
+          <div class="compact-map-indicators" data-compact-indicators></div>
+          <div class="compact-risk-reason" data-compact-risk></div>
           <div class="compact-checklist" data-compat-checklist></div>
           <div class="compact-difficulty-bar" aria-hidden="true"></div>
           <button class="chrome-button" data-toggle-compact type="button">Open</button>
@@ -994,12 +1019,28 @@ const leagueElement = isListingPreviewWindow ? null : root.querySelector<HTMLSel
 const hudElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>(".hud-card");
 const compactTitleElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-title]");
 const compactMetaElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-meta]");
+const compactIndicatorsElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-indicators]");
+const compactRiskElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-risk]");
 const checklistElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compat-checklist]");
 const tabButtons = isListingPreviewWindow
   ? []
   : Array.from(root.querySelectorAll<HTMLButtonElement>("[data-tab]"));
 
-if (!panelElement || (!isListingPreviewWindow && (!zoneElement || !leagueElement || !hudElement || !compactTitleElement || !compactMetaElement))) {
+if (
+  !panelElement
+  || (
+    !isListingPreviewWindow
+    && (
+      !zoneElement
+      || !leagueElement
+      || !hudElement
+      || !compactTitleElement
+      || !compactMetaElement
+      || !compactIndicatorsElement
+      || !compactRiskElement
+    )
+  )
+) {
   throw new Error("Reliquary UI shell failed to initialize.");
 }
 
@@ -1038,6 +1079,9 @@ function render() {
 
   compactTitleElement!.textContent = compactTitleText(state.scanned_item);
   compactMetaElement!.textContent = compactMetaText(lastStatus);
+  compactIndicatorsElement!.innerHTML = "";
+  compactRiskElement!.textContent = "";
+  compactRiskElement!.removeAttribute("title");
   compactMetaElement!.classList.toggle("timer-running", campaignTimerRunning && campaignGuideAct > 0);
   renderCampaignChecklist();
 
@@ -1054,10 +1098,22 @@ function render() {
   }
 
   const compactStrip = root?.querySelector<HTMLElement>(".compact-strip");
+  const mapCompactState = state.current_area?.area_type === "map"
+    ? atlasCompactLineState(
+      state.current_area,
+      state.active_map_run ?? null,
+      formatCompactRuntime(state.current_area.entered_at_epoch_ms),
+    )
+    : null;
+  if (mapCompactState && state.current_area?.area_type === "map") {
+    applyCompactMapLine(mapCompactState, state.current_area);
+  }
   if (compactStrip) {
     compactStrip.classList.toggle("is-mapping", state.current_area?.area_type === "map");
     compactStrip.classList.toggle("is-hideout", state.current_area?.area_type === "hideout");
     compactStrip.classList.toggle("is-campaign", campaignGuideAct > 0);
+    compactStrip.classList.toggle("is-pulsing", Boolean(mapCompactState?.shouldPulse));
+    setCompactSeverityClass(compactStrip, mapCompactState?.severity ?? "none");
     hudElement!.classList.toggle("compact-checklist-expanded", campaignExpanded && campaignGuideAct > 0);
   }
 
@@ -1065,9 +1121,11 @@ function render() {
   if (difficultyBar) {
     const hazardCount = state.current_area?.waystone_hazard_count ?? 0;
     const modCount = state.current_area?.waystone_mod_count ?? 0;
-    const pct = modCount > 0 ? Math.round((hazardCount / modCount) * 100) : 0;
+    const severity = mapCompactState?.severity ?? "none";
+    const pct = modCount > 0 ? Math.round((hazardCount / modCount) * 100) : compactSeverityPct(severity);
     difficultyBar.style.setProperty("--difficulty-pct", `${pct}%`);
-    difficultyBar.classList.toggle("has-hazards", hazardCount > 0);
+    difficultyBar.classList.toggle("has-hazards", hazardCount > 0 || severity === "warning" || severity === "danger" || severity === "critical");
+    setCompactSeverityClass(difficultyBar, severity);
   }
 
   if (!compactMode) {
@@ -1322,37 +1380,19 @@ function compactMetaText(status: string) {
   }
 
   if (state.current_area?.area_type === "map") {
-    const area = state.current_area;
-    const parts: string[] = [];
-
-    if (area.waystone_mod_count) {
-      parts.push(`${area.waystone_mod_count} mods`);
-    }
-    if (area.waystone_quantity != null) {
-      parts.push(`Q:${area.waystone_quantity}%`);
-    }
-    if (area.waystone_rarity != null) {
-      parts.push(`R:${area.waystone_rarity}%`);
-    }
-    if (area.waystone_pack_size != null) {
-      parts.push(`Pack:${area.waystone_pack_size}%`);
-    }
-    if (area.waystone_hazard_count && area.waystone_hazard_count > 0) {
-      parts.push(`\u25B2${area.waystone_hazard_count}`);
-    }
-
-    const stats = parts.join(" \u00B7 ");
-    const runtimeLabel = formatCompactRuntime(area.entered_at_epoch_ms);
-
     window.clearInterval(compactRuntimeHandle);
     compactRuntimeHandle = window.setInterval(() => {
-      const meta = root?.querySelector<HTMLElement>("[data-compact-meta]");
-      if (meta && state.current_area?.area_type === "map") {
-        meta.textContent = compactMapMetaText(state.current_area);
+      if (state.current_area?.area_type === "map") {
+        const line = atlasCompactLineState(
+          state.current_area,
+          state.active_map_run ?? null,
+          formatCompactRuntime(state.current_area.entered_at_epoch_ms),
+        );
+        applyCompactMapLine(line, state.current_area);
       }
     }, 1000);
 
-    return stats ? `${stats} \u00B7 ${runtimeLabel}` : runtimeLabel;
+    return compactMapMetaText(state.current_area);
   }
 
   if (state.current_area?.area_type === "hideout") {
@@ -1401,27 +1441,39 @@ function renderCampaignChecklist(): void {
 }
 
 function compactMapMetaText(area: CurrentAreaInfo) {
-  const parts: string[] = [];
-
-  if (area.waystone_mod_count) {
-    parts.push(`${area.waystone_mod_count} mods`);
-  }
-  if (area.waystone_quantity != null) {
-    parts.push(`Q:${area.waystone_quantity}%`);
-  }
-  if (area.waystone_rarity != null) {
-    parts.push(`R:${area.waystone_rarity}%`);
-  }
-  if (area.waystone_pack_size != null) {
-    parts.push(`Pack:${area.waystone_pack_size}%`);
-  }
-  if (area.waystone_hazard_count && area.waystone_hazard_count > 0) {
-    parts.push(`\u25B2${area.waystone_hazard_count}`);
-  }
-
-  const stats = parts.join(" \u00B7 ");
   const runtimeLabel = formatCompactRuntime(area.entered_at_epoch_ms);
-  return stats ? `${stats} \u00B7 ${runtimeLabel}` : runtimeLabel;
+  return atlasCompactLineState(area, state.active_map_run ?? null, runtimeLabel).text;
+}
+
+function applyCompactMapLine(line: AtlasCompactLineState, area: CurrentAreaInfo) {
+  if (!compactTitleElement || !compactMetaElement || !compactIndicatorsElement || !compactRiskElement) return;
+  compactTitleElement.textContent = area.name || "Map";
+  compactMetaElement.textContent = line.text;
+  compactIndicatorsElement.innerHTML = line.indicators.map(renderCompactIndicator).join("");
+  compactRiskElement.textContent = line.riskReason ? `Risk: ${line.riskReason}` : "";
+  if (line.riskDetail) {
+    compactRiskElement.title = line.riskDetail;
+  } else {
+    compactRiskElement.removeAttribute("title");
+  }
+}
+
+function renderCompactIndicator(indicator: AtlasCompactIndicator) {
+  return `<span class="compact-indicator compact-indicator-${escapeAttribute(indicator.tone)}"><b>${escapeHtml(indicator.label)}</b>${escapeHtml(indicator.value)}</span>`;
+}
+
+function setCompactSeverityClass(element: HTMLElement, severity: AtlasCompactSeverity) {
+  for (const value of ["none", "info", "warning", "danger", "critical"] as const) {
+    element.classList.toggle(`compact-severity-${value}`, value === severity);
+  }
+}
+
+function compactSeverityPct(severity: AtlasCompactSeverity) {
+  if (severity === "critical") return 100;
+  if (severity === "danger") return 76;
+  if (severity === "warning") return 48;
+  if (severity === "info") return 24;
+  return 0;
 }
 
 function formatCompactRuntime(enteredAtEpochMs: number) {
@@ -3275,12 +3327,20 @@ function renderAtlasOcrEvidence(evidence: MapOcrEvidence) {
   const count = evidence.normalized_mods.length
     ? ` - ${evidence.normalized_mods.length}/${evidence.raw_lines.length || evidence.normalized_mods.length} lines`
     : "";
+  const summary = evidence.summary;
+  const summaryParts = summary ? [
+    summary.reward_lines.length ? `${summary.reward_lines.length} reward` : "",
+    summary.player_danger_lines.length ? `${summary.player_danger_lines.length} player-risk` : "",
+    summary.monster_danger_lines.length ? `${summary.monster_danger_lines.length} monster-risk` : "",
+    summary.content_flags.length ? summary.content_flags.join(", ") : "",
+  ].filter(Boolean) : [];
   const mods = evidence.normalized_mods.length
     ? evidence.normalized_mods.map((mod) => `<li>${escapeHtml(mod)}</li>`).join("")
     : `<li>${escapeHtml(evidence.reason ?? "No recognized map modifier lines yet.")}</li>`;
   return `
     <div class="atlas-ocr-evidence state-${escapeAttribute(evidence.state)}">
       <strong>Tab OCR: ${escapeHtml(evidence.state.replace("_", " "))}${escapeHtml(score)}${escapeHtml(count)}</strong>
+      ${summaryParts.length ? `<p>${escapeHtml(summaryParts.join(" · "))}</p>` : ""}
       <ul>${mods}</ul>
     </div>
   `;
