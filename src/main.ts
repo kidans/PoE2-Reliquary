@@ -52,6 +52,16 @@ import {
   type AtlasCompactLineState,
   type AtlasCompactSeverity,
 } from "./atlas-line-mode";
+import {
+  clearAtlasRunHistory as clearAtlasRunHistoryStorage,
+  completeAtlasRun as completeAtlasRunRecord,
+  incrementAtlasRunDeaths as incrementAtlasRunDeathsRecord,
+  loadAtlasRunHistory as loadAtlasRunHistoryStorage,
+  saveAtlasRunHistory as saveAtlasRunHistoryStorage,
+  upsertAtlasRun as upsertAtlasRunRecord,
+  type AtlasRunRecord,
+  type MapRunConfidence,
+} from "./atlas-run-history";
 import "./styles.css";
 
 type GuideStep = {
@@ -94,7 +104,6 @@ type CurrentAreaInfo = {
   boss: string | null;
 };
 
-type MapRunConfidence = "armed" | "area_only" | "stale" | "unknown" | "ocr_partial" | "ocr_confirmed";
 type MapOcrEvidenceState = "none" | "pending" | "partial" | "confirmed" | "locked";
 
 type HazardSummary = {
@@ -419,7 +428,6 @@ let campaignCompletedSteps = new Set<string>();
 let campaignCurrentZone = "";
 const CAMPAIGN_STORAGE_KEY = "reliquary.campaign.progress";
 const CAMPAIGN_ZONES_KEY = "reliquary.campaign.zones";
-const ATLAS_RUN_HISTORY_STORAGE_KEY = "reliquary.atlas.runHistory.v1";
 
 type MapRun = {
   name: string;
@@ -430,18 +438,6 @@ type MapRun = {
   deaths: number;
 };
 
-type AtlasRunRecord = {
-  id: string;
-  area: CurrentAreaInfo;
-  waystone: WaystoneSnapshot | null;
-  confidence: MapRunConfidence;
-  ocr_evidence: MapOcrEvidence | null;
-  started_at_epoch_ms: number;
-  completed_at_epoch_ms: number | null;
-  elapsed_ms: number;
-  deaths: number;
-};
-
 let activeCampaignSubTab: CampaignSubTab = "timer";
 let campaignSelectedAct = 1;
 let campaignZoneTimes: Map<string, number> = new Map();
@@ -449,6 +445,7 @@ let campaignCurrentZoneEnteredAt = 0;
 let campaignMapRuns: MapRun[] = [];
 let atlasRunHistory: AtlasRunRecord[] = [];
 let campaignResetConfirmHandle = 0;
+let atlasHistoryClearConfirmHandle = 0;
 
 const INTERLUDE_ZONE_MAP: Record<string, string> = {
   "scorched farmlands": "Interlude 5.1 — Ogham, The Refuge",
@@ -540,125 +537,31 @@ function loadCampaignZoneData() {
   } catch { /* ignore */ }
 }
 
-function atlasRunId(run: Pick<MapRunContext, "started_at_epoch_ms" | "area">) {
-  return `${run.started_at_epoch_ms}:${run.area.name}:${run.area.area_level ?? "?"}`;
-}
-
-function normalizeMapRunConfidence(value: unknown): MapRunConfidence {
-  if (
-    value === "armed" ||
-    value === "area_only" ||
-    value === "stale" ||
-    value === "unknown" ||
-    value === "ocr_partial" ||
-    value === "ocr_confirmed"
-  ) {
-    return value;
-  }
-  return "area_only";
-}
-
-function normalizeOcrEvidence(value: unknown): MapOcrEvidence | null {
-  if (!value || typeof value !== "object") return null;
-  const source = value as Partial<MapOcrEvidence>;
-  const state = source.state;
-  const isValidState = state === "none" || state === "pending" || state === "partial" || state === "confirmed" || state === "locked";
-  const summary = source.summary && typeof source.summary === "object" ? source.summary : null;
-  return {
-    state: isValidState ? state : "none",
-    normalized_mods: Array.isArray(source.normalized_mods) ? source.normalized_mods.map(String) : [],
-    raw_lines: Array.isArray(source.raw_lines) ? source.raw_lines.map(String) : [],
-    summary: summary ? {
-      modifier_count: typeof summary.modifier_count === "number" ? summary.modifier_count : 0,
-      reward_lines: Array.isArray(summary.reward_lines) ? summary.reward_lines.map(String) : [],
-      player_danger_lines: Array.isArray(summary.player_danger_lines) ? summary.player_danger_lines.map(String) : [],
-      monster_danger_lines: Array.isArray(summary.monster_danger_lines) ? summary.monster_danger_lines.map(String) : [],
-      content_flags: Array.isArray(summary.content_flags) ? summary.content_flags.map(String) : [],
-    } : null,
-    confidence_score: typeof source.confidence_score === "number" ? source.confidence_score : null,
-    reason: typeof source.reason === "string" ? source.reason : null,
-    captured_at_epoch_ms: typeof source.captured_at_epoch_ms === "number" ? source.captured_at_epoch_ms : 0,
-  };
-}
-
-function normalizeAtlasRunRecord(value: unknown): AtlasRunRecord | null {
-  if (!value || typeof value !== "object") return null;
-  const source = value as Partial<AtlasRunRecord>;
-  const area = source.area;
-  if (!area || typeof area !== "object" || typeof area.name !== "string") return null;
-  const started = typeof source.started_at_epoch_ms === "number" ? source.started_at_epoch_ms : area.entered_at_epoch_ms;
-  return {
-    id: typeof source.id === "string" ? source.id : atlasRunId({ area, started_at_epoch_ms: started }),
-    area,
-    waystone: source.waystone ?? null,
-    confidence: normalizeMapRunConfidence(source.confidence),
-    ocr_evidence: normalizeOcrEvidence(source.ocr_evidence),
-    started_at_epoch_ms: started,
-    completed_at_epoch_ms: typeof source.completed_at_epoch_ms === "number" ? source.completed_at_epoch_ms : null,
-    elapsed_ms: typeof source.elapsed_ms === "number" ? source.elapsed_ms : 0,
-    deaths: typeof source.deaths === "number" ? source.deaths : 0,
-  };
-}
-
 function saveAtlasRunHistory() {
-  try {
-    localStorage.setItem(ATLAS_RUN_HISTORY_STORAGE_KEY, JSON.stringify(atlasRunHistory.slice(0, 25)));
-  } catch { /* ignore */ }
+  try { saveAtlasRunHistoryStorage(localStorage, atlasRunHistory); } catch { /* ignore */ }
 }
 
 function loadAtlasRunHistory() {
-  try {
-    const raw = localStorage.getItem(ATLAS_RUN_HISTORY_STORAGE_KEY);
-    if (!raw) return;
-    const data = JSON.parse(raw);
-    atlasRunHistory = Array.isArray(data)
-      ? data.map(normalizeAtlasRunRecord).filter((run): run is AtlasRunRecord => Boolean(run)).slice(0, 25)
-      : [];
-  } catch { /* ignore */ }
+  try { atlasRunHistory = loadAtlasRunHistoryStorage(localStorage); } catch { /* ignore */ }
 }
 
 function upsertAtlasRun(run: MapRunContext) {
-  const id = atlasRunId(run);
-  const existing = atlasRunHistory.findIndex(record => record.id === id);
-  const previous = existing >= 0 ? atlasRunHistory[existing] : null;
-  const next: AtlasRunRecord = {
-    id,
-    area: run.area,
-    waystone: run.waystone,
-    confidence: run.confidence,
-    ocr_evidence: run.ocr_evidence ?? null,
-    started_at_epoch_ms: run.started_at_epoch_ms,
-    completed_at_epoch_ms: previous?.completed_at_epoch_ms ?? null,
-    elapsed_ms: previous?.elapsed_ms ?? 0,
-    deaths: previous?.deaths ?? 0,
-  };
-
-  if (existing >= 0) {
-    atlasRunHistory[existing] = next;
-  } else {
-    atlasRunHistory.unshift(next);
-  }
-  atlasRunHistory = atlasRunHistory.slice(0, 25);
+  atlasRunHistory = upsertAtlasRunRecord(atlasRunHistory, run);
   saveAtlasRunHistory();
 }
 
 function completeAtlasRun(run: MapRunContext | null, completedAtEpochMs: number) {
-  if (!run) return;
-  const id = atlasRunId(run);
-  const record = atlasRunHistory.find(entry => entry.id === id);
-  if (!record || record.completed_at_epoch_ms != null) return;
-  record.completed_at_epoch_ms = completedAtEpochMs;
-  record.elapsed_ms = Math.max(0, completedAtEpochMs - run.started_at_epoch_ms);
+  atlasRunHistory = completeAtlasRunRecord(atlasRunHistory, run, completedAtEpochMs);
   saveAtlasRunHistory();
 }
 
 function incrementAtlasRunDeaths(run: MapRunContext | null) {
-  if (!run) return;
-  const id = atlasRunId(run);
-  const record = atlasRunHistory.find(entry => entry.id === id);
-  if (!record) return;
-  record.deaths += 1;
+  atlasRunHistory = incrementAtlasRunDeathsRecord(atlasRunHistory, run);
   saveAtlasRunHistory();
+}
+
+function clearAtlasRunHistory() {
+  atlasRunHistory = clearAtlasRunHistoryStorage(localStorage);
 }
 
 function normalizeDeathRecord(record: unknown): Record<number, number> {
@@ -3408,12 +3311,18 @@ function renderAtlasFocusDashboard() {
 }
 
 function renderAtlasHistoryDashboard() {
+  const clearLabel = atlasHistoryClearConfirmHandle > 0 ? "Click again to clear" : "Clear History";
   if (!atlasRunHistory.length) {
     return `
       <div class="atlas-dashboard">
         <section class="atlas-card atlas-card-full">
-          <p class="section-label">Run History</p>
-          <h3>Mapping log</h3>
+          <div class="atlas-card-header-row">
+            <div>
+              <p class="section-label">Run History</p>
+              <h3>Mapping log</h3>
+            </div>
+            <button class="atlas-secondary-action" type="button" data-clear-atlas-history disabled>Clear History</button>
+          </div>
           <div class="empty-listing">No Atlas runs recorded yet. Enter a generated map to start the local run history.</div>
         </section>
       </div>
@@ -3424,16 +3333,23 @@ function renderAtlasHistoryDashboard() {
     const elapsed = run.elapsed_ms > 0 ? formatZoneTime(run.elapsed_ms) : "In progress";
     const waystone = run.waystone ? renderWaystoneStatsText(run.waystone) : "No armed waystone";
     const hazards = run.waystone?.profile_hazard_summary;
-    const hazardText = hazards ? `${hazards.build_breaking}/${hazards.danger}/${hazards.warning} risk` : "No waystone risk";
+    const hazardText = hazards ? `${hazards.build_breaking} breaking | ${hazards.danger} danger | ${hazards.warning} warning` : "No waystone risk";
+    const boss = run.area.boss ? `Boss: ${run.area.boss}` : "Boss unknown";
+    const source = run.ocr_evidence?.state === "confirmed"
+      ? `OCR ${run.ocr_evidence.normalized_mods.length} lines`
+      : mapConfidenceLabel(run.confidence);
+    const completed = run.completed_at_epoch_ms ? formatTimestamp(run.completed_at_epoch_ms) : "Active now";
     return `
       <article class="atlas-run-history-row confidence-${escapeAttribute(run.confidence)}">
         <div>
           <strong>${escapeHtml(run.area.name)}</strong>
-          <small>${escapeHtml(mapConfidenceLabel(run.confidence))} · ${escapeHtml(waystone)}</small>
+          <small>${escapeHtml(source)} | ${escapeHtml(waystone)}</small>
+          <small>${escapeHtml(boss)} | ${escapeHtml(formatTimestamp(run.started_at_epoch_ms))}</small>
         </div>
         <span>${escapeHtml(elapsed)}</span>
         <span>${run.deaths} deaths</span>
         <span>${escapeHtml(hazardText)}</span>
+        <span>${escapeHtml(completed)}</span>
       </article>
     `;
   }).join("");
@@ -3441,8 +3357,13 @@ function renderAtlasHistoryDashboard() {
   return `
     <div class="atlas-dashboard">
       <section class="atlas-card atlas-card-full">
-        <p class="section-label">Run History</p>
-        <h3>Mapping log</h3>
+        <div class="atlas-card-header-row">
+          <div>
+            <p class="section-label">Run History</p>
+            <h3>Mapping log</h3>
+          </div>
+          <button class="atlas-secondary-action${atlasHistoryClearConfirmHandle > 0 ? " confirm" : ""}" type="button" data-clear-atlas-history>${escapeHtml(clearLabel)}</button>
+        </div>
         <div class="atlas-run-history-list">${rows}</div>
       </section>
     </div>
@@ -3471,7 +3392,13 @@ function renderAtlasWarning(warning: WaystoneHazardWarning) {
   `;
 }
 
-function renderWaystoneStatsText(waystone: WaystoneSnapshot | null | undefined) {
+function renderWaystoneStatsText(waystone: {
+  tier: number | null;
+  quantity: number | null;
+  rarity: number | null;
+  pack_size: number | null;
+  hazard_count: number;
+} | null | undefined) {
   if (!waystone) return "Arm a waystone before entering a map.";
   const parts = [
     waystone.tier ? `T${waystone.tier}` : null,
@@ -4494,6 +4421,7 @@ if (!isListingPreviewWindow && leagueElement) {
     const campaignMapResetButton = target.closest<HTMLButtonElement>("[data-campaign-map-reset]");
     const clearPendingWaystoneButton = target.closest<HTMLButtonElement>("[data-clear-pending-waystone]");
     const requestMapOcrButton = target.closest<HTMLButtonElement>("[data-request-map-ocr]");
+    const clearAtlasHistoryButton = target.closest<HTMLButtonElement>("[data-clear-atlas-history]");
 
     const atlasSectionButton = target.closest<HTMLButtonElement>("[data-atlas-section]");
     if (atlasSectionButton?.dataset.atlasSection) {
@@ -4524,6 +4452,22 @@ if (!isListingPreviewWindow && leagueElement) {
       return;
     }
 
+    if (clearAtlasHistoryButton && !clearAtlasHistoryButton.disabled) {
+      if (atlasHistoryClearConfirmHandle > 0) {
+        window.clearTimeout(atlasHistoryClearConfirmHandle);
+        atlasHistoryClearConfirmHandle = 0;
+        clearAtlasRunHistory();
+        render();
+      } else {
+        atlasHistoryClearConfirmHandle = window.setTimeout(() => {
+          atlasHistoryClearConfirmHandle = 0;
+          render();
+        }, 3000);
+        render();
+      }
+      return;
+    }
+
     if (campaignSubTabButton?.dataset.campaignSubTab) {
       activeCampaignSubTab = campaignSubTabButton.dataset.campaignSubTab as CampaignSubTab;
       render();
@@ -4545,12 +4489,11 @@ if (!isListingPreviewWindow && leagueElement) {
         campaignResetConfirmHandle = 0;
         campaignZoneTimes.clear();
         campaignMapRuns = [];
-        atlasRunHistory = [];
+        clearAtlasRunHistory();
         campaignActTimes = [0, 0, 0, 0, 0, 0, 0, 0];
         campaignTotalMs = 0;
         state.deaths = {};
         saveCampaignZoneData();
-        saveAtlasRunHistory();
         saveCampaignProgress();
         render();
       } else {
@@ -4568,9 +4511,8 @@ if (!isListingPreviewWindow && leagueElement) {
         window.clearTimeout(campaignResetConfirmHandle);
         campaignResetConfirmHandle = 0;
         campaignMapRuns = [];
-        atlasRunHistory = [];
+        clearAtlasRunHistory();
         saveCampaignZoneData();
-        saveAtlasRunHistory();
         render();
       } else {
         campaignResetConfirmHandle = window.setTimeout(() => {
@@ -5299,6 +5241,9 @@ if (!isListingPreviewWindow && leagueElement) {
       state.current_area = initialState.current_area || null;
       state.pending_waystone = initialState.pending_waystone || null;
       state.active_map_run = initialState.active_map_run || null;
+      if (state.active_map_run) {
+        upsertAtlasRun(state.active_map_run);
+      }
       state.world_area_status = initialState.world_area_status || state.world_area_status;
       if (state.current_area) {
         const rawAct = state.current_area.act ?? 0;

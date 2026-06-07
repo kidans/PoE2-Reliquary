@@ -247,6 +247,12 @@ Make Atlas Run History real, not placeholder text.
 - Add localStorage migration/normalization tests if logic is extracted.
 - Verify old saved map runs without `deaths` or `confidence` still load safely.
 
+### Implementation Status
+
+- Added a dedicated `src/atlas-run-history.ts` persistence/normalization module.
+- Atlas history now loads old records safely, preserves OCR evidence, keeps death counts, completes elapsed time when leaving maps, and can be cleared from the Atlas History panel without touching campaign timers.
+- Added Vitest coverage for old save migration, OCR evidence persistence, death increments, completion timing, clear behavior, and history caps.
+
 ## Phase 3: Build-Aware Hazard Profiles V2
 
 ### Objective
