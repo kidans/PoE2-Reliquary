@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     env, fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -483,7 +483,7 @@ fn read_overlay_capture(
 }
 
 #[cfg(target_os = "windows")]
-fn windows_ocr_script(image_path: &PathBuf, rect: OcrCaptureRect) -> String {
+fn windows_ocr_script(image_path: &Path, rect: OcrCaptureRect) -> String {
     let image_path = image_path.display().to_string().replace('\'', "''");
     format!(
         r#"

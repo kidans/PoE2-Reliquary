@@ -2,7 +2,7 @@ use std::{
     env,
     fs::{self, OpenOptions},
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -115,8 +115,8 @@ fn rotate_if_needed(log_path: &PathBuf) -> Result<(), String> {
     fs::rename(log_path, rotated_path).map_err(|error| error.to_string())
 }
 
-fn rotated_log_path(log_path: &PathBuf) -> PathBuf {
-    let mut rotated = log_path.clone().into_os_string();
+fn rotated_log_path(log_path: &Path) -> PathBuf {
+    let mut rotated = log_path.to_path_buf().into_os_string();
     rotated.push(format!(".{ROTATED_LOG_SUFFIX}"));
     PathBuf::from(rotated)
 }

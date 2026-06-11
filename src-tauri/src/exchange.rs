@@ -18,6 +18,7 @@ const POE_NINJA_STASH_OVERVIEW_URL: &str =
     "https://poe.ninja/poe2/api/economy/stash/current/item/overview";
 const POE_NINJA_INDEX_STATE_URL: &str = "https://poe.ninja/poe2/api/data/index-state";
 const EXCHANGE_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+const EXCHANGE_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const DEFAULT_CATEGORY_ID: &str = "currency";
 
 static EXCHANGE_CATEGORY_MANIFEST: &[ExchangeCategoryManifestEntry] = &[
@@ -714,6 +715,7 @@ async fn fetch_exchange_overview(
 
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 poe-ninja-exchange")
+        .timeout(EXCHANGE_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -1130,7 +1132,7 @@ async fn fetch_poe_ninja_league_slug(client: &reqwest::Client, league: &str) -> 
     let slug = response
         .economy_leagues
         .into_iter()
-        .chain(response.old_economy_leagues.into_iter())
+        .chain(response.old_economy_leagues)
         .find(|candidate| {
             candidate.name.eq_ignore_ascii_case(&needle)
                 || candidate

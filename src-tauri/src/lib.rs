@@ -1,6 +1,6 @@
 use std::{
     env,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, RwLock,
@@ -11,6 +11,7 @@ use std::{
 
 use crate::price_check::ModTierInfo;
 use arboard::Clipboard;
+use once_cell::sync::Lazy;
 use rdev::{listen, EventType, Key};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -68,8 +69,8 @@ impl Default for HotkeyConfig {
     }
 }
 
-static HOTKEY_CONFIG: std::sync::LazyLock<RwLock<HotkeyConfig>> =
-    std::sync::LazyLock::new(|| RwLock::new(HotkeyConfig::default()));
+static HOTKEY_CONFIG: Lazy<RwLock<HotkeyConfig>> =
+    Lazy::new(|| RwLock::new(HotkeyConfig::default()));
 const LEAGUE_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const BUILD_PROFILE_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const COMPACT_WINDOW_WIDTH: f64 = 560.0;
@@ -721,7 +722,7 @@ fn set_scan_window_height(window: tauri::Window, content_height: f64) -> Result<
 
 #[tauri::command]
 fn set_compact_window_height(window: tauri::Window, content_height: f64) -> Result<(), String> {
-    let height = content_height.ceil().max(COMPACT_WINDOW_HEIGHT).min(600.0);
+    let height = content_height.ceil().clamp(COMPACT_WINDOW_HEIGHT, 600.0);
     let position = snapped_window_position(&window, "compact", COMPACT_WINDOW_WIDTH, height)?;
     window
         .set_size(Size::Logical(LogicalSize::new(
@@ -1429,6 +1430,26 @@ fn kick_buyer(buyer_name: String) -> Result<(), String> {
 
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
+    let parsed = url::Url::parse(&url).map_err(|_| "invalid external URL".to_string())?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "external URL must include a host".to_string())?;
+    let allowed_host = matches!(
+        host,
+        "pathofexile.com"
+            | "www.pathofexile.com"
+            | "poe.ninja"
+            | "www.poe.ninja"
+            | "assets.poe.ninja"
+            | "poe2db.tw"
+            | "cdn.poe2db.tw"
+            | "repoe-fork.github.io"
+            | "web.poecdn.com"
+    );
+    if parsed.scheme() != "https" || !allowed_host {
+        return Err("external URL is not in Reliquary's trusted source allowlist".to_string());
+    }
+
     webbrowser::open(&url)
         .map(|_| ())
         .map_err(|error| error.to_string())
@@ -2420,6 +2441,11 @@ fn handle_global_input_event(
 
             if let Some((mode, active_scan_key, active_scan_mod)) = scan_request {
                 let needs_simulate = active_scan_key != Key::KeyC || active_scan_mod != "Ctrl";
+                let clipboard_before_simulation = needs_simulate
+                    .then(read_clipboard_text)
+                    .transpose()
+                    .unwrap_or_default()
+                    .unwrap_or_default();
                 if needs_simulate {
                     SIMULATING.store(true, Ordering::SeqCst);
                     let _ = rdev::simulate(&EventType::KeyPress(Key::ControlLeft));
@@ -2430,7 +2456,10 @@ fn handle_global_input_event(
                     SIMULATING.store(false, Ordering::SeqCst);
                 }
                 let before = read_clipboard_text().unwrap_or_default();
-                if !before.trim().is_empty() && looks_like_poe_item_buffer(&before) {
+                if !needs_simulate
+                    && !before.trim().is_empty()
+                    && looks_like_poe_item_buffer(&before)
+                {
                     let _ = input_tx.send(InputAction::ClipboardScan {
                         raw_text: before,
                         mode,
@@ -2440,14 +2469,17 @@ fn handle_global_input_event(
                 for _ in 0..25 {
                     thread::sleep(Duration::from_millis(20));
                     match read_clipboard_text() {
-                        Ok(text) if !text.trim().is_empty() && text != before => {
-                            if looks_like_poe_item_buffer(&text) {
-                                let _ = input_tx.send(InputAction::ClipboardScan {
-                                    raw_text: text,
-                                    mode,
-                                });
-                                return;
-                            }
+                        Ok(text)
+                            if !text.trim().is_empty()
+                                && text != before
+                                && (!needs_simulate || text != clipboard_before_simulation)
+                                && looks_like_poe_item_buffer(&text) =>
+                        {
+                            let _ = input_tx.send(InputAction::ClipboardScan {
+                                raw_text: text,
+                                mode,
+                            });
+                            return;
                         }
                         _ => {}
                     }
@@ -2554,7 +2586,7 @@ fn active_poe2_overlay_capture_rect() -> Option<map_ocr::OcrCaptureRect> {
             return None;
         }
 
-        find_poe2_window_by_pid(pid).and_then(|poe_hwnd| capture_rect_for_window(poe_hwnd))
+        find_poe2_window_by_pid(pid).and_then(capture_rect_for_window)
     }
 }
 
@@ -2828,7 +2860,7 @@ fn find_poe2_process() -> Option<u32> {
 
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if snapshot == INVALID_HANDLE_VALUE as isize {
+        if snapshot == INVALID_HANDLE_VALUE {
             return None;
         }
 
@@ -3529,39 +3561,6 @@ fn now_epoch_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn parse_waystone_number(lines: &[String], needle: &str) -> Option<u32> {
-    let needle = needle.to_ascii_lowercase();
-    for line in lines {
-        let lower = line.to_ascii_lowercase();
-        if lower.contains(&needle) {
-            if let Some(num) = lower.split_whitespace().find_map(|w| {
-                w.trim_end_matches('%')
-                    .trim_end_matches('+')
-                    .parse::<u32>()
-                    .ok()
-            }) {
-                return Some(num);
-            }
-        }
-    }
-    None
-}
-
-fn parse_waystone_number_from_text(text: &str, needle: &str) -> Option<u32> {
-    let needle = needle.to_ascii_lowercase();
-    let lower = text.to_ascii_lowercase();
-    if lower.contains(&needle) {
-        lower.split_whitespace().find_map(|w| {
-            w.trim_end_matches('%')
-                .trim_end_matches('+')
-                .parse::<u32>()
-                .ok()
-        })
-    } else {
-        None
-    }
-}
-
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -3569,7 +3568,6 @@ static WORLD_AREAS: OnceLock<HashMap<String, AreaMeta>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 struct AreaMeta {
-    biome: Option<String>,
     boss: Option<String>,
     act: Option<u32>,
     name: Option<String>,
@@ -3581,9 +3579,8 @@ fn init_world_areas() -> WorldAreaStatus {
     let mut fetch_error: Option<String> = None;
 
     let data = if world_areas_cache_is_fresh(&path) {
-        read_cached_world_areas(&path).map(|map| {
+        read_cached_world_areas(&path).inspect(|_| {
             source = "cache";
-            map
         })
     } else {
         match fetch_world_areas_cache(&path) {
@@ -3593,9 +3590,8 @@ fn init_world_areas() -> WorldAreaStatus {
             }
             Err(error) => {
                 fetch_error = Some(error);
-                read_cached_world_areas(&path).map(|map| {
+                read_cached_world_areas(&path).inspect(|_| {
                     source = "stale-cache";
-                    map
                 })
             }
         }
@@ -3629,14 +3625,14 @@ fn init_world_areas() -> WorldAreaStatus {
     status
 }
 
-fn read_cached_world_areas(path: &PathBuf) -> Option<HashMap<String, AreaMeta>> {
+fn read_cached_world_areas(path: &Path) -> Option<HashMap<String, AreaMeta>> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|text| parse_world_areas(&text))
         .filter(|map| !map.is_empty())
 }
 
-fn world_areas_cache_is_fresh(path: &PathBuf) -> bool {
+fn world_areas_cache_is_fresh(path: &Path) -> bool {
     path.metadata()
         .ok()
         .and_then(|metadata| metadata.modified().ok())
@@ -3714,15 +3710,7 @@ fn parse_world_areas(data: &str) -> Option<HashMap<String, AreaMeta>> {
             .filter_map(|t| t.as_str().map(String::from))
             .collect();
 
-        let is_map = tags.contains(&"map".to_string());
-
-        let biome = is_map
-            .then(|| {
-                tags.iter()
-                    .find(|t| t.ends_with("_biome"))
-                    .map(|t| t.trim_end_matches("_biome").replace('_', " "))
-            })
-            .flatten();
+        let is_map = tags.iter().any(|tag| tag == "map");
 
         let boss_path = is_map
             .then(|| {
@@ -3752,7 +3740,6 @@ fn parse_world_areas(data: &str) -> Option<HashMap<String, AreaMeta>> {
         map.insert(
             id.clone(),
             AreaMeta {
-                biome: biome.filter(|b| !b.is_empty()),
                 boss: boss_path,
                 act,
                 name: area_name,

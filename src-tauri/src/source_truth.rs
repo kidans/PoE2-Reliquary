@@ -6,7 +6,7 @@ use std::{
     fs,
     path::PathBuf,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use crate::{debug_log, DataLeague, LeagueCatalogEntry, TradeLeague};
@@ -23,6 +23,7 @@ const POE_NINJA_INDEX_STATE_URL: &str = "https://poe.ninja/poe2/api/data/index-s
 const TRADE_API_BASE: &str = "https://www.pathofexile.com/api/trade2";
 const POE2DB_CACHE_FILE: &str = "poe2db-source-truth-v1.json";
 const POE2DB_CACHE_TTL_MS: u64 = 30 * 60 * 1000;
+const SOURCE_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const FALLBACK_MOD_TIER_SLUGS: &[&str] = &[
     "Claws",
     "Daggers",
@@ -531,6 +532,7 @@ pub fn classify_item_class(item_class: Option<&str>) -> &'static str {
 pub async fn fetch_poe2db_leagues() -> Result<Vec<DataLeague>, String> {
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 poe2db-league-listener")
+        .timeout(SOURCE_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -616,6 +618,7 @@ pub async fn refresh_poe2db_data_snapshot(force: bool) -> Result<Poe2DbDataSnaps
     let client = Arc::new(
         reqwest::Client::builder()
             .user_agent("Reliquary/0.1 poe2db-source-truth")
+            .timeout(SOURCE_REQUEST_TIMEOUT)
             .build()
             .map_err(|error| error.to_string())?,
     );
@@ -875,6 +878,7 @@ pub fn print_poe2db_snapshot_cli(args: &[String]) -> Result<(), String> {
 pub async fn fetch_poe2db_mod_tiers(slug_or_url: &str) -> Result<Poe2DbModTierPage, String> {
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 poe2db-mod-tiers")
+        .timeout(SOURCE_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?;
     fetch_poe2db_mod_tiers_with_client(slug_or_url, &client).await
@@ -911,6 +915,7 @@ async fn fetch_poe2db_mod_tiers_with_client(
 async fn fetch_poe2db_modifier_slugs() -> Result<Vec<String>, String> {
     let html = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 poe2db-modifier-index")
+        .timeout(SOURCE_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?
         .get(POE2DB_MODIFIERS_URL)
@@ -929,6 +934,7 @@ async fn fetch_poe2db_modifier_slugs() -> Result<Vec<String>, String> {
 async fn fetch_repoe_mod_pages() -> Result<Vec<Poe2DbModTierPage>, String> {
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 repoe-source-truth")
+        .timeout(SOURCE_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -1067,6 +1073,7 @@ fn repoe_cache_path(cache_file: &str) -> PathBuf {
 async fn fetch_trade_leagues() -> Result<Vec<TradeLeague>, String> {
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 league-cli")
+        .timeout(SOURCE_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -1095,6 +1102,7 @@ async fn fetch_trade_leagues() -> Result<Vec<TradeLeague>, String> {
 async fn fetch_poe_ninja_leagues() -> Result<Vec<PoeNinjaLeague>, String> {
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 poe-ninja-index-state")
+        .timeout(SOURCE_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -1966,8 +1974,7 @@ fn split_expansion(raw_name: &str) -> (String, String) {
 
 fn clean_cell(value: &str) -> String {
     decode_html_entities(value)
-        .replace('\n', " ")
-        .replace('\r', " ")
+        .replace(['\n', '\r'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

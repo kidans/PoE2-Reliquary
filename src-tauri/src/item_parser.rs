@@ -207,9 +207,7 @@ fn normalize_search_base_type(
     family: &str,
     raw_text: &str,
 ) -> Option<String> {
-    let Some(base_type) = base_type else {
-        return None;
-    };
+    let base_type = base_type?;
 
     if family == "waystone" || base_type.eq_ignore_ascii_case("waystone") {
         if let Some(tier) = WAYSTONE_TIER_RE

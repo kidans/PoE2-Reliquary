@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Read, sync::Mutex as StdMutex};
+use std::{collections::HashMap, io::Read, sync::Mutex as StdMutex, time::Duration};
 
 use base64::{
     engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE, URL_SAFE_NO_PAD},
@@ -14,6 +14,7 @@ const POE_NINJA_INDEX_STATE_URL: &str = "https://poe.ninja/poe2/api/data/index-s
 const POE_NINJA_BUILD_CHARACTER_URL_PREFIX: &str = "https://poe.ninja/poe2/api/builds";
 const POE_NINJA_PROFILE_CACHE_TTL_MS: u64 = 60 * 60 * 1000;
 const POE_NINJA_USER_AGENT: &str = "Reliquary/0.1 poe-ninja-build-profile";
+const POE_NINJA_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 
 static POE_NINJA_PROFILE_CACHE: Lazy<StdMutex<HashMap<String, CachedPoeNinjaProfile>>> =
     Lazy::new(|| StdMutex::new(HashMap::new()));
@@ -213,6 +214,7 @@ async fn fetch_poe_ninja_profile(
 ) -> Result<BuildProfileImportResult, String> {
     let client = reqwest::Client::builder()
         .user_agent(POE_NINJA_USER_AGENT)
+        .timeout(POE_NINJA_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?;
     let index_state = fetch_poe_ninja_index_state(&client).await?;
@@ -899,7 +901,7 @@ fn clean_bracketed_markup(value: &str) -> String {
                 inside_tag = false;
                 let label = tag_text
                     .split('|')
-                    .last()
+                    .next_back()
                     .unwrap_or(tag_text.as_str())
                     .trim();
                 cleaned.push_str(label);

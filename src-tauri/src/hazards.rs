@@ -84,11 +84,6 @@ pub fn load_hazard_catalog(path: impl AsRef<Path>) -> Result<HazardCatalog, Stri
     serde_json::from_str(&contents).map_err(|error| error.to_string())
 }
 
-pub fn load_hazard_profiles(path: impl AsRef<Path>) -> Result<Vec<HazardProfile>, String> {
-    let contents = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    serde_json::from_str(&contents).map_err(|error| error.to_string())
-}
-
 pub fn default_hazard_profiles() -> Vec<HazardProfile> {
     vec![
         HazardProfile {

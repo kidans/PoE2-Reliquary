@@ -119,7 +119,7 @@ impl MapRunContext {
 
 pub fn is_waystone_item(item: &Item) -> bool {
     item.family == "waystone"
-        || item.base_type.as_deref().map_or(false, |base_type| {
+        || item.base_type.as_deref().is_some_and(|base_type| {
             let base_type = base_type.to_ascii_lowercase();
             base_type.contains("waystone") || base_type.contains("tablet")
         })

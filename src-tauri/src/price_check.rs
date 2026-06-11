@@ -27,6 +27,7 @@ const MAX_LISTINGS: usize = 50;
 const MAX_FETCH_BATCH: usize = 10;
 const INITIAL_FETCH_COUNT: usize = 10;
 const MAX_EXCHANGE_CURRENCIES_PER_REQUEST: usize = 10;
+const NETWORK_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const PRICE_CHECK_CACHE_TTL: Duration = Duration::from_secs(10);
 const CURRENCY_META_CACHE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 const EXCHANGE_RATES_CACHE_TTL: Duration = Duration::from_secs(60);
@@ -116,6 +117,7 @@ pub(crate) struct PriceCheckContinuation {
 pub async fn fetch_trade_leagues() -> Result<Vec<TradeLeague>, String> {
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 league-loader")
+        .timeout(NETWORK_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -295,6 +297,7 @@ async fn request_price_check(
 
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 price-check")
+        .timeout(NETWORK_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| TradeApiError {
             message: error.to_string(),
@@ -581,6 +584,7 @@ pub async fn load_more_price_check_results(
 
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 price-check")
+        .timeout(NETWORK_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -635,7 +639,7 @@ pub async fn load_more_price_check_results(
             listings,
             error: None,
         },
-        continuation: (!pending_ids.is_empty()).then(|| PriceCheckContinuation {
+        continuation: (!pending_ids.is_empty()).then_some(PriceCheckContinuation {
             remaining_result_ids: pending_ids,
             ..continuation
         }),
@@ -1389,8 +1393,6 @@ fn format_price(amount: f64, currency: &str) -> String {
         format!("{amount:.0}")
     } else if amount >= 10.0 {
         format!("{amount:.1}")
-    } else if amount >= 1.0 {
-        format!("{amount:.2}")
     } else if amount >= 0.01 {
         format!("{amount:.2}")
     } else {
@@ -1503,6 +1505,7 @@ async fn fetch_currency_meta_live() -> Result<Vec<CurrencyMeta>, String> {
 
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 poe2db-currency-icons")
+        .timeout(NETWORK_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -1551,6 +1554,7 @@ async fn fetch_currency_meta_live() -> Result<Vec<CurrencyMeta>, String> {
 async fn fetch_trade_static_currency_meta() -> Result<Vec<CurrencyMeta>, String> {
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 trade-static-currencies")
+        .timeout(NETWORK_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -1613,6 +1617,7 @@ async fn fetch_trade_stats() -> Result<Vec<TradeStatEntry>, String> {
 
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 trade-stat-loader")
+        .timeout(NETWORK_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -1708,6 +1713,7 @@ async fn fetch_exchange_rates_live(
 ) -> Result<CurrencyRates, String> {
     let client = reqwest::Client::builder()
         .user_agent("Reliquary/0.1 currency-exchange")
+        .timeout(NETWORK_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?;
     let selected_currency = canonical_currency_id(selected_currency);
@@ -2293,20 +2299,6 @@ struct ExtendedData {
     mods: serde_json::Value,
     #[serde(default)]
     hashes: serde_json::Value,
-    #[serde(default)]
-    text: Option<String>,
-    #[serde(default)]
-    ar: Option<f64>,
-    #[serde(default)]
-    es: Option<f64>,
-    #[serde(default)]
-    ev: Option<f64>,
-    #[serde(default)]
-    dps: Option<f64>,
-    #[serde(default)]
-    pdps: Option<f64>,
-    #[serde(default)]
-    edps: Option<f64>,
 }
 
 impl ExtendedData {
@@ -3067,13 +3059,6 @@ mod tests {
         ExtendedData {
             mods,
             hashes: json!({}),
-            text: None,
-            ar: None,
-            es: None,
-            ev: None,
-            dps: None,
-            pdps: None,
-            edps: None,
         }
     }
 }
