@@ -30,6 +30,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetWindowThreadProcessId, IsWindowVisible,
 };
 
+mod build_profile;
 pub mod debug_log;
 mod exchange;
 mod hazards;
@@ -48,6 +49,8 @@ pub type SharedAppState = Arc<Mutex<AppState>>;
 struct HotkeyConfig {
     scan_key: char,
     scan_mod: String,
+    waystone_key: char,
+    waystone_mod: String,
     trade_key: char,
     trade_mod: String,
 }
@@ -57,6 +60,8 @@ impl Default for HotkeyConfig {
         Self {
             scan_key: 'C',
             scan_mod: "Ctrl".to_string(),
+            waystone_key: 'W',
+            waystone_mod: "Alt".to_string(),
             trade_key: 'D',
             trade_mod: "Alt".to_string(),
         }
@@ -66,8 +71,9 @@ impl Default for HotkeyConfig {
 static HOTKEY_CONFIG: std::sync::LazyLock<RwLock<HotkeyConfig>> =
     std::sync::LazyLock::new(|| RwLock::new(HotkeyConfig::default()));
 const LEAGUE_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
-const COMPACT_WINDOW_WIDTH: f64 = 472.0;
-const COMPACT_WINDOW_HEIGHT: f64 = 56.0;
+const BUILD_PROFILE_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const COMPACT_WINDOW_WIDTH: f64 = 560.0;
+const COMPACT_WINDOW_HEIGHT: f64 = 40.0;
 const IDLE_WINDOW_WIDTH: f64 = 614.0;
 const IDLE_WINDOW_HEIGHT: f64 = 346.0;
 const DEFAULT_WINDOW_WIDTH: f64 = 546.0;
@@ -94,6 +100,8 @@ static LISTING_PREVIEW_VISIBLE: AtomicBool = AtomicBool::new(false);
 static LISTING_PREVIEW_SHOWN_AT_MS: AtomicU64 = AtomicU64::new(0);
 const REPOE_WORLD_AREAS_URL: &str = "https://repoe-fork.github.io/poe2/world_areas.min.json";
 const REPOE_WORLD_AREAS_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+const PROFILE_STATE_VERSION: u32 = 1;
+const PROFILE_STATE_FILE: &str = "profile-state.json";
 const SNAP_MARGIN: f64 = 8.0;
 const FULL_SNAP_LEFT: f64 = 0.0;
 const FULL_SNAP_TOP_RATIO: f64 = 0.09;
@@ -162,6 +170,8 @@ pub struct AppState {
     pub pending_waystone: Option<map_context::WaystoneSnapshot>,
     pub active_map_run: Option<map_context::MapRunContext>,
     pub hazard_profile_id: String,
+    pub build_snapshot: Option<build_profile::BuildSnapshot>,
+    pub build_fingerprint: Option<build_profile::BuildFingerprint>,
     pub world_area_status: WorldAreaStatus,
     pub trade_league: String,
     pub league_catalog: Vec<LeagueCatalogEntry>,
@@ -174,6 +184,8 @@ pub struct AppState {
     pub price_option: String,
     pub active_price_filters: Vec<ActivePriceFilter>,
     pub deaths: std::collections::HashMap<u32, u32>,
+    #[serde(skip)]
+    hazard_profile_user_selected: bool,
     #[serde(skip)]
     pub trade_league_locked: bool,
     #[serde(skip)]
@@ -188,6 +200,10 @@ pub struct AppState {
     scan_key: char,
     #[serde(skip)]
     scan_mod: String,
+    #[serde(skip)]
+    waystone_key: char,
+    #[serde(skip)]
+    waystone_mod: String,
     #[serde(skip)]
     trade_key: char,
     #[serde(skip)]
@@ -209,11 +225,111 @@ impl AppState {
             trade_league_locked: configured_league.is_some(),
             scan_key: 'C',
             scan_mod: "Ctrl".to_string(),
+            waystone_key: 'W',
+            waystone_mod: "Alt".to_string(),
             trade_key: 'D',
             trade_mod: "Alt".to_string(),
             ..Self::default()
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedProfileState {
+    version: u32,
+    saved_at_epoch_ms: u64,
+    hazard_profile_id: String,
+    hazard_profile_user_selected: bool,
+    build_profile: Option<build_profile::BuildProfileImportResult>,
+}
+
+fn persisted_profile_state_from_app_state(state: &AppState) -> PersistedProfileState {
+    PersistedProfileState {
+        version: PROFILE_STATE_VERSION,
+        saved_at_epoch_ms: now_epoch_ms(),
+        hazard_profile_id: state.hazard_profile_id.clone(),
+        hazard_profile_user_selected: state.hazard_profile_user_selected,
+        build_profile: state
+            .build_snapshot
+            .clone()
+            .zip(state.build_fingerprint.clone())
+            .map(
+                |(snapshot, fingerprint)| build_profile::BuildProfileImportResult {
+                    snapshot,
+                    fingerprint,
+                },
+            ),
+    }
+}
+
+fn hydrate_profile_state(state: &mut AppState, persisted: PersistedProfileState) {
+    let build_profile = persisted.build_profile;
+    let recommended_profile_id = build_profile
+        .as_ref()
+        .map(|profile| profile.fingerprint.recommended_profile_id.as_str());
+    let selected_profile_id = if persisted.hazard_profile_user_selected {
+        persisted.hazard_profile_id.as_str()
+    } else {
+        recommended_profile_id.unwrap_or(persisted.hazard_profile_id.as_str())
+    };
+    let selected_profile = hazards::profile_by_id(selected_profile_id);
+
+    state.hazard_profile_id = selected_profile.id;
+    state.hazard_profile_user_selected = persisted.hazard_profile_user_selected;
+
+    if let Some(profile) = build_profile {
+        state.build_snapshot = Some(profile.snapshot);
+        state.build_fingerprint = Some(profile.fingerprint);
+    }
+}
+
+fn load_profile_state_into(state: &mut AppState) {
+    let path = profile_state_path();
+    match read_persisted_profile_state(&path) {
+        Ok(Some(persisted)) => {
+            hydrate_profile_state(state, persisted);
+            debug_log::append(
+                "profile.persist.loaded",
+                serde_json::json!({
+                    "path": path.display().to_string(),
+                    "hazard_profile_id": state.hazard_profile_id,
+                    "has_build_snapshot": state.build_snapshot.is_some(),
+                    "manual_profile": state.hazard_profile_user_selected,
+                }),
+            );
+        }
+        Ok(None) => {}
+        Err(error) => {
+            debug_log::append(
+                "profile.persist.load_failed",
+                serde_json::json!({
+                    "error": error,
+                    "path": path.display().to_string(),
+                }),
+            );
+        }
+    }
+}
+
+fn read_persisted_profile_state(path: &PathBuf) -> Result<Option<PersistedProfileState>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str::<PersistedProfileState>(&text)
+            .map(Some)
+            .map_err(|error| error.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn write_persisted_profile_state(
+    path: &PathBuf,
+    persisted: &PersistedProfileState,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(persisted).map_err(|error| error.to_string())?;
+    std::fs::write(path, json).map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -427,8 +543,17 @@ struct WorkerStatus<'a> {
     message: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipboardScanMode {
+    Item,
+    Waystone,
+}
+
 enum InputAction {
-    ClipboardScan(String),
+    ClipboardScan {
+        raw_text: String,
+        mode: ClipboardScanMode,
+    },
     OpenTradeSearch,
     ReadMapOverlayOcr,
     DismissListingPreview,
@@ -510,17 +635,23 @@ async fn set_keybinds(
     state: tauri::State<'_, SharedAppState>,
     scan_mod: String,
     scan_key: String,
+    waystone_mod: String,
+    waystone_key: String,
     trade_mod: String,
     trade_key: String,
 ) -> Result<(), String> {
     let normalized_scan_key = normalize_shortcut_key(&scan_key, 'C');
+    let normalized_waystone_key = normalize_shortcut_key(&waystone_key, 'W');
     let normalized_trade_key = normalize_shortcut_key(&trade_key, 'D');
     let normalized_scan_mod = normalize_shortcut_modifier(&scan_mod, "Ctrl");
+    let normalized_waystone_mod = normalize_shortcut_modifier(&waystone_mod, "Alt");
     let normalized_trade_mod = normalize_shortcut_modifier(&trade_mod, "Alt");
 
     let mut locked = state.lock().await;
     locked.scan_mod = normalized_scan_mod.clone();
     locked.scan_key = normalized_scan_key;
+    locked.waystone_mod = normalized_waystone_mod.clone();
+    locked.waystone_key = normalized_waystone_key;
     locked.trade_mod = normalized_trade_mod.clone();
     locked.trade_key = normalized_trade_key;
     std::mem::drop(locked);
@@ -528,6 +659,8 @@ async fn set_keybinds(
     if let Ok(mut hotkeys) = HOTKEY_CONFIG.write() {
         hotkeys.scan_mod = normalized_scan_mod;
         hotkeys.scan_key = normalized_scan_key;
+        hotkeys.waystone_mod = normalized_waystone_mod;
+        hotkeys.waystone_key = normalized_waystone_key;
         hotkeys.trade_mod = normalized_trade_mod;
         hotkeys.trade_key = normalized_trade_key;
     }
@@ -751,8 +884,103 @@ async fn set_hazard_profile(
     let mut active_area = None;
     let profile_id = selected.id.clone();
 
-    {
+    let persist_snapshot = {
         let mut locked_state = state.lock().await;
+        locked_state.hazard_profile_id = profile_id.clone();
+        locked_state.hazard_profile_user_selected = true;
+
+        if let Some(snapshot) = locked_state.pending_waystone.as_ref() {
+            let refreshed = map_context::refresh_snapshot_hazards(snapshot, &profile_id);
+            locked_state.pending_waystone = Some(refreshed.clone());
+            pending = Some(refreshed);
+        }
+
+        if let Some(run) = locked_state.active_map_run.as_mut() {
+            if let Some(waystone) = run.waystone.as_ref() {
+                let refreshed = map_context::refresh_snapshot_hazards(waystone, &profile_id);
+                run.area.waystone_hazard_count = Some(refreshed.profile_hazard_summary.total());
+                run.waystone = Some(refreshed);
+                active_area = Some(run.area.clone());
+                active_map_run = Some(run.clone());
+            }
+        }
+
+        if let Some(area) = active_area.as_ref() {
+            locked_state.current_area = Some(area.clone());
+        }
+
+        persisted_profile_state_from_app_state(&locked_state)
+    };
+
+    if let Err(error) = write_persisted_profile_state(&profile_state_path(), &persist_snapshot) {
+        debug_log::append(
+            "profile.persist.failed",
+            serde_json::json!({
+                "error": error,
+                "path": profile_state_path().display().to_string(),
+                "source": "set_hazard_profile",
+            }),
+        );
+    }
+
+    let _ = app_handle.emit("scan://hazard-profile-updated", selected.id.clone());
+
+    if let Some(snapshot) = pending {
+        let _ = app_handle.emit("scan://pending-waystone-updated", snapshot);
+    }
+
+    if let Some(area) = active_area {
+        let _ = app_handle.emit("scan://area-updated", area);
+    }
+
+    if let Some(map_run) = active_map_run {
+        let _ = app_handle.emit("scan://map-run-updated", map_run);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn import_poe_ninja_build_url(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, SharedAppState>,
+    url: String,
+) -> Result<build_profile::BuildProfileImportResult, String> {
+    let result = build_profile::snapshot_from_poe_ninja_url_live(&url, now_epoch_ms()).await?;
+    apply_build_profile_import(&app_handle, state.inner(), result, true).await
+}
+
+#[tauri::command]
+async fn import_pob_build_text(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, SharedAppState>,
+    text: String,
+) -> Result<build_profile::BuildProfileImportResult, String> {
+    let result = build_profile::snapshot_from_pob_text(&text, now_epoch_ms())?;
+    apply_build_profile_import(&app_handle, state.inner(), result, true).await
+}
+
+async fn apply_build_profile_import(
+    app_handle: &tauri::AppHandle,
+    state: &SharedAppState,
+    result: build_profile::BuildProfileImportResult,
+    force_recommended_profile: bool,
+) -> Result<build_profile::BuildProfileImportResult, String> {
+    let mut pending = None;
+    let mut active_map_run = None;
+    let mut active_area = None;
+
+    let (profile_id, persist_snapshot) = {
+        let mut locked_state = state.lock().await;
+        let profile_id = if force_recommended_profile || !locked_state.hazard_profile_user_selected
+        {
+            locked_state.hazard_profile_user_selected = false;
+            hazards::profile_by_id(&result.fingerprint.recommended_profile_id).id
+        } else {
+            hazards::profile_by_id(&locked_state.hazard_profile_id).id
+        };
+        locked_state.build_snapshot = Some(result.snapshot.clone());
+        locked_state.build_fingerprint = Some(result.fingerprint.clone());
         locked_state.hazard_profile_id = profile_id.clone();
 
         if let Some(snapshot) = locked_state.pending_waystone.as_ref() {
@@ -774,9 +1002,26 @@ async fn set_hazard_profile(
         if let Some(area) = active_area.as_ref() {
             locked_state.current_area = Some(area.clone());
         }
+
+        (
+            profile_id,
+            persisted_profile_state_from_app_state(&locked_state),
+        )
+    };
+
+    if let Err(error) = write_persisted_profile_state(&profile_state_path(), &persist_snapshot) {
+        debug_log::append(
+            "profile.persist.failed",
+            serde_json::json!({
+                "error": error,
+                "path": profile_state_path().display().to_string(),
+                "source": "apply_build_profile_import",
+            }),
+        );
     }
 
-    let _ = app_handle.emit("scan://hazard-profile-updated", selected.id.clone());
+    let _ = app_handle.emit("scan://build-profile-updated", result.clone());
+    let _ = app_handle.emit("scan://hazard-profile-updated", profile_id);
 
     if let Some(snapshot) = pending {
         let _ = app_handle.emit("scan://pending-waystone-updated", snapshot);
@@ -790,7 +1035,7 @@ async fn set_hazard_profile(
         let _ = app_handle.emit("scan://map-run-updated", map_run);
     }
 
-    Ok(())
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1222,6 +1467,8 @@ pub fn run() {
             set_active_price_filters,
             set_exchange_category,
             set_hazard_profile,
+            import_poe_ninja_build_url,
+            import_pob_build_text,
             clear_pending_waystone,
             request_map_overlay_ocr,
             set_trade_league,
@@ -1294,7 +1541,13 @@ pub fn run() {
             let state = app.state::<SharedAppState>().inner().clone();
             let app_handle = app.handle().clone();
 
+            {
+                let mut locked_state = state.blocking_lock();
+                load_profile_state_into(&mut locked_state);
+            }
+
             spawn_trade_league_worker(app_handle.clone(), state.clone());
+            spawn_build_profile_refresh_worker(app_handle.clone(), state.clone());
             spawn_global_input_worker(app_handle.clone(), state.clone());
             spawn_window_attachment_worker(app_handle.clone());
 
@@ -1324,12 +1577,12 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
         emit_worker_status(
             &listener_handle,
             "input",
-            "PoE 2 hotkeys armed: Ctrl+C scan, Alt+D trade".to_string(),
+            "PoE 2 hotkeys armed: item metadata, waystone metadata, trade".to_string(),
         );
 
         while let Some(action) = input_rx.recv().await {
             match action {
-                InputAction::ClipboardScan(raw_text) => {
+                InputAction::ClipboardScan { raw_text, mode } => {
                     if !looks_like_poe_item_buffer(&raw_text) {
                         debug_log::append(
                             "clipboard_scan.ignored",
@@ -1352,59 +1605,85 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
                         locked_state.trade_league.clone()
                     };
                     let scanned_item = item_from_clipboard(raw_text, Some(&league));
-                    let pending_waystone = {
-                        let mut locked_state = state.lock().await;
-                        locked_state.active_price_filters.clear();
-                        locked_state.scanned_item = Some(scanned_item.clone());
-                        locked_state.price_check = Some(price_check::loading(&scanned_item));
-                        locked_state.price_check_continuation = None;
-                        locked_state.price_check_fetch_in_flight = false;
-                        locked_state.exchange_tab =
-                            exchange::loading_tab_state_for_item(&scanned_item).into();
 
-                        let pending = map_context::snapshot_from_item(
-                            &scanned_item,
-                            now_epoch_ms(),
-                            &locked_state.hazard_profile_id,
-                        );
+                    match mode {
+                        ClipboardScanMode::Waystone => {
+                            let pending_waystone = {
+                                let mut locked_state = state.lock().await;
+                                let pending = map_context::snapshot_from_item(
+                                    &scanned_item,
+                                    now_epoch_ms(),
+                                    &locked_state.hazard_profile_id,
+                                );
 
-                        if pending.is_some() {
-                            locked_state.pending_waystone = pending.clone();
+                                if pending.is_some() {
+                                    locked_state.pending_waystone = pending.clone();
+                                }
+
+                                pending
+                            };
+
+                            if let Some(snapshot) = pending_waystone {
+                                let _ =
+                                    app_handle.emit("scan://pending-waystone-updated", snapshot);
+                                emit_worker_status(
+                                    &app_handle,
+                                    "map-context",
+                                    "waystone metadata armed for the next map".to_string(),
+                                );
+                            } else {
+                                emit_worker_status(
+                                    &app_handle,
+                                    "map-context",
+                                    "ignored waystone metadata hotkey because the copied item was not a waystone".to_string(),
+                                );
+                            }
                         }
+                        ClipboardScanMode::Item => {
+                            {
+                                let mut locked_state = state.lock().await;
+                                locked_state.active_price_filters.clear();
+                                locked_state.scanned_item = Some(scanned_item.clone());
+                                locked_state.price_check =
+                                    Some(price_check::loading(&scanned_item));
+                                locked_state.price_check_continuation = None;
+                                locked_state.price_check_fetch_in_flight = false;
+                                locked_state.exchange_tab =
+                                    exchange::loading_tab_state_for_item(&scanned_item).into();
+                            }
 
-                        pending
-                    };
+                            if is_waystone_like(&scanned_item) {
+                                emit_worker_status(
+                                    &app_handle,
+                                    "map-context",
+                                    "item metadata scanned; use the waystone metadata hotkey to arm Atlas".to_string(),
+                                );
+                            }
 
-                    if let Some(snapshot) = pending_waystone {
-                        let _ = app_handle.emit("scan://pending-waystone-updated", snapshot);
-                        emit_worker_status(
-                            &app_handle,
-                            "map-context",
-                            "waystone armed for the next map".to_string(),
-                        );
-                    }
+                            if let Err(error) = app_handle.emit("scan://item-updated", scanned_item)
+                            {
+                                emit_worker_status(
+                                    &app_handle,
+                                    "input",
+                                    format!("failed to emit scanned item update: {error}"),
+                                );
+                            }
 
-                    if let Err(error) = app_handle.emit("scan://item-updated", scanned_item) {
-                        emit_worker_status(
-                            &app_handle,
-                            "input",
-                            format!("failed to emit scanned item update: {error}"),
-                        );
-                    }
+                            let checked_item = {
+                                let locked_state = state.lock().await;
+                                locked_state.scanned_item.clone()
+                            };
 
-                    let checked_item = {
-                        let locked_state = state.lock().await;
-                        locked_state.scanned_item.clone()
-                    };
-
-                    if let Some(item) = checked_item {
-                        if item.is_exchange {
-                            spawn_exchange_item_worker(
-                                app_handle.clone(),
-                                state.clone(),
-                                item,
-                                league,
-                            );
+                            if let Some(item) = checked_item {
+                                if item.is_exchange {
+                                    spawn_exchange_item_worker(
+                                        app_handle.clone(),
+                                        state.clone(),
+                                        item,
+                                        league,
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -1692,6 +1971,61 @@ fn spawn_trade_league_worker(app_handle: tauri::AppHandle, state: SharedAppState
             tokio::time::sleep(LEAGUE_REFRESH_INTERVAL).await;
         }
     });
+}
+
+fn spawn_build_profile_refresh_worker(app_handle: tauri::AppHandle, state: SharedAppState) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(BUILD_PROFILE_REFRESH_INTERVAL).await;
+            refresh_current_build_profile(&app_handle, &state).await;
+        }
+    });
+}
+
+async fn refresh_current_build_profile(app_handle: &tauri::AppHandle, state: &SharedAppState) {
+    let source_url = {
+        let locked_state = state.lock().await;
+        locked_state
+            .build_snapshot
+            .as_ref()
+            .filter(|snapshot| {
+                matches!(
+                    snapshot.source,
+                    build_profile::BuildSnapshotSource::PoeNinjaCharacterUrl
+                )
+            })
+            .and_then(|snapshot| snapshot.source_url.clone())
+    };
+
+    let Some(source_url) = source_url else {
+        return;
+    };
+
+    match build_profile::snapshot_from_poe_ninja_url_live(&source_url, now_epoch_ms()).await {
+        Ok(result) => {
+            if let Err(error) = apply_build_profile_import(app_handle, state, result, false).await {
+                emit_worker_status(
+                    app_handle,
+                    "build-profile",
+                    format!("failed to apply refreshed PoE.ninja profile: {error}"),
+                );
+            } else {
+                emit_worker_status(
+                    app_handle,
+                    "build-profile",
+                    format!(
+                        "PoE.ninja character profile refreshed; listening every {} minutes",
+                        BUILD_PROFILE_REFRESH_INTERVAL.as_secs() / 60
+                    ),
+                );
+            }
+        }
+        Err(error) => emit_worker_status(
+            app_handle,
+            "build-profile",
+            format!("failed to refresh PoE.ninja character profile: {error}"),
+        ),
+    }
 }
 
 async fn refresh_league_sources(app_handle: &tauri::AppHandle, state: &SharedAppState) {
@@ -2059,29 +2393,48 @@ fn handle_global_input_event(
             let Some(scan_key) = shortcut_key_to_rdev(hotkeys.scan_key) else {
                 return;
             };
+            let Some(waystone_key) = shortcut_key_to_rdev(hotkeys.waystone_key) else {
+                return;
+            };
             let Some(trade_key) = shortcut_key_to_rdev(hotkeys.trade_key) else {
                 return;
             };
             let is_scan =
                 key == &scan_key && modifier_is_down(&hotkeys.scan_mod, ctrl_down, alt_down);
+            let is_waystone_scan = key == &waystone_key
+                && modifier_is_down(&hotkeys.waystone_mod, ctrl_down, alt_down);
             let is_trade =
                 key == &trade_key && modifier_is_down(&hotkeys.trade_mod, ctrl_down, alt_down);
-            let needs_simulate = is_scan && (scan_key != Key::KeyC || hotkeys.scan_mod != "Ctrl");
 
-            if needs_simulate {
-                SIMULATING.store(true, Ordering::SeqCst);
-                let _ = rdev::simulate(&EventType::KeyPress(Key::ControlLeft));
-                let _ = rdev::simulate(&EventType::KeyPress(Key::KeyC));
-                let _ = rdev::simulate(&EventType::KeyRelease(Key::KeyC));
-                let _ = rdev::simulate(&EventType::KeyRelease(Key::ControlLeft));
-                thread::sleep(Duration::from_millis(80));
-                SIMULATING.store(false, Ordering::SeqCst);
-            }
+            let scan_request = if is_waystone_scan {
+                Some((
+                    ClipboardScanMode::Waystone,
+                    waystone_key,
+                    hotkeys.waystone_mod.clone(),
+                ))
+            } else if is_scan {
+                Some((ClipboardScanMode::Item, scan_key, hotkeys.scan_mod.clone()))
+            } else {
+                None
+            };
 
-            if is_scan {
+            if let Some((mode, active_scan_key, active_scan_mod)) = scan_request {
+                let needs_simulate = active_scan_key != Key::KeyC || active_scan_mod != "Ctrl";
+                if needs_simulate {
+                    SIMULATING.store(true, Ordering::SeqCst);
+                    let _ = rdev::simulate(&EventType::KeyPress(Key::ControlLeft));
+                    let _ = rdev::simulate(&EventType::KeyPress(Key::KeyC));
+                    let _ = rdev::simulate(&EventType::KeyRelease(Key::KeyC));
+                    let _ = rdev::simulate(&EventType::KeyRelease(Key::ControlLeft));
+                    thread::sleep(Duration::from_millis(80));
+                    SIMULATING.store(false, Ordering::SeqCst);
+                }
                 let before = read_clipboard_text().unwrap_or_default();
                 if !before.trim().is_empty() && looks_like_poe_item_buffer(&before) {
-                    let _ = input_tx.send(InputAction::ClipboardScan(before));
+                    let _ = input_tx.send(InputAction::ClipboardScan {
+                        raw_text: before,
+                        mode,
+                    });
                     return;
                 }
                 for _ in 0..25 {
@@ -2089,7 +2442,10 @@ fn handle_global_input_event(
                     match read_clipboard_text() {
                         Ok(text) if !text.trim().is_empty() && text != before => {
                             if looks_like_poe_item_buffer(&text) {
-                                let _ = input_tx.send(InputAction::ClipboardScan(text));
+                                let _ = input_tx.send(InputAction::ClipboardScan {
+                                    raw_text: text,
+                                    mode,
+                                });
                                 return;
                             }
                         }
@@ -2232,6 +2588,133 @@ fn map_overlay_capture_rect_from_bounds(
         width: capture_right.saturating_sub(capture_left).max(420),
         height: (height * 46 / 100).max(360),
     })
+}
+
+#[cfg(test)]
+mod profile_persistence_tests {
+    use super::*;
+
+    fn sample_build_profile(
+        recommended_profile_id: &str,
+    ) -> build_profile::BuildProfileImportResult {
+        build_profile::BuildProfileImportResult {
+            snapshot: build_profile::BuildSnapshot {
+                source: build_profile::BuildSnapshotSource::PoeNinjaCharacterUrl,
+                source_url: Some(
+                    "https://poe.ninja/poe2/profile/account/league/character/name".to_string(),
+                ),
+                account: Some("account".to_string()),
+                character: Some("name".to_string()),
+                league: Some("league".to_string()),
+                class_name: Some("Mercenary".to_string()),
+                class_icon_url: None,
+                ascendancy: None,
+                level: Some(90),
+                life: None,
+                energy_shield: None,
+                mana: None,
+                spirit: None,
+                attributes: build_profile::BuildAttributes::default(),
+                charges: build_profile::BuildCharges::default(),
+                movement_speed: None,
+                armour: None,
+                evasion_rating: None,
+                evade_chance: None,
+                deflection_rating: None,
+                deflect_chance: None,
+                physical_taken_as: None,
+                resistances: build_profile::BuildResistances::default(),
+                effective_health_pool: None,
+                max_hit: None,
+                keystones: Vec::new(),
+                main_skills: Vec::new(),
+                skill_dps: Vec::new(),
+                defensive_layers: Vec::new(),
+                equipped_uniques: Vec::new(),
+                recovery_systems: Vec::new(),
+                fetched_at_epoch_ms: 1,
+            },
+            fingerprint: build_profile::BuildFingerprint {
+                tags: Vec::new(),
+                recommended_profile_id: recommended_profile_id.to_string(),
+                confidence: "test".to_string(),
+                notes: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn persisted_profile_state_round_trips_to_disk() {
+        let path = env::temp_dir().join(format!(
+            "reliquary-profile-state-test-{}.json",
+            now_epoch_ms()
+        ));
+        let persisted = PersistedProfileState {
+            version: PROFILE_STATE_VERSION,
+            saved_at_epoch_ms: 12,
+            hazard_profile_id: "flask_sustain".to_string(),
+            hazard_profile_user_selected: true,
+            build_profile: Some(sample_build_profile("minion")),
+        };
+
+        write_persisted_profile_state(&path, &persisted).expect("profile state should write");
+        let restored = read_persisted_profile_state(&path)
+            .expect("profile state should read")
+            .expect("profile state should exist");
+
+        assert_eq!(restored.hazard_profile_id, "flask_sustain");
+        assert!(restored.hazard_profile_user_selected);
+        assert_eq!(
+            restored
+                .build_profile
+                .expect("build profile should persist")
+                .fingerprint
+                .recommended_profile_id,
+            "minion"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn hydrate_uses_build_recommendation_without_manual_override() {
+        let mut state = AppState::new();
+        hydrate_profile_state(
+            &mut state,
+            PersistedProfileState {
+                version: PROFILE_STATE_VERSION,
+                saved_at_epoch_ms: 12,
+                hazard_profile_id: "general_safe_mapping".to_string(),
+                hazard_profile_user_selected: false,
+                build_profile: Some(sample_build_profile("minion")),
+            },
+        );
+
+        assert_eq!(state.hazard_profile_id, "minion");
+        assert!(!state.hazard_profile_user_selected);
+        assert!(state.build_snapshot.is_some());
+        assert!(state.build_fingerprint.is_some());
+    }
+
+    #[test]
+    fn hydrate_preserves_manual_hazard_profile_over_build_recommendation() {
+        let mut state = AppState::new();
+        hydrate_profile_state(
+            &mut state,
+            PersistedProfileState {
+                version: PROFILE_STATE_VERSION,
+                saved_at_epoch_ms: 12,
+                hazard_profile_id: "flask_sustain".to_string(),
+                hazard_profile_user_selected: true,
+                build_profile: Some(sample_build_profile("minion")),
+            },
+        );
+
+        assert_eq!(state.hazard_profile_id, "flask_sustain");
+        assert!(state.hazard_profile_user_selected);
+        assert!(state.build_snapshot.is_some());
+        assert!(state.build_fingerprint.is_some());
+    }
 }
 
 #[cfg(test)]
@@ -3207,6 +3690,15 @@ fn world_areas_cache_path() -> PathBuf {
         return dir.join("world_areas.json");
     }
     PathBuf::from("world_areas.json")
+}
+
+fn profile_state_path() -> PathBuf {
+    let root = env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("APPDATA").map(PathBuf::from))
+        .unwrap_or_else(env::temp_dir);
+
+    root.join("Reliquary").join(PROFILE_STATE_FILE)
 }
 
 fn parse_world_areas(data: &str) -> Option<HashMap<String, AreaMeta>> {

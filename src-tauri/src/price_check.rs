@@ -8,8 +8,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 use crate::{
-    debug_log, ActivePriceFilter, CurrencyMeta, Item, PriceCheck, PriceFilter,
-    PriceListing, TradeLeague, TradeRateLimit,
+    debug_log, ActivePriceFilter, CurrencyMeta, Item, PriceCheck, PriceFilter, PriceListing,
+    TradeLeague, TradeRateLimit,
 };
 
 const DEFAULT_LEAGUE: &str = "Standard";
@@ -1397,7 +1397,10 @@ fn format_price(amount: f64, currency: &str) -> String {
         format!("{amount:.3}")
     };
 
-    format!("{amount_text} {}", canonical_currency_id(currency).to_uppercase())
+    format!(
+        "{amount_text} {}",
+        canonical_currency_id(currency).to_uppercase()
+    )
 }
 
 fn preview_item_name(item: &FetchItem) -> Option<String> {
@@ -1859,10 +1862,7 @@ fn spec_template(value: &str) -> String {
     let cleaned = clean_trade_text(value.to_string());
     let without_inline_ranges = INLINE_ROLL_RANGE_RE.replace_all(&cleaned, "$1");
     NUMBER_RE
-        .replace_all(
-            &without_inline_ranges.to_ascii_lowercase(),
-            "#",
-        )
+        .replace_all(&without_inline_ranges.to_ascii_lowercase(), "#")
         .chars()
         .map(|character| {
             if character.is_ascii_lowercase() || character == '#' {
@@ -2657,7 +2657,9 @@ mod tests {
             value: Some(23.0),
             min: Some(20.0),
             max: Some(25.0),
-            template: spec_template("23% chance to gain Onslaught on Killing Hits with this Weapon"),
+            template: spec_template(
+                "23% chance to gain Onslaught on Killing Hits with this Weapon",
+            ),
             ..Default::default()
         };
         let stats = vec![TradeStatEntry {

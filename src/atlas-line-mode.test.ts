@@ -23,12 +23,16 @@ describe("atlasCompactLineState", () => {
         normalized_mods: [
           "AREA CONTAINS BREACHES",
           "18% INCREASED RARITY OF ITEMS FOUND IN THIS AREA",
+          "114% INCREASED EXPERIENCE GAIN",
           "MONSTERS HAVE 30% INCREASED ACCURACY RATING",
         ],
         raw_lines: [],
         summary: {
-          modifier_count: 3,
-          reward_lines: ["18% INCREASED RARITY OF ITEMS FOUND IN THIS AREA"],
+          modifier_count: 4,
+          reward_lines: [
+            "18% INCREASED RARITY OF ITEMS FOUND IN THIS AREA",
+            "114% INCREASED EXPERIENCE GAIN",
+          ],
           player_danger_lines: [],
           monster_danger_lines: ["MONSTERS HAVE 30% INCREASED ACCURACY RATING"],
           content_flags: ["Breach"],
@@ -38,11 +42,12 @@ describe("atlasCompactLineState", () => {
 
     const state = atlasCompactLineState(area, run, "1:05");
 
-    expect(state.text).toBe("OCR 3 mods | Breach | 1:05");
+    expect(state.text).toBe("OCR 4 mods | Breach | 1:05");
     expect(state.indicators).toEqual([
       { label: "R", value: "18%", tone: "reward" },
+      { label: "Exp", value: "114%", tone: "reward" },
     ]);
-    expect(state.riskReason).toBe("Monster pressure");
+    expect(state.riskReason).toBe("MONSTERS HAVE 30% INCREASED ACCURACY RATING");
     expect(state.riskDetail).toBe("MONSTERS HAVE 30% INCREASED ACCURACY RATING");
     expect(state.severity).toBe("warning");
     expect(state.shouldPulse).toBe(true);
@@ -53,6 +58,10 @@ describe("atlasCompactLineState", () => {
       confidence: "armed",
       ocr_evidence: null,
       waystone: {
+        explicit_mods: [
+          "Rare monsters have 25% increased chance for modifiers",
+          "115% increased Experience Gain",
+        ],
         profile_hazards: [
           {
             severity: "build_breaking",
@@ -88,11 +97,49 @@ describe("atlasCompactLineState", () => {
       { label: "R", value: "42%", tone: "reward" },
       { label: "Pack", value: "11%", tone: "reward" },
       { label: "Rare", value: "25%", tone: "monster" },
+      { label: "Exp", value: "115%", tone: "reward" },
     ]);
-    expect(state.riskReason).toBe("Energy shield recovery disabl...");
+    expect(state.riskReason).toBe("Energy shield recovery disabled for this profile");
     expect(state.riskDetail).toBe("Energy shield recovery disabled for this profile (Players cannot recharge energy shield)");
     expect(state.severity).toBe("critical");
     expect(state.shouldPulse).toBe(true);
+  });
+
+  it("orders OCR reward indicators as rarity, pack, rare, then exp", () => {
+    const run: AtlasCompactRun = {
+      confidence: "ocr_confirmed",
+      waystone: null,
+      ocr_evidence: {
+        state: "confirmed",
+        normalized_mods: [
+          "42% REDUCED RARITY OF ITEMS FOUND IN THIS AREA",
+          "9% INCREASED PACK SIZE",
+          "RARE MONSTERS HAVE 43% MORE CHANCE OF MONSTER MODIFIERS",
+          "114% INCREASED EXPERIENCE GAIN",
+        ],
+        raw_lines: [],
+        summary: {
+          modifier_count: 4,
+          reward_lines: [
+            "42% REDUCED RARITY OF ITEMS FOUND IN THIS AREA",
+            "9% INCREASED PACK SIZE",
+            "114% INCREASED EXPERIENCE GAIN",
+          ],
+          player_danger_lines: [],
+          monster_danger_lines: ["RARE MONSTERS HAVE 43% MORE CHANCE OF MONSTER MODIFIERS"],
+          content_flags: [],
+        },
+      },
+    };
+
+    const state = atlasCompactLineState(area, run, "0:22");
+
+    expect(state.indicators).toEqual([
+      { label: "R", value: "42%", tone: "reward" },
+      { label: "Pack", value: "9%", tone: "reward" },
+      { label: "Rare", value: "43%", tone: "monster" },
+      { label: "Exp", value: "114%", tone: "reward" },
+    ]);
   });
 
   it("keeps area-only OCR misses calm", () => {
@@ -107,7 +154,7 @@ describe("atlasCompactLineState", () => {
       },
     }, "2:10");
 
-    expect(state.text).toBe("Area-only | 2:10");
+    expect(state.text).toBe("Press Tab to read map mods | 2:10");
     expect(state.indicators).toEqual([]);
     expect(state.riskReason).toBe("");
     expect(state.severity).toBe("none");

@@ -15,6 +15,7 @@ export type AtlasCompactArea = {
 export type AtlasCompactRun = {
   confidence: string;
   waystone: {
+    explicit_mods?: string[];
     profile_hazards?: {
       severity: "info" | "warning" | "danger" | "build_breaking";
       reason: string;
@@ -88,7 +89,7 @@ export function atlasCompactLineState(
   }
 
   return {
-    text: `Area-only | ${runtimeLabel}`,
+    text: `Press Tab to read map mods | ${runtimeLabel}`,
     indicators: [],
     riskReason: "",
     riskDetail: "",
@@ -122,9 +123,17 @@ function armedWaystoneIndicators(
   if (area.waystone_pack_size != null) {
     indicators.push({ label: "Pack", value: `${area.waystone_pack_size}%`, tone: "reward" });
   }
-  const rare = rareMonsterIndicator(run?.waystone?.profile_hazards?.map((hazard) => hazard.modifier) ?? []);
+  const waystoneLines = [
+    ...(run?.waystone?.explicit_mods ?? []),
+    ...(run?.waystone?.profile_hazards?.map((hazard) => hazard.modifier) ?? []),
+  ];
+  const rare = rareMonsterIndicator(waystoneLines);
   if (rare) {
     indicators.push({ label: "Rare", value: rare, tone: "monster" });
+  }
+  const experience = experienceIndicator(waystoneLines);
+  if (experience) {
+    indicators.push({ label: "Exp", value: experience, tone: "reward" });
   }
   return indicators;
 }
@@ -163,10 +172,15 @@ function ocrIndicators(evidence: AtlasCompactRun["ocr_evidence"]): AtlasCompactI
     ...summary.monster_danger_lines,
     ...evidence.normalized_mods,
   ]);
+  const experience = experienceIndicator([
+    ...summary.reward_lines,
+    ...evidence.normalized_mods,
+  ]);
 
   if (rarity) indicators.push({ label: "R", value: rarity, tone: "reward" });
   if (pack) indicators.push({ label: "Pack", value: pack, tone: "reward" });
   if (rare) indicators.push({ label: "Rare", value: rare, tone: "monster" });
+  if (experience) indicators.push({ label: "Exp", value: experience, tone: "reward" });
   return indicators;
 }
 
@@ -183,6 +197,13 @@ function rareMonsterIndicator(lines: string[]): string {
   if (match) return `${match[1]}%`;
   if (/additional|more|increased|modifier/i.test(line)) return "+";
   return "seen";
+}
+
+function experienceIndicator(lines: string[]): string {
+  const line = lines.find((candidate) => /experience/i.test(candidate));
+  if (!line) return "";
+  const match = line.match(/(\d+(?:\.\d+)?)%/);
+  return match ? `${match[1]}%` : "";
 }
 
 function severityFromWaystone(run: AtlasCompactRun | null | undefined): AtlasCompactSeverity {
@@ -239,8 +260,6 @@ function riskReasonFromOcr(evidence: AtlasCompactRun["ocr_evidence"]): string {
   if (!summary) return "";
   const line = summary.player_danger_lines[0] ?? summary.monster_danger_lines[0] ?? "";
   if (!line) return "";
-  if (/players|flask|recovery|regeneration|resistance|maximum/i.test(line)) return "Player penalty";
-  if (/monsters|monster/i.test(line)) return "Monster pressure";
   return compactRiskReason(line);
 }
 
@@ -251,6 +270,6 @@ function riskDetailFromOcr(evidence: AtlasCompactRun["ocr_evidence"]): string {
 
 function compactRiskReason(reason: string): string {
   const clean = reason.replace(/\s+/g, " ").trim();
-  if (clean.length <= 32) return clean;
-  return `${clean.slice(0, 29).trim()}...`;
+  if (clean.length <= 58) return clean;
+  return `${clean.slice(0, 55).trim()}...`;
 }

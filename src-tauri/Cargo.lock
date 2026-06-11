@@ -3185,6 +3185,7 @@ version = "0.1.3"
 dependencies = [
  "arboard",
  "base64 0.22.1",
+ "flate2",
  "fuzzy-matcher",
  "linemux",
  "once_cell",

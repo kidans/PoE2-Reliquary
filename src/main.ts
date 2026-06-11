@@ -53,6 +53,16 @@ import {
   type AtlasCompactSeverity,
 } from "./atlas-line-mode";
 import {
+  exchangeWatchlistFocusCategoryIds,
+  isExchangeWatchlistPinned,
+  normalizeExchangeWatchlistState,
+  pinExchangeWatchlistEntry,
+  unpinExchangeWatchlistEntry,
+  type ExchangeWatchlistEntrySource,
+  type ExchangeWatchlistPin,
+  type ExchangeWatchlistState,
+} from "./exchange-watchlist";
+import {
   clearAtlasRunHistory as clearAtlasRunHistoryStorage,
   completeAtlasRun as completeAtlasRunRecord,
   incrementAtlasRunDeaths as incrementAtlasRunDeathsRecord,
@@ -87,7 +97,7 @@ type GuideAct = {
   zones: GuideZone[];
 };
 
-type TabId = "scan" | "trade" | "campaign" | "atlas" | "data" | "settings" | "temple";
+type TabId = "profile" | "scan" | "trade" | "campaign" | "atlas" | "data" | "settings" | "temple";
 type CampaignSubTab = "timer" | "map-runs";
 
 type CurrentAreaInfo = {
@@ -170,6 +180,72 @@ type HazardProfile = {
   rules: { pattern: string; severity: string; reason: string }[];
 };
 
+type BuildSnapshot = {
+  source: "poe_ninja_character_url" | "pob_code" | "manual_profile";
+  source_url: string | null;
+  account: string | null;
+  character: string | null;
+  league: string | null;
+  class_name: string | null;
+  class_icon_url: string | null;
+  ascendancy: string | null;
+  level: number | null;
+  life: number | null;
+  energy_shield: number | null;
+  mana: number | null;
+  spirit: number | null;
+  attributes: {
+    strength: number | null;
+    dexterity: number | null;
+    intelligence: number | null;
+  };
+  charges: {
+    endurance: number | null;
+    frenzy: number | null;
+    power: number | null;
+  };
+  movement_speed: number | null;
+  armour: number | null;
+  evasion_rating: number | null;
+  evade_chance: number | null;
+  deflection_rating: number | null;
+  deflect_chance: number | null;
+  physical_taken_as: number | null;
+  resistances: {
+    fire: number | null;
+    cold: number | null;
+    lightning: number | null;
+    chaos: number | null;
+  };
+  effective_health_pool: string | null;
+  max_hit: {
+    physical: string | null;
+    fire: string | null;
+    cold: string | null;
+    lightning: string | null;
+    chaos: string | null;
+  } | null;
+  keystones: string[];
+  main_skills: string[];
+  skill_dps: { name: string; dps: string | null }[];
+  defensive_layers: string[];
+  equipped_uniques: string[];
+  recovery_systems: string[];
+  fetched_at_epoch_ms: number;
+};
+
+type BuildFingerprint = {
+  tags: string[];
+  recommended_profile_id: string;
+  confidence: string;
+  notes: string[];
+};
+
+type BuildProfileImportResult = {
+  snapshot: BuildSnapshot;
+  fingerprint: BuildFingerprint;
+};
+
 type WorldAreaStatus = {
   state: string;
   source: string;
@@ -186,6 +262,8 @@ type AppState = {
   pending_waystone: WaystoneSnapshot | null;
   active_map_run: MapRunContext | null;
   hazard_profile_id: string;
+  build_snapshot: BuildSnapshot | null;
+  build_fingerprint: BuildFingerprint | null;
   world_area_status: WorldAreaStatus;
   trade_league: string;
   league_catalog: LeagueCatalogEntry[];
@@ -242,12 +320,22 @@ type WorkerStatus = {
   message: string;
 };
 
+type AtlasFocusId = "expedition" | "breach" | "ritual" | "delirium" | "bossing" | "fortress" | "waystones";
+
+type AtlasFocusState = {
+  selected: AtlasFocusId;
+  notes: string;
+  checklist: Record<string, boolean>;
+};
+
 type AppSettings = {
   accentHue: number;
   panelAlpha: number;
   saturation: number;
   scanMod: "Ctrl" | "Alt";
   scanKey: string;
+  waystoneMod: "Ctrl" | "Alt";
+  waystoneKey: string;
   tradeMod: "Ctrl" | "Alt";
   tradeKey: string;
 };
@@ -378,6 +466,8 @@ const state: AppState = {
   pending_waystone: null,
   active_map_run: null,
   hazard_profile_id: "general_safe_mapping",
+  build_snapshot: null,
+  build_fingerprint: null,
   world_area_status: {
     state: "warming",
     source: "unknown",
@@ -398,7 +488,7 @@ const state: AppState = {
   deaths: {},
 };
 
-let activeTab: TabId = "scan";
+let activeTab: TabId = "profile";
 let workerMessages: WorkerStatus[] = [];
 let compactMode = false;
 let selectedSpecKeys = new Set<string>();
@@ -414,6 +504,8 @@ let previewPollHandle = 0;
 let latestRequestedFilterSignature: string | null = null;
 let hazardProfiles: HazardProfile[] = [];
 let selectedAtlasSection: "overview" | "safety" | "profile" | "focus" | "history" = "overview";
+let buildProfileUrlInput = "";
+let buildProfileTextInput = "";
 let activeFilterPushTimer = 0;
 
 const campaignGuideActs = guideData.acts;
@@ -428,6 +520,58 @@ let campaignCompletedSteps = new Set<string>();
 let campaignCurrentZone = "";
 const CAMPAIGN_STORAGE_KEY = "reliquary.campaign.progress";
 const CAMPAIGN_ZONES_KEY = "reliquary.campaign.zones";
+const ATLAS_FOCUS_STORAGE_KEY = "reliquary.atlas.focus";
+const EXCHANGE_WATCHLIST_STORAGE_KEY = "reliquary.exchange.watchlist";
+
+const ATLAS_FOCUS_PRESETS: {
+  id: AtlasFocusId;
+  label: string;
+  summary: string;
+  checklist: string[];
+}[] = [
+  {
+    id: "expedition",
+    label: "Expedition",
+    summary: "Watch remnant density and avoid stacking build-breaking remnants.",
+    checklist: ["Check remnant order before detonation", "Avoid build-breaking remnants", "Open logbook-worthy chests"],
+  },
+  {
+    id: "breach",
+    label: "Breach",
+    summary: "Favor clear speed and watch density spikes before opening hands.",
+    checklist: ["Confirm map is safe for burst density", "Open hands after stabilizing", "Track splinter/reward outcome"],
+  },
+  {
+    id: "ritual",
+    label: "Ritual",
+    summary: "Keep danger profile strict; reroll rewards after checking tribute.",
+    checklist: ["Clear surrounding monsters first", "Check defer candidates", "Record notable reward bases"],
+  },
+  {
+    id: "delirium",
+    label: "Delirium",
+    summary: "Treat monster damage, speed, and recovery denial as higher risk.",
+    checklist: ["Confirm no build-breaking waystone mods", "Route toward dense packs", "Stop before greed kills the run"],
+  },
+  {
+    id: "bossing",
+    label: "Bossing",
+    summary: "Keep the boss name visible and avoid map mods that disable recovery.",
+    checklist: ["Confirm boss before portal commitment", "Check recovery and flask hazards", "Record boss outcome"],
+  },
+  {
+    id: "fortress",
+    label: "Fortress",
+    summary: "Manual reminder lane for citadel/fortress scouting until automation is proven.",
+    checklist: ["Mark fortress direction manually", "Note failed approach paths", "Keep boss-hazard profile strict"],
+  },
+  {
+    id: "waystones",
+    label: "Waystones",
+    summary: "Sustain-focused mapping: prioritize pack size, rarity, and waystone drops.",
+    checklist: ["Check Rarity / Pack / Rare indicators", "Avoid low-value danger stacks", "Note maps that overperform"],
+  },
+];
 
 type MapRun = {
   name: string;
@@ -444,6 +588,9 @@ let campaignZoneTimes: Map<string, number> = new Map();
 let campaignCurrentZoneEnteredAt = 0;
 let campaignMapRuns: MapRun[] = [];
 let atlasRunHistory: AtlasRunRecord[] = [];
+let atlasFocusState: AtlasFocusState = readAtlasFocusState();
+let exchangeWatchlistState: ExchangeWatchlistState = readExchangeWatchlistState();
+let tradeWatchlistMode = false;
 let campaignResetConfirmHandle = 0;
 let atlasHistoryClearConfirmHandle = 0;
 
@@ -562,6 +709,66 @@ function incrementAtlasRunDeaths(run: MapRunContext | null) {
 
 function clearAtlasRunHistory() {
   atlasRunHistory = clearAtlasRunHistoryStorage(localStorage);
+}
+
+function defaultAtlasFocusState(): AtlasFocusState {
+  return {
+    selected: "expedition",
+    notes: "",
+    checklist: {},
+  };
+}
+
+function isAtlasFocusId(value: unknown): value is AtlasFocusId {
+  return typeof value === "string" && ATLAS_FOCUS_PRESETS.some((focus) => focus.id === value);
+}
+
+function readAtlasFocusState(): AtlasFocusState {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ATLAS_FOCUS_STORAGE_KEY) ?? "{}") as Partial<AtlasFocusState>;
+    return {
+      selected: isAtlasFocusId(parsed.selected) ? parsed.selected : "expedition",
+      notes: typeof parsed.notes === "string" ? parsed.notes : "",
+      checklist: parsed.checklist && typeof parsed.checklist === "object" ? parsed.checklist : {},
+    };
+  } catch {
+    return defaultAtlasFocusState();
+  }
+}
+
+function saveAtlasFocusState() {
+  try {
+    localStorage.setItem(ATLAS_FOCUS_STORAGE_KEY, JSON.stringify(atlasFocusState));
+  } catch {
+    pushStatus("atlas", "Unable to save Atlas focus locally.");
+  }
+}
+
+function atlasFocusPreset(focusId: AtlasFocusId = atlasFocusState.selected) {
+  return ATLAS_FOCUS_PRESETS.find((focus) => focus.id === focusId) ?? ATLAS_FOCUS_PRESETS[0]!;
+}
+
+function readExchangeWatchlistState(): ExchangeWatchlistState {
+  try {
+    return normalizeExchangeWatchlistState(JSON.parse(localStorage.getItem(EXCHANGE_WATCHLIST_STORAGE_KEY) ?? "{}"));
+  } catch {
+    return { pins: [] };
+  }
+}
+
+function saveExchangeWatchlistState() {
+  try {
+    localStorage.setItem(EXCHANGE_WATCHLIST_STORAGE_KEY, JSON.stringify(exchangeWatchlistState));
+  } catch {
+    pushStatus("exchange", "Unable to save exchange watchlist locally.");
+  }
+}
+
+function exchangeWatchlistPinCount(categoryId?: string) {
+  if (!categoryId) {
+    return exchangeWatchlistState.pins.length;
+  }
+  return exchangeWatchlistState.pins.filter((pin) => pin.category_id === categoryId).length;
 }
 
 function normalizeDeathRecord(record: unknown): Record<number, number> {
@@ -781,6 +988,8 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   saturation: 100,
   scanMod: "Ctrl",
   scanKey: "C",
+  waystoneMod: "Alt",
+  waystoneKey: "W",
   tradeMod: "Alt",
   tradeKey: "D",
 };
@@ -864,6 +1073,12 @@ root.innerHTML = isListingPreviewWindow
         </div>
 
         <nav class="tab-row" aria-label="Overlay panels">
+          <button class="tab-button" data-tab="profile" type="button" title="Profile">
+            <span class="tab-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+            </span>
+            <span class="tab-label">Profile</span>
+          </button>
           <button class="tab-button" data-tab="scan" type="button" title="Scan">
             <span class="tab-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M8 4H5a1 1 0 0 0-1 1v3M16 4h3a1 1 0 0 1 1 1v3M8 20H5a1 1 0 0 1-1-1v-3M16 20h3a1 1 0 0 0 1-1v-3"/><path d="M7 12h10M12 7v10"/></svg>
@@ -1012,7 +1227,10 @@ function render() {
     applyCompactMapLine(mapCompactState, state.current_area);
   }
   if (compactStrip) {
+    const hasMapDetail = mapCompactState ? compactLineHasMapDetail(mapCompactState) : false;
     compactStrip.classList.toggle("is-mapping", state.current_area?.area_type === "map");
+    compactStrip.classList.toggle("has-map-detail", hasMapDetail);
+    compactStrip.classList.toggle("needs-map-ocr", Boolean(mapCompactState && !hasMapDetail));
     compactStrip.classList.toggle("is-hideout", state.current_area?.area_type === "hideout");
     compactStrip.classList.toggle("is-campaign", campaignGuideAct > 0);
     compactStrip.classList.toggle("is-pulsing", Boolean(mapCompactState?.shouldPulse));
@@ -1032,6 +1250,12 @@ function render() {
   }
 
   if (!compactMode) {
+    if (activeTab === "profile") {
+      panelElement!.innerHTML = renderProfilePanel();
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
+
     if (activeTab === "scan") {
       panelElement!.innerHTML = renderScanPanel(state.scanned_item, state.price_check);
       queueEvaluateLayoutSync();
@@ -1103,6 +1327,9 @@ function render() {
   }
 
   syncWindowLayout();
+  if (compactMode) {
+    queueCompactWindowHeightSync();
+  }
 }
 
 function renderLeagueOptions() {
@@ -1197,6 +1424,7 @@ function renderListingPreviewWindow(preview: ListingPreviewRequest | null) {
 }
 
 let compactRuntimeHandle = 0;
+let compactHeightFrame = 0;
 
 function rewardColor(tags: string[], reward: string | null): string {
   if (tags.includes("choice")) return "#6ee07a";
@@ -1361,8 +1589,14 @@ function applyCompactMapLine(line: AtlasCompactLineState, area: CurrentAreaInfo)
   }
 }
 
+function compactLineHasMapDetail(line: AtlasCompactLineState) {
+  return line.indicators.length > 0
+    || Boolean(line.riskReason)
+    || /^(\d+\s+mods|OCR\s+\d+\s+mods)/i.test(line.text);
+}
+
 function renderCompactIndicator(indicator: AtlasCompactIndicator) {
-  return `<span class="compact-indicator compact-indicator-${escapeAttribute(indicator.tone)}"><b>${escapeHtml(indicator.label)}</b>${escapeHtml(indicator.value)}</span>`;
+  return `<span class="compact-indicator compact-indicator-${escapeAttribute(indicator.tone)} compact-indicator-${escapeAttribute(indicator.label.toLowerCase())}"><b>${escapeHtml(indicator.label)}</b><span>${escapeHtml(indicator.value)}</span></span>`;
 }
 
 function setCompactSeverityClass(element: HTMLElement, severity: AtlasCompactSeverity) {
@@ -1454,6 +1688,243 @@ function renderScanShortcut() {
   const mod = appSettings.scanMod || DEFAULT_APP_SETTINGS.scanMod;
   const key = normalizeShortcutKey(appSettings.scanKey, DEFAULT_APP_SETTINGS.scanKey);
   return `<kbd>${escapeHtml(mod)}</kbd> + <kbd>${escapeHtml(key)}</kbd>`;
+}
+
+function renderProfilePanel() {
+  const snapshot = state.build_snapshot;
+  const fingerprint = state.build_fingerprint;
+  const hasSnapshot = Boolean(snapshot);
+  const characterName = snapshot?.character ?? "No character linked";
+  const league = snapshot?.league ?? state.trade_league ?? "Unknown league";
+  const classLine = [
+    snapshot?.level ? `Level ${snapshot.level}` : null,
+    snapshot?.ascendancy ?? snapshot?.class_name ?? null,
+  ].filter(Boolean).join(" ") || profileSourceFallback(snapshot);
+  const tags = fingerprint?.tags.length
+    ? fingerprint.tags.map((tag) => `<span class="atlas-build-tag">${escapeHtml(tag.replace(/_/g, " "))}</span>`).join("")
+    : `<span class="atlas-build-tag muted">No build fingerprint yet</span>`;
+  const notes = fingerprint?.notes.length
+    ? `<div class="profile-import-notes">${fingerprint.notes.map((note) => `<p>${escapeHtml(note)}</p>`).join("")}</div>`
+    : "";
+
+  return `
+    <div class="profile-panel-shell">
+      <section class="profile-hero">
+        ${renderProfileAvatar(snapshot, characterName)}
+        <div>
+          <p class="profile-league">${escapeHtml(leagueLabel(league))}</p>
+          <h2>${escapeHtml(characterName)}</h2>
+          <strong>${escapeHtml(classLine)}</strong>
+        </div>
+      </section>
+
+      ${!hasSnapshot ? `
+        <section class="profile-card profile-card-import">
+          <p class="section-label">First Run Setup</p>
+          <h3>Connect your build</h3>
+          <p>Paste a public PoE.ninja character link or a PoB export/readable build text. Reliquary uses it locally to pick safer map warnings.</p>
+          ${renderBuildProfileImportControls()}
+        </section>
+      ` : `
+        <section class="profile-card">
+          <div class="profile-card-header">
+            <div>
+              <p class="section-label">Build fingerprint</p>
+              <h3>${escapeHtml(profileLabel(fingerprint?.recommended_profile_id ?? state.hazard_profile_id))}</h3>
+            </div>
+            <button class="atlas-secondary-action" type="button" data-profile-reimport>Change</button>
+          </div>
+          <div class="atlas-build-tags">${tags}</div>
+          ${notes}
+        </section>
+
+        <section class="profile-card profile-card-collapsible" data-profile-import-card hidden>
+          <p class="section-label">Update Build Source</p>
+          ${renderBuildProfileImportControls()}
+        </section>
+      `}
+
+      <section class="profile-card profile-stats-card">
+        <p class="section-label">Character</p>
+        ${renderProfileStatRow("Attributes", renderAttributeValues(snapshot))}
+        ${renderProfileStatRow("Movement Speed", formatPercent(snapshot?.movement_speed))}
+        ${renderProfileStatRow("Charges", renderChargeValues(snapshot))}
+      </section>
+
+      <section class="profile-card profile-stats-card">
+        <p class="section-label">Defensive</p>
+        ${renderProfileStatRow("Life", formatNumber(snapshot?.life))}
+        ${renderProfileStatRow("Energy Shield", formatNumber(snapshot?.energy_shield))}
+        ${renderProfileStatRow("Mana", formatNumber(snapshot?.mana))}
+        ${renderProfileStatRow("Spirit", formatNumber(snapshot?.spirit))}
+        ${renderProfileStatRow("Armour", formatNumber(snapshot?.armour))}
+        ${renderProfileStatRow("Evasion Rating", formatNumber(snapshot?.evasion_rating))}
+        ${renderProfileStatRow("Evade Chance", formatPercent(snapshot?.evade_chance))}
+        ${renderProfileStatRow("Deflection Rating", formatNumber(snapshot?.deflection_rating))}
+        ${renderProfileStatRow("Deflect Chance", formatPercent(snapshot?.deflect_chance))}
+        ${renderProfileStatRow("Physical Taken As", formatPercent(snapshot?.physical_taken_as))}
+        ${renderProfileStatRow("Resistances", renderResistanceValues(snapshot))}
+      </section>
+
+      <section class="profile-card profile-stats-card">
+        <p class="section-label">Simulated</p>
+        ${renderProfileStatRow("Effective Health Pool", snapshot?.effective_health_pool ? escapeHtml(snapshot.effective_health_pool) : "—")}
+        ${renderProfileStatRow("Max Hit", renderMaxHit(snapshot))}
+      </section>
+
+      <section class="profile-card profile-skill-card">
+        <p class="section-label">Skill DPS Estimation</p>
+        ${renderSkillDpsRows(snapshot)}
+      </div>
+    </div>
+  `;
+}
+
+function profileSourceFallback(snapshot: BuildSnapshot | null) {
+  if (!snapshot) return "Import a PoE.ninja URL or PoB code";
+  if (snapshot.source === "poe_ninja_character_url") return "PoE.ninja identity imported";
+  if (snapshot.source === "pob_code") return "PoB imported; calculated stats unavailable";
+  return "Manual profile";
+}
+
+function renderProfileAvatar(snapshot: BuildSnapshot | null, characterName: string) {
+  const classIconUrl = snapshot?.class_icon_url?.trim();
+  if (!classIconUrl) {
+    return `<div class="profile-avatar" aria-hidden="true">${escapeHtml(profileInitials(characterName))}</div>`;
+  }
+
+  const className = snapshot?.ascendancy ?? snapshot?.class_name ?? "character class";
+  return `
+    <div class="profile-avatar has-class-icon" aria-hidden="true">
+      <img src="${escapeAttribute(classIconUrl)}" alt="${escapeAttribute(className)} icon" loading="lazy" />
+    </div>
+  `;
+}
+
+function renderBuildProfileImportControls() {
+  return `
+    <div class="atlas-build-import">
+      <input
+        type="url"
+        data-build-profile-url
+        value="${escapeAttribute(buildProfileUrlInput || state.build_snapshot?.source_url || "")}"
+        placeholder="https://poe.ninja/poe2/profile/account/league/character/name"
+        aria-label="PoE.ninja character URL"
+      />
+      <button class="atlas-secondary-action" type="button" data-import-build-profile>Import</button>
+    </div>
+    <div class="atlas-build-paste">
+      <textarea
+        data-build-profile-text
+        placeholder="Paste a PoB export code or readable build text."
+        aria-label="PoB export code or readable build text"
+      >${escapeHtml(buildProfileTextInput)}</textarea>
+      <button class="atlas-secondary-action" type="button" data-import-pob-profile>Import PoB/Text</button>
+    </div>
+  `;
+}
+
+function renderProfileStatRow(label: string, value: string) {
+  return `
+    <div class="profile-stat-row">
+      <span>${escapeHtml(label)}</span>
+      <strong>${value}</strong>
+    </div>
+  `;
+}
+
+function renderAttributeValues(snapshot: BuildSnapshot | null) {
+  const attributes = snapshot?.attributes;
+  return [
+    statValue(attributes?.strength),
+    statValue(attributes?.dexterity),
+    statValue(attributes?.intelligence),
+  ].map((value, index) => `<span class="profile-attr-${index}">${escapeHtml(value)}</span>`).join(" / ");
+}
+
+function renderChargeValues(snapshot: BuildSnapshot | null) {
+  const charges = snapshot?.charges;
+  return [
+    statValue(charges?.endurance),
+    statValue(charges?.frenzy),
+    statValue(charges?.power),
+  ].map((value, index) => `<span class="profile-charge-${index}">${escapeHtml(value)}</span>`).join(" / ");
+}
+
+function renderResistanceValues(snapshot: BuildSnapshot | null) {
+  const resistances = snapshot?.resistances;
+  return [
+    resistanceValue(resistances?.fire, "fire"),
+    resistanceValue(resistances?.cold, "cold"),
+    resistanceValue(resistances?.lightning, "lightning"),
+    resistanceValue(resistances?.chaos, "chaos"),
+  ].join(" / ");
+}
+
+function renderMaxHit(snapshot: BuildSnapshot | null) {
+  const maxHit = snapshot?.max_hit;
+  if (!maxHit) return "—";
+  return [
+    maxHit.physical ?? "—",
+    maxHit.fire ?? "—",
+    maxHit.cold ?? "—",
+    maxHit.lightning ?? "—",
+    maxHit.chaos ?? "—",
+  ].map((value, index) => `<span class="profile-maxhit-${index}">${escapeHtml(value)}</span>`).join(" / ");
+}
+
+function renderSkillDpsRows(snapshot: BuildSnapshot | null) {
+  const rows = snapshot?.skill_dps?.length
+    ? snapshot.skill_dps
+    : (snapshot?.main_skills ?? []).map((name) => ({ name, dps: null }));
+  if (!rows.length) return `<div class="empty-listing">Import a build to show detected skills.</div>`;
+  return rows.slice(0, 6).map((row) => {
+    const pct = skillDpsPercent(row.dps);
+    return `
+      <div class="profile-skill-row">
+        <span>${escapeHtml(row.name)}</span>
+        <div class="profile-skill-meter"><i style="width:${pct}%"></i></div>
+        <strong>${escapeHtml(row.dps ?? "—")}</strong>
+      </div>
+    `;
+  }).join("");
+}
+
+function skillDpsPercent(value: string | null) {
+  if (!value) return 4;
+  const number = parseFloat(value.replace(/,/g, ""));
+  if (!Number.isFinite(number)) return 4;
+  const multiplier = /m/i.test(value) ? 1000 : /k/i.test(value) ? 1 : 0.001;
+  return Math.max(4, Math.min(100, number * multiplier / 10));
+}
+
+function profileInitials(value: string) {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "R";
+}
+
+function leagueLabel(value: string) {
+  return value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toUpperCase();
+}
+
+function statValue(value: number | null | undefined) {
+  return value == null ? "—" : formatNumber(value);
+}
+
+function formatNumber(value: number | null | undefined) {
+  return value == null ? "—" : Intl.NumberFormat().format(value);
+}
+
+function formatPercent(value: number | null | undefined) {
+  return value == null ? "—" : `${Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}%`;
+}
+
+function resistanceValue(value: number | null | undefined, type: string) {
+  return `<span class="profile-res-${escapeAttribute(type)}">${escapeHtml(formatPercent(value))}</span>`;
 }
 
 function renderScanPanel(item: ScannedItem | null, priceCheck: PriceCheck | null) {
@@ -2535,20 +3006,30 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
     categories.find((category) => category.id === exchangeTab.selected_category_id) ?? categories[0];
   const overview = exchangeTab.overview;
   const filteredEntries = filteredExchangeEntries(exchangeTab, tradeSearchQuery);
+  const filteredPins = filteredExchangeWatchlistPins(exchangeWatchlistState, tradeSearchQuery);
   const currencyIcons = exchangeHeaderCurrencies(exchangeTab);
   const sourceLabel = overview?.source ?? "poe.ninja cache";
-  const statusText = exchangeTab.error ?? exchangeTab.status;
+  const statusText = tradeWatchlistMode
+    ? `${filteredPins.length}/${exchangeWatchlistState.pins.length} local pins from cached exchange data.`
+    : exchangeTab.error ?? exchangeTab.status;
   const quantityLabel = selectedCategory?.feed === "stash" ? "Listings" : "Quantity";
-  const updatedAt = overview
+  const updatedAt = tradeWatchlistMode
+    ? `Local watchlist - ${exchangeWatchlistState.pins.length} pinned`
+    : overview
     ? `Last updated at ${formatTimestamp(overview.fetched_at_epoch_ms)}`
     : "Waiting for cached exchange snapshot";
+  const title = tradeWatchlistMode ? "Favorites" : selectedCategory?.label ?? "Currency";
 
   return `
     <section class="trade-market">
       <aside class="trade-sidebar">
         <div class="trade-sidebar-section">
           <p class="section-label">Personal</p>
-          <button class="trade-favorite-button" type="button" disabled>Favorites</button>
+          <button class="trade-favorite-button ${tradeWatchlistMode ? "is-active" : ""}" data-exchange-watchlist-toggle type="button">
+            <span>Favorites</span>
+            <strong>${exchangeWatchlistState.pins.length}</strong>
+          </button>
+          ${renderExchangeFocusPreset(exchangeTab, categories)}
         </div>
         <div class="trade-sidebar-section trade-sidebar-scroll">
           <p class="section-label">General</p>
@@ -2559,7 +3040,7 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
       <div class="trade-market-main">
         <header class="trade-market-header">
           <div>
-            <h2>${escapeHtml(selectedCategory?.label ?? "Currency")}</h2>
+            <h2>${escapeHtml(title)}</h2>
             <p>${escapeHtml(overview?.league ?? state.trade_league)} · ${escapeHtml(updatedAt)}</p>
           </div>
           <div class="trade-currency-strip">
@@ -2573,7 +3054,7 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
         </label>
 
         <div class="trade-market-meta">
-          <span>${escapeHtml(sourceLabel)}</span>
+          <span>${escapeHtml(tradeWatchlistMode ? "local watchlist cache" : sourceLabel)}</span>
           <strong>${escapeHtml(statusText)}</strong>
           <button class="trade-refresh-button" data-refresh-exchange type="button">Refresh</button>
         </div>
@@ -2582,20 +3063,49 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
           <div class="trade-table-header">
             <span>Item</span>
             <span>Price</span>
-            <span>${escapeHtml(quantityLabel)}</span>
+            <span>${escapeHtml(tradeWatchlistMode ? "Quantity" : quantityLabel)}</span>
             <span>History</span>
             <span>Actions</span>
           </div>
           <div class="trade-table-scroll">
             ${
-              filteredEntries.length
-                ? filteredEntries.map((entry) => renderExchangeRow(entry, exchangeTab, exchangeTab.selected_item_id)).join("")
-                : `<div class="trade-empty-row">${escapeHtml(exchangeEmptyMessage(exchangeTab, selectedCategory))}</div>`
+              tradeWatchlistMode
+                ? filteredPins.length
+                  ? filteredPins.map((pin) => renderExchangeWatchlistRow(pin, exchangeTab.selected_quote_currency_id ?? null)).join("")
+                  : `<div class="trade-empty-row">${escapeHtml(exchangeWatchlistEmptyMessage())}</div>`
+                : filteredEntries.length
+                  ? filteredEntries.map((entry) => renderExchangeRow(entry, exchangeTab, exchangeTab.selected_item_id)).join("")
+                  : `<div class="trade-empty-row">${escapeHtml(exchangeEmptyMessage(exchangeTab, selectedCategory))}</div>`
             }
           </div>
         </div>
       </div>
     </section>
+  `;
+}
+
+function renderExchangeFocusPreset(exchangeTab: ExchangeTabState, categories: ExchangeCategory[]) {
+  const focus = atlasFocusPreset();
+  const categoryIds = exchangeWatchlistFocusCategoryIds(atlasFocusState.selected);
+  const relevantCategories = categoryIds
+    .map((categoryId) => categories.find((category) => category.id === categoryId))
+    .filter((category): category is ExchangeCategory => Boolean(category?.available));
+  const selectedIsRelevant = categoryIds.includes(exchangeTab.selected_category_id);
+  const canPinCurrent = selectedIsRelevant && (exchangeTab.overview?.entries.length ?? 0) > 0 && !tradeWatchlistMode;
+
+  return `
+    <div class="trade-focus-preset">
+      <small>Atlas focus</small>
+      <strong>${escapeHtml(focus.label)}</strong>
+      <div class="trade-focus-preset-actions">
+        ${canPinCurrent ? `<button class="trade-mini-action" data-exchange-focus-pin type="button">Pin visible</button>` : ""}
+        ${relevantCategories.slice(0, 3).map((category) => `
+          <button class="trade-mini-action ${category.id === exchangeTab.selected_category_id && !tradeWatchlistMode ? "is-active" : ""}" data-exchange-category="${escapeAttribute(category.id)}" type="button">
+            ${escapeHtml(category.label)}
+          </button>
+        `).join("")}
+      </div>
+    </div>
   `;
 }
 
@@ -2712,6 +3222,8 @@ function renderExchangeRow(
   const priceIcon = priceIconUrl
     ? `<img class="currency-icon" src="${escapeAttribute(priceIconUrl)}" alt="" />`
     : "";
+  const categoryId = overview?.category_id ?? exchangeTab.selected_category_id;
+  const pinned = isExchangeWatchlistPinned(exchangeWatchlistState, categoryId, entry.id);
 
   return `
     <article class="trade-table-row ${selected}">
@@ -2732,8 +3244,50 @@ function renderExchangeRow(
         <strong>${formatHistoryPercent(entry.history_change_percent)}</strong>
       </div>
       <div class="trade-actions-cell">
+        <button class="trade-row-action trade-pin-action ${pinned ? "is-pinned" : ""}" data-pin-exchange="${escapeAttribute(entry.id)}" type="button" title="${pinned ? "Remove from Favorites" : "Pin to Favorites"}">${pinned ? "Pinned" : "Pin"}</button>
         <button class="trade-row-action" data-source-url="${escapeAttribute(itemUrl ?? overview?.source_url ?? "")}" type="button" ${itemUrl || overview?.source_url ? "" : "disabled"}>Open</button>
         <button class="trade-row-action" data-copy-exchange="${escapeAttribute(entry.name)}" type="button">Copy</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderExchangeWatchlistRow(pin: ExchangeWatchlistPin, selectedQuoteCurrencyId: string | null) {
+  const itemUrl = exchangeWatchlistEntryUrl(pin);
+  const icon = pin.icon_url
+    ? `<img class="trade-item-icon" src="${escapeAttribute(pin.icon_url)}" alt="" />`
+    : `<span class="trade-item-icon fallback"></span>`;
+  const history = renderSparkline(pin.sparkline, pin.history_change_percent);
+  const historyClass = exchangeHistoryClass(pin.history_change_percent);
+  const activeQuote = activeExchangeWatchlistQuote(pin, selectedQuoteCurrencyId);
+  const convertedPrice = convertExchangeWatchlistPrice(pin, selectedQuoteCurrencyId);
+  const priceCurrency = activeQuote?.currency ?? pin.primary_currency;
+  const priceIconUrl = priceCurrency ? resolveCurrencyIcon(priceCurrency.id, priceCurrency.icon_url) : null;
+  const priceIcon = priceIconUrl ? `<img class="currency-icon" src="${escapeAttribute(priceIconUrl)}" alt="" />` : "";
+  const staleLabel = pin.fetched_at_epoch_ms ? `cached ${formatRelativeAge(pin.fetched_at_epoch_ms)}` : "cached snapshot";
+
+  return `
+    <article class="trade-table-row">
+      <div class="trade-item-cell">
+        ${icon}
+        <div>
+          <strong>${escapeHtml(pin.name)}</strong>
+          <small>${escapeHtml(pin.category_label)} - ${escapeHtml(staleLabel)}</small>
+        </div>
+      </div>
+      <div class="trade-price-cell">
+        <strong>${convertedPrice === null ? "-" : formatCompactNumber(convertedPrice)}</strong>
+        ${priceIcon}
+      </div>
+      <div class="trade-quantity-cell">${pin.quantity === null ? "-" : formatCompactNumber(pin.quantity)}</div>
+      <div class="trade-history-cell ${historyClass}">
+        ${history}
+        <strong>${formatHistoryPercent(pin.history_change_percent)}</strong>
+      </div>
+      <div class="trade-actions-cell">
+        <button class="trade-row-action trade-pin-action is-pinned" data-unpin-exchange="${escapeAttribute(pin.id)}" data-unpin-exchange-category="${escapeAttribute(pin.category_id)}" type="button">Unpin</button>
+        <button class="trade-row-action" data-source-url="${escapeAttribute(itemUrl ?? pin.source_url ?? "")}" type="button" ${itemUrl || pin.source_url ? "" : "disabled"}>Open</button>
+        <button class="trade-row-action" data-copy-exchange="${escapeAttribute(pin.name)}" type="button">Copy</button>
       </div>
     </article>
   `;
@@ -2751,6 +3305,117 @@ function filteredExchangeEntries(exchangeTab: ExchangeTabState, query: string) {
     const haystack = [entry.name, entry.item_category ?? "", entry.id].join(" ").toLowerCase();
     return haystack.includes(normalizedQuery);
   });
+}
+
+function filteredExchangeWatchlistPins(watchlist: ExchangeWatchlistState, query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return watchlist.pins;
+  }
+
+  return watchlist.pins.filter((pin) => {
+    const haystack = [
+      pin.name,
+      pin.category_label,
+      pin.item_category ?? "",
+      pin.league,
+      pin.id,
+    ].join(" ").toLowerCase();
+    return haystack.includes(normalizedQuery);
+  });
+}
+
+function exchangeWatchlistSourceFromCurrentEntry(entryId: string): ExchangeWatchlistEntrySource | null {
+  const overview = state.exchange_tab.overview;
+  const entry = overview?.entries.find((candidate) => candidate.id === entryId);
+  if (!overview || !entry) {
+    return null;
+  }
+
+  return {
+    category_id: overview.category_id || state.exchange_tab.selected_category_id,
+    category_label: overview.category_label || exchangeCategoryLabel(state.exchange_tab.selected_category_id),
+    league: overview.league || state.trade_league,
+    source: overview.source || "poe.ninja cache",
+    source_url: overview.source_url || null,
+    fetched_at_epoch_ms: overview.fetched_at_epoch_ms,
+    primary_currency: overview.primary_currency,
+    quote_currencies: overview.quote_currencies,
+    entry,
+  };
+}
+
+function pinCurrentExchangeEntry(entryId: string) {
+  const source = exchangeWatchlistSourceFromCurrentEntry(entryId);
+  if (!source) {
+    pushStatus("exchange", "Cannot pin until this exchange category has cached data.");
+    return;
+  }
+
+  const wasPinned = isExchangeWatchlistPinned(exchangeWatchlistState, source.category_id, entryId);
+  exchangeWatchlistState = wasPinned
+    ? unpinExchangeWatchlistEntry(exchangeWatchlistState, source.category_id, entryId)
+    : pinExchangeWatchlistEntry(exchangeWatchlistState, source);
+  saveExchangeWatchlistState();
+  pushStatus("exchange", wasPinned ? `Removed ${source.entry.name} from Favorites.` : `Pinned ${source.entry.name} to Favorites.`);
+}
+
+function pinVisibleFocusExchangeEntries() {
+  const categoryIds = exchangeWatchlistFocusCategoryIds(atlasFocusState.selected);
+  const overview = state.exchange_tab.overview;
+  if (!overview || !categoryIds.includes(overview.category_id)) {
+    pushStatus("exchange", "Load an Atlas focus category before pinning its visible entries.");
+    return;
+  }
+
+  const visibleEntries = filteredExchangeEntries(state.exchange_tab, tradeSearchQuery).slice(0, 5);
+  if (!visibleEntries.length) {
+    pushStatus("exchange", "No visible exchange entries to pin.");
+    return;
+  }
+
+  visibleEntries.forEach((entry) => {
+    const source = exchangeWatchlistSourceFromCurrentEntry(entry.id);
+    if (source) {
+      exchangeWatchlistState = pinExchangeWatchlistEntry(exchangeWatchlistState, source);
+    }
+  });
+  saveExchangeWatchlistState();
+  pushStatus("exchange", `Pinned ${visibleEntries.length} ${atlasFocusPreset().label} watch entries.`);
+}
+
+function activeExchangeWatchlistQuote(pin: ExchangeWatchlistPin, selectedQuoteCurrencyId: string | null) {
+  return (
+    pin.quote_currencies.find((quote) => quote.currency.id === selectedQuoteCurrencyId) ??
+    pin.quote_currencies[0] ??
+    null
+  );
+}
+
+function convertExchangeWatchlistPrice(pin: ExchangeWatchlistPin, selectedQuoteCurrencyId: string | null) {
+  if (pin.price_in_primary === null) {
+    return null;
+  }
+
+  const activeQuote = activeExchangeWatchlistQuote(pin, selectedQuoteCurrencyId);
+  return activeQuote ? pin.price_in_primary * activeQuote.per_primary : pin.price_in_primary;
+}
+
+function exchangeWatchlistEntryUrl(pin: ExchangeWatchlistPin) {
+  if (!pin.source_url || !pin.details_id) {
+    return pin.source_url;
+  }
+  return `${pin.source_url}/${pin.details_id}`;
+}
+
+function exchangeWatchlistEmptyMessage() {
+  if (!exchangeWatchlistState.pins.length) {
+    return "No pinned exchange items yet. Pin rows from any cached Trade category to build a local watchlist.";
+  }
+  if (tradeSearchQuery.trim()) {
+    return `No pinned exchange items match "${tradeSearchQuery.trim()}".`;
+  }
+  return "Pinned exchange items will appear here from cached Trade data.";
 }
 
 function exchangeHeaderCurrencies(exchangeTab: ExchangeTabState) {
@@ -3177,19 +3842,35 @@ function renderAtlasOverviewDashboard() {
       </div>
 
       <div class="atlas-overview-grid">
-        <section class="atlas-card atlas-card-large">
+        <section class="atlas-card atlas-overview-run-card">
           <p class="section-label">Current Run</p>
-          <h3>${escapeHtml(area?.name ?? "Atlas")}</h3>
-          <div class="atlas-detail-list">
-            <span><strong>Type</strong>${escapeHtml(area?.area_type ?? "unknown")}</span>
-            <span><strong>Level</strong>${area?.area_level ?? "-"}</span>
-            <span><strong>Boss</strong>${escapeHtml(area?.boss ?? "Unknown")}</span>
-            <span><strong>Confidence</strong>${escapeHtml(mapConfidenceLabel(confidence))}</span>
-          </div>
-          <p>${escapeHtml(mapConfidenceDescription(confidence))}</p>
+          <h3>${escapeHtml(area?.name ?? "No map detected")}</h3>
+          ${area ? `
+            <div class="atlas-detail-list">
+              <span><strong>Type</strong>${escapeHtml(area.area_type)}</span>
+              <span><strong>Level</strong>${area.area_level ?? "-"}</span>
+              <span><strong>Boss</strong>${escapeHtml(area.boss ?? "Unknown")}</span>
+              <span><strong>Confidence</strong>${escapeHtml(mapConfidenceLabel(confidence))}</span>
+            </div>
+            <p>${escapeHtml(mapConfidenceDescription(confidence))}</p>
+          ` : renderAtlasEmptyState("Waiting for map context", "Enter a generated map or keep Client.txt readable so Reliquary can bind the current area.")}
         </section>
 
-        <section class="atlas-card atlas-card-large">
+        <section class="atlas-card atlas-overview-waystone-card">
+          <p class="section-label">Armed Waystone</p>
+          <h3>${escapeHtml(waystone?.name ?? "No waystone armed")}</h3>
+          ${waystone ? `
+            <div class="atlas-detail-list">
+              <span><strong>Tier</strong>${waystone.tier ?? "-"}</span>
+              <span><strong>Quantity</strong>${waystone.quantity != null ? `${waystone.quantity}%` : "-"}</span>
+              <span><strong>Rarity</strong>${waystone.rarity != null ? `${waystone.rarity}%` : "-"}</span>
+              <span><strong>Pack Size</strong>${waystone.pack_size != null ? `${waystone.pack_size}%` : "-"}</span>
+            </div>
+            <p>${escapeHtml(renderWaystoneStatsText(waystone))}</p>
+          ` : renderAtlasEmptyState("Copy a waystone first", "Atlas can still OCR an area-only Tab overlay, but armed waystones give the safest run binding and hazard summary.")}
+        </section>
+
+        <section class="atlas-card atlas-overview-safety-card">
           <p class="section-label">Quick Safety</p>
           <h3>${escapeHtml(safetySummaryLabel(summary))}</h3>
           <div class="atlas-safety-strip">
@@ -3198,11 +3879,14 @@ function renderAtlasOverviewDashboard() {
             <span class="atlas-danger-pill warning">${summary.warning} warning</span>
           </div>
           <div class="atlas-warning-list compact">
-            ${warnings.length ? warnings.slice(0, 3).map(renderAtlasWarning).join("") : `<div class="empty-listing">No profile warnings for the armed/current waystone.</div>`}
+            ${warnings.length ? warnings.slice(0, 3).map(renderAtlasWarning).join("") : renderAtlasEmptyState(
+              waystone ? "No profile warnings" : "No hazard data yet",
+              waystone ? "This waystone has no matched warnings for the active danger profile." : "Arm a waystone or read the Tab overlay to populate safety context.",
+            )}
           </div>
         </section>
 
-        <section class="atlas-card atlas-card-full atlas-next-action-card">
+        <section class="atlas-card atlas-next-action-card">
           <p class="section-label">Next Action</p>
           <div class="atlas-action-heading">
             <h3>${escapeHtml(atlasActionTitle(waystone, confidence))}</h3>
@@ -3265,7 +3949,10 @@ function renderAtlasSafetyDashboard() {
         <p class="section-label">Waystone Safety</p>
         <h3>${escapeHtml(profileLabel(state.hazard_profile_id))}</h3>
         <div class="atlas-warning-list">
-          ${warnings.length ? warnings.map(renderAtlasWarning).join("") : `<div class="empty-listing">No profile warnings for the armed/current waystone.</div>`}
+          ${warnings.length ? warnings.map(renderAtlasWarning).join("") : renderAtlasEmptyState(
+            waystone ? "No profile warnings" : "No waystone safety data",
+            waystone ? "The selected profile did not flag this waystone. Keep an eye on player comfort, but Reliquary has no matched warning here." : "Copy a waystone or use Tab OCR during a map to make this panel useful.",
+          )}
         </div>
       </section>
     </div>
@@ -3278,9 +3965,36 @@ function renderAtlasProfileDashboard() {
     { id: "energy_shield_recovery", label: "Energy Shield / Recovery", rules: [] },
     { id: "minion", label: "Minion", rules: [] },
   ];
+  const snapshot = state.build_snapshot;
+  const fingerprint = state.build_fingerprint;
+  const snapshotTitle = snapshot?.character
+    ? `${snapshot.character}${snapshot.account ? ` @ ${snapshot.account}` : ""}`
+    : "No personal snapshot";
+  const snapshotMeta = snapshot
+    ? [
+        snapshot.league ? `League: ${snapshot.league}` : null,
+        snapshot.class_name ?? snapshot.ascendancy,
+        snapshot.level ? `Lv ${snapshot.level}` : null,
+        `Profile: ${profileLabel(fingerprint?.recommended_profile_id ?? state.hazard_profile_id)}`,
+      ].filter(Boolean).join(" | ")
+    : "Paste a public PoE.ninja character URL. Reliquary stays OAuth-free and stores only a local snapshot.";
+  const tagMarkup = fingerprint?.tags.length
+    ? fingerprint.tags.map((tag) => `<span class="atlas-build-tag">${escapeHtml(tag.replace(/_/g, " "))}</span>`).join("")
+    : `<span class="atlas-build-tag muted">metadata only</span>`;
+  const notes = fingerprint?.notes.length
+    ? `<div class="atlas-build-notes">${fingerprint.notes.map((note) => `<small>${escapeHtml(note)}</small>`).join("")}</div>`
+    : "";
 
   return `
     <div class="atlas-dashboard">
+      <section class="atlas-card atlas-card-full">
+        <p class="section-label">Build Profile</p>
+        <h3>${escapeHtml(snapshotTitle)}</h3>
+        <p>${escapeHtml(snapshotMeta)}</p>
+        ${renderBuildProfileImportControls()}
+        <div class="atlas-build-tags">${tagMarkup}</div>
+        ${notes}
+      </section>
       <section class="atlas-card atlas-card-full">
         <p class="section-label">Danger Profile</p>
         <h3>${escapeHtml(profileLabel(state.hazard_profile_id))}</h3>
@@ -3299,13 +4013,81 @@ function renderAtlasProfileDashboard() {
 }
 
 function renderAtlasFocusDashboard() {
+  const focus = atlasFocusPreset();
+  const { area } = atlasContext();
+  const checklist = focus.checklist.map((item, index) => {
+    const key = `${focus.id}:${index}`;
+    return `
+      <label class="atlas-focus-check">
+        <input type="checkbox" data-atlas-focus-check="${escapeAttribute(key)}" ${atlasFocusState.checklist[key] ? "checked" : ""} />
+        <span>${escapeHtml(item)}</span>
+      </label>
+    `;
+  }).join("");
+  const completed = focus.checklist.filter((_, index) => atlasFocusState.checklist[`${focus.id}:${index}`]).length;
+
   return `
     <div class="atlas-dashboard">
-      <section class="atlas-card atlas-card-full">
+      <div class="atlas-summary-grid three">
+        ${renderAtlasStatCard("Selected Focus", focus.label, `${completed}/${focus.checklist.length} checklist`)}
+        ${renderAtlasStatCard("Current Boss", area?.boss ?? "Unknown", area?.name ?? "Waiting for map context")}
+        ${renderAtlasStatCard("Fortress Scout", "Manual", "Notes-only until pathing data is reliable")}
+      </div>
+
+      <section class="atlas-card atlas-card-full atlas-focus-card">
         <p class="section-label">Endgame Focus</p>
-        <h3>0.5 Atlas companion</h3>
-        <p>Mechanic focus, boss/Fortress checklists, and economy watchlist hooks will land here after the map-context foundation is tested.</p>
+        <h3>${escapeHtml(focus.label)}</h3>
+        <p>${escapeHtml(focus.summary)}</p>
+        <div class="atlas-focus-grid">
+          ${ATLAS_FOCUS_PRESETS.map((preset) => `
+            <button class="atlas-focus-option ${preset.id === focus.id ? "is-active" : ""}" type="button" data-atlas-focus="${escapeAttribute(preset.id)}">
+              <strong>${escapeHtml(preset.label)}</strong>
+              <span>${escapeHtml(preset.summary)}</span>
+            </button>
+          `).join("")}
+        </div>
       </section>
+
+      <div class="atlas-overview-grid atlas-focus-workbench">
+        <section class="atlas-card">
+          <div class="atlas-card-header-row">
+            <div>
+              <p class="section-label">Checklist</p>
+              <h3>${completed}/${focus.checklist.length} done</h3>
+            </div>
+            <button class="atlas-secondary-action" type="button" data-atlas-focus-reset>Reset</button>
+          </div>
+          <div class="atlas-focus-checklist">${checklist}</div>
+        </section>
+
+        <section class="atlas-card">
+          <p class="section-label">Run Notes</p>
+          <h3>Manual tracker</h3>
+          <textarea class="atlas-focus-notes" data-atlas-focus-notes placeholder="Example: fortress path east, skip chilled ground maps, save logbooks for later.">${escapeHtml(atlasFocusState.notes)}</textarea>
+          <p>Stored locally on this machine. No account sync, no hidden automation.</p>
+        </section>
+
+        <section class="atlas-card atlas-card-full">
+          <p class="section-label">Boss / Fortress Placeholder</p>
+          <h3>${escapeHtml(area?.boss ? `Boss: ${area.boss}` : "Useful, honest placeholders")}</h3>
+          <div class="atlas-detail-list">
+            <span><strong>Boss</strong>${escapeHtml(area?.boss ?? "Unknown until Client.txt/source data identifies it")}</span>
+            <span><strong>Fortress</strong>Manual note only</span>
+            <span><strong>Area</strong>${escapeHtml(area?.name ?? "No active map")}</span>
+            <span><strong>Risk</strong>${escapeHtml(profileLabel(state.hazard_profile_id))}</span>
+          </div>
+          <p>Reliquary will show boss/fortress context only when it has defensible local data. Until then, this lane is a reminder board, not fake guidance.</p>
+        </section>
+      </div>
+    </div>
+  `;
+}
+
+function renderAtlasEmptyState(title: string, copy: string) {
+  return `
+    <div class="atlas-empty-state">
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(copy)}</span>
     </div>
   `;
 }
@@ -3501,8 +4283,8 @@ function renderSettingsPanel() {
 
         <div class="settings-field">
           <span>
-            <strong>Scan Hotkey</strong>
-            <small>Copies the hovered item into Reliquary for pricing.</small>
+            <strong>Item Metadata Hotkey</strong>
+            <small>Copies the hovered item into Scan for pricing and market checks.</small>
           </span>
           <div class="keybind-row">
             <select data-setting="scanMod">
@@ -3516,6 +4298,27 @@ function renderSettingsPanel() {
               maxlength="1"
               class="keybind-letter"
               value="${escapeAttribute(appSettings.scanKey)}"
+            />
+          </div>
+        </div>
+
+        <div class="settings-field">
+          <span>
+            <strong>Waystone Metadata Hotkey</strong>
+            <small>Copies the hovered waystone into Atlas and arms it for the next map. It does not replace the item scan card.</small>
+          </span>
+          <div class="keybind-row">
+            <select data-setting="waystoneMod">
+              <option value="Ctrl"${appSettings.waystoneMod === "Ctrl" ? " selected" : ""}>Ctrl</option>
+              <option value="Alt"${appSettings.waystoneMod === "Alt" ? " selected" : ""}>Alt</option>
+            </select>
+            <span>+</span>
+            <input
+              data-setting="waystoneKey"
+              type="text"
+              maxlength="1"
+              class="keybind-letter"
+              value="${escapeAttribute(appSettings.waystoneKey)}"
             />
           </div>
         </div>
@@ -3937,6 +4740,8 @@ function readAppSettings(): AppSettings {
       saturation: clampNumber(Number(parsed.saturation), 0, 200, DEFAULT_APP_SETTINGS.saturation),
       scanMod: parsed.scanMod === "Ctrl" || parsed.scanMod === "Alt" ? parsed.scanMod : DEFAULT_APP_SETTINGS.scanMod,
       scanKey: normalizeShortcutKey(parsed.scanKey, DEFAULT_APP_SETTINGS.scanKey),
+      waystoneMod: parsed.waystoneMod === "Ctrl" || parsed.waystoneMod === "Alt" ? parsed.waystoneMod : DEFAULT_APP_SETTINGS.waystoneMod,
+      waystoneKey: normalizeShortcutKey(parsed.waystoneKey, DEFAULT_APP_SETTINGS.waystoneKey),
       tradeMod: parsed.tradeMod === "Ctrl" || parsed.tradeMod === "Alt" ? parsed.tradeMod : DEFAULT_APP_SETTINGS.tradeMod,
       tradeKey: normalizeShortcutKey(parsed.tradeKey, DEFAULT_APP_SETTINGS.tradeKey),
     };
@@ -3985,6 +4790,8 @@ function applyAppSettings(settings: AppSettings) {
   void invoke("set_keybinds", {
     scanMod: settings.scanMod,
     scanKey: settings.scanKey,
+    waystoneMod: settings.waystoneMod,
+    waystoneKey: settings.waystoneKey,
     tradeMod: settings.tradeMod,
     tradeKey: settings.tradeKey,
   }).catch((err) => pushStatus("keybinds", String(err)));
@@ -4242,6 +5049,17 @@ function syncCompactWindowHeight() {
   );
 }
 
+function queueCompactWindowHeightSync() {
+  if (compactHeightFrame) {
+    cancelAnimationFrame(compactHeightFrame);
+  }
+
+  compactHeightFrame = requestAnimationFrame(() => {
+    compactHeightFrame = 0;
+    syncCompactWindowHeight();
+  });
+}
+
 function queueEvaluateLayoutSync() {
   if (evaluateLayoutFrame) {
     cancelAnimationFrame(evaluateLayoutFrame);
@@ -4400,6 +5218,10 @@ if (!isListingPreviewWindow && leagueElement) {
     const exchangeRefreshButton = target.closest<HTMLButtonElement>("[data-refresh-exchange]");
     const exchangeCopyButton = target.closest<HTMLButtonElement>("[data-copy-exchange]");
     const exchangeQuoteButton = target.closest<HTMLButtonElement>("[data-exchange-quote]");
+    const exchangeWatchlistToggle = target.closest<HTMLButtonElement>("[data-exchange-watchlist-toggle]");
+    const exchangePinButton = target.closest<HTMLButtonElement>("[data-pin-exchange]");
+    const exchangeUnpinButton = target.closest<HTMLButtonElement>("[data-unpin-exchange]");
+    const exchangeFocusPinButton = target.closest<HTMLButtonElement>("[data-exchange-focus-pin]");
     const stashNoteButton = target.closest<HTMLButtonElement>("[data-copy-stash-note]");
     const resetVisualSettingsButton = target.closest<HTMLButtonElement>("[data-reset-visual-settings]");
     const campaignStepButton = target.closest<HTMLElement>("[data-campaign-step-key]");
@@ -4422,10 +5244,32 @@ if (!isListingPreviewWindow && leagueElement) {
     const clearPendingWaystoneButton = target.closest<HTMLButtonElement>("[data-clear-pending-waystone]");
     const requestMapOcrButton = target.closest<HTMLButtonElement>("[data-request-map-ocr]");
     const clearAtlasHistoryButton = target.closest<HTMLButtonElement>("[data-clear-atlas-history]");
+    const importBuildProfileButton = target.closest<HTMLButtonElement>("[data-import-build-profile]");
+    const importPobProfileButton = target.closest<HTMLButtonElement>("[data-import-pob-profile]");
+    const profileReimportButton = target.closest<HTMLButtonElement>("[data-profile-reimport]");
+    const atlasFocusButton = target.closest<HTMLButtonElement>("[data-atlas-focus]");
+    const atlasFocusResetButton = target.closest<HTMLButtonElement>("[data-atlas-focus-reset]");
 
     const atlasSectionButton = target.closest<HTMLButtonElement>("[data-atlas-section]");
     if (atlasSectionButton?.dataset.atlasSection) {
       selectedAtlasSection = atlasSectionButton.dataset.atlasSection as typeof selectedAtlasSection;
+      render();
+      return;
+    }
+
+    if (atlasFocusButton?.dataset.atlasFocus && isAtlasFocusId(atlasFocusButton.dataset.atlasFocus)) {
+      atlasFocusState.selected = atlasFocusButton.dataset.atlasFocus;
+      saveAtlasFocusState();
+      render();
+      return;
+    }
+
+    if (atlasFocusResetButton) {
+      const focus = atlasFocusPreset();
+      focus.checklist.forEach((_, index) => {
+        delete atlasFocusState.checklist[`${focus.id}:${index}`];
+      });
+      saveAtlasFocusState();
       render();
       return;
     }
@@ -4437,6 +5281,54 @@ if (!isListingPreviewWindow && leagueElement) {
       void invoke("set_hazard_profile", { profileId: hazardProfileButton.dataset.hazardProfile }).catch((error) =>
         pushStatus("hazards", String(error)),
       );
+      return;
+    }
+
+    if (importBuildProfileButton) {
+      const input = root.querySelector<HTMLInputElement>("[data-build-profile-url]");
+      buildProfileUrlInput = input?.value.trim() ?? buildProfileUrlInput;
+      if (!buildProfileUrlInput) {
+        pushStatus("build-profile", "Paste a PoE.ninja character URL first.");
+        return;
+      }
+      pushStatus("build-profile", "Importing PoE.ninja character snapshot...");
+      await invoke<BuildProfileImportResult>("import_poe_ninja_build_url", { url: buildProfileUrlInput })
+        .then((result) => {
+          state.build_snapshot = result.snapshot;
+          state.build_fingerprint = result.fingerprint;
+          state.hazard_profile_id = result.fingerprint.recommended_profile_id;
+          pushStatus("build-profile", `Imported ${result.snapshot.character ?? "character"} snapshot.`);
+          render();
+        })
+        .catch((error) => pushStatus("build-profile", String(error)));
+      return;
+    }
+
+    if (profileReimportButton) {
+      const card = root.querySelector<HTMLElement>("[data-profile-import-card]");
+      if (card) {
+        card.hidden = !card.hidden;
+      }
+      return;
+    }
+
+    if (importPobProfileButton) {
+      const input = root.querySelector<HTMLTextAreaElement>("[data-build-profile-text]");
+      buildProfileTextInput = input?.value.trim() ?? buildProfileTextInput;
+      if (!buildProfileTextInput) {
+        pushStatus("build-profile", "Paste a PoB export code or readable build text first.");
+        return;
+      }
+      pushStatus("build-profile", "Importing local PoB/build snapshot...");
+      await invoke<BuildProfileImportResult>("import_pob_build_text", { text: buildProfileTextInput })
+        .then((result) => {
+          state.build_snapshot = result.snapshot;
+          state.build_fingerprint = result.fingerprint;
+          state.hazard_profile_id = result.fingerprint.recommended_profile_id;
+          pushStatus("build-profile", `Imported ${result.snapshot.character ?? "build"} profile.`);
+          render();
+        })
+        .catch((error) => pushStatus("build-profile", String(error)));
       return;
     }
 
@@ -4617,9 +5509,45 @@ if (!isListingPreviewWindow && leagueElement) {
       return;
     }
 
+    if (exchangeWatchlistToggle) {
+      tradeWatchlistMode = !tradeWatchlistMode;
+      render();
+      return;
+    }
+
+    if (exchangePinButton?.dataset.pinExchange) {
+      pinCurrentExchangeEntry(exchangePinButton.dataset.pinExchange);
+      render();
+      return;
+    }
+
+    if (exchangeUnpinButton?.dataset.unpinExchange && exchangeUnpinButton.dataset.unpinExchangeCategory) {
+      const pin = exchangeWatchlistState.pins.find(
+        (candidate) =>
+          candidate.id === exchangeUnpinButton.dataset.unpinExchange &&
+          candidate.category_id === exchangeUnpinButton.dataset.unpinExchangeCategory,
+      );
+      exchangeWatchlistState = unpinExchangeWatchlistEntry(
+        exchangeWatchlistState,
+        exchangeUnpinButton.dataset.unpinExchangeCategory,
+        exchangeUnpinButton.dataset.unpinExchange,
+      );
+      saveExchangeWatchlistState();
+      pushStatus("exchange", `Removed ${pin?.name ?? "watchlist entry"} from Favorites.`);
+      render();
+      return;
+    }
+
+    if (exchangeFocusPinButton) {
+      pinVisibleFocusExchangeEntries();
+      render();
+      return;
+    }
+
     if (exchangeCategoryButton?.dataset.exchangeCategory) {
       const categoryId = exchangeCategoryButton.dataset.exchangeCategory;
       const categoryLabel = exchangeCategoryButton.textContent?.trim() ?? exchangeCategoryLabel(categoryId);
+      tradeWatchlistMode = false;
       tradeSidebarScrollTop =
         exchangeCategoryButton.closest<HTMLElement>(".trade-sidebar-scroll")?.scrollTop ?? tradeSidebarScrollTop;
       state.exchange_tab = {
@@ -4751,7 +5679,7 @@ if (!isListingPreviewWindow && leagueElement) {
     if (compactTitleClick && campaignGuideAct > 0) {
       campaignExpanded = !campaignExpanded;
       render();
-      syncCompactWindowHeight();
+      queueCompactWindowHeightSync();
       return;
     }
   });
@@ -4779,7 +5707,7 @@ if (!isListingPreviewWindow && leagueElement) {
     if (settingInput?.dataset.setting) {
       const el = settingInput as HTMLInputElement | HTMLSelectElement;
       const name = el.dataset.setting!;
-      if (name === "scanMod" || name === "tradeMod") {
+      if (name === "scanMod" || name === "waystoneMod" || name === "tradeMod") {
         const val = el.value as "Ctrl" | "Alt";
         if (val === "Ctrl" || val === "Alt") {
           appSettings[name] = val;
@@ -4841,6 +5769,33 @@ if (!isListingPreviewWindow && leagueElement) {
     const tradeSearch = target.closest<HTMLInputElement>("[data-trade-search]");
     const settingInput = target.closest<HTMLInputElement>("[data-setting]");
     const templeSaveInput = target.closest<HTMLInputElement>("[data-temple-save-name]");
+    const buildProfileInput = target.closest<HTMLInputElement>("[data-build-profile-url]");
+    const buildProfileText = target.closest<HTMLTextAreaElement>("[data-build-profile-text]");
+    const atlasFocusNotes = target.closest<HTMLTextAreaElement>("[data-atlas-focus-notes]");
+    const atlasFocusCheck = target.closest<HTMLInputElement>("[data-atlas-focus-check]");
+
+    if (atlasFocusNotes) {
+      atlasFocusState.notes = atlasFocusNotes.value;
+      saveAtlasFocusState();
+      return;
+    }
+
+    if (atlasFocusCheck?.dataset.atlasFocusCheck) {
+      atlasFocusState.checklist[atlasFocusCheck.dataset.atlasFocusCheck] = atlasFocusCheck.checked;
+      saveAtlasFocusState();
+      render();
+      return;
+    }
+
+    if (buildProfileInput) {
+      buildProfileUrlInput = buildProfileInput.value;
+      return;
+    }
+
+    if (buildProfileText) {
+      buildProfileTextInput = buildProfileText.value;
+      return;
+    }
 
     if (templeSaveInput) {
       templeSaveName = templeSaveInput.value;
@@ -4861,13 +5816,13 @@ if (!isListingPreviewWindow && leagueElement) {
         appSettings.saturation = clampNumber(Number(settingInput.value), 0, 200, DEFAULT_APP_SETTINGS.saturation);
         updateSettingOutput("saturation");
       }
-      if (name === "scanMod" || name === "tradeMod") {
+      if (name === "scanMod" || name === "waystoneMod" || name === "tradeMod") {
         const val = settingInput.value as "Ctrl" | "Alt";
         if (val === "Ctrl" || val === "Alt") {
           appSettings[name] = val;
         }
       }
-      if (name === "scanKey" || name === "tradeKey") {
+      if (name === "scanKey" || name === "waystoneKey" || name === "tradeKey") {
         return; // handled via keydown listener below
       }
 
@@ -4890,7 +5845,7 @@ if (!isListingPreviewWindow && leagueElement) {
     if (!keyInput?.dataset.setting) return;
 
     const name = keyInput.dataset.setting;
-    if (name !== "scanKey" && name !== "tradeKey") return;
+    if (name !== "scanKey" && name !== "waystoneKey" && name !== "tradeKey") return;
 
     const key = event.key.toUpperCase();
     if (isSupportedShortcutKey(key)) {
@@ -5226,6 +6181,14 @@ if (!isListingPreviewWindow && leagueElement) {
     render();
   });
 
+  listen<BuildProfileImportResult>("scan://build-profile-updated", (event) => {
+    state.build_snapshot = event.payload.snapshot;
+    state.build_fingerprint = event.payload.fingerprint;
+    state.hazard_profile_id = event.payload.fingerprint.recommended_profile_id;
+    buildProfileUrlInput = event.payload.snapshot.source_url ?? buildProfileUrlInput;
+    render();
+  });
+
   void invoke<HazardProfile[]>("get_hazard_profiles")
     .then((profiles) => {
       hazardProfiles = profiles;
@@ -5241,6 +6204,10 @@ if (!isListingPreviewWindow && leagueElement) {
       state.current_area = initialState.current_area || null;
       state.pending_waystone = initialState.pending_waystone || null;
       state.active_map_run = initialState.active_map_run || null;
+      state.hazard_profile_id = initialState.hazard_profile_id || state.hazard_profile_id;
+      state.build_snapshot = initialState.build_snapshot || null;
+      state.build_fingerprint = initialState.build_fingerprint || null;
+      buildProfileUrlInput = state.build_snapshot?.source_url ?? buildProfileUrlInput;
       if (state.active_map_run) {
         upsertAtlasRun(state.active_map_run);
       }

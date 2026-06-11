@@ -164,6 +164,7 @@ fn summarize_ocr_mods(normalized_mods: &[String]) -> MapOcrSummary {
         if lower.contains("rarity")
             || lower.contains("quantity")
             || lower.contains("pack size")
+            || lower.contains("experience")
             || lower.contains("waystone")
             || lower.contains("chest")
         {
@@ -277,6 +278,7 @@ fn looks_like_map_modifier(line: &str) -> bool {
         "area",
         "pack size",
         "rarity",
+        "experience",
         "quantity",
         "waystones",
         "chests",
@@ -468,9 +470,7 @@ fn parse_ocr_debug_lines(stdout: &str) -> Result<Vec<OcrDebugLine>, serde_json::
 fn strip_json_control_characters(input: &str) -> String {
     input
         .chars()
-        .filter(|character| {
-            !character.is_control() || matches!(character, '\n' | '\r' | '\t')
-        })
+        .filter(|character| !character.is_control() || matches!(character, '\n' | '\r' | '\t'))
         .collect()
 }
 
@@ -630,10 +630,16 @@ fn prune_ocr_debug_artifacts(debug_dir: &PathBuf) {
         if !file_name.starts_with(OCR_DEBUG_ARTIFACT_PREFIX) {
             continue;
         }
-        let Some(stem) = path.file_stem().map(|stem| stem.to_string_lossy().to_string()) else {
+        let Some(stem) = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+        else {
             continue;
         };
-        let Some(modified) = entry.metadata().ok().and_then(|metadata| metadata.modified().ok())
+        let Some(modified) = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
         else {
             continue;
         };
@@ -809,6 +815,7 @@ mod tests {
                 "AREA CONTAINS BREACHES".to_string(),
                 "CHESTS HAVE 20% INCREASED ITEM QUANTITY".to_string(),
                 "18% INCREASED RARITY OF ITEMS FOUND IN THIS AREA".to_string(),
+                "114% INCREASED EXPERIENCE GAIN".to_string(),
                 "9% INCREASED PACK SIZE".to_string(),
                 "35% MORE WAYSTONES FOUND IN AREA".to_string(),
                 "PLAYERS ARE PERIODICALLY CURSED WITH ENFEEBLE".to_string(),
@@ -818,9 +825,9 @@ mod tests {
         );
 
         let summary = evidence.summary.expect("summary");
-        assert_eq!(summary.modifier_count, 7);
+        assert_eq!(summary.modifier_count, 8);
         assert!(summary.content_flags.contains(&"Breach".to_string()));
-        assert_eq!(summary.reward_lines.len(), 4);
+        assert_eq!(summary.reward_lines.len(), 5);
         assert_eq!(summary.player_danger_lines.len(), 1);
         assert_eq!(summary.monster_danger_lines.len(), 1);
     }

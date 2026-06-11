@@ -159,6 +159,111 @@ pub fn default_hazard_profiles() -> Vec<HazardProfile> {
                 ),
             ],
         },
+        HazardProfile {
+            id: "armour".to_string(),
+            label: "Armour".to_string(),
+            rules: vec![
+                rule(
+                    "Monsters Overwhelm",
+                    HazardSeverity::Danger,
+                    "Overwhelm directly cuts through armour mitigation and can create physical damage spikes.",
+                ),
+                rule(
+                    "less Armour",
+                    HazardSeverity::Danger,
+                    "Armour reduction weakens the build's primary physical mitigation layer.",
+                ),
+                rule(
+                    "Monsters deal",
+                    HazardSeverity::Warning,
+                    "Extra monster damage increases the pressure on armour recovery windows.",
+                ),
+            ],
+        },
+        HazardProfile {
+            id: "evasion".to_string(),
+            label: "Evasion".to_string(),
+            rules: vec![
+                rule(
+                    "Monsters have increased Accuracy",
+                    HazardSeverity::Danger,
+                    "Accuracy bonuses reduce the value of evasion and make avoidance less reliable.",
+                ),
+                rule(
+                    "Monsters cannot be Blinded",
+                    HazardSeverity::Warning,
+                    "Blind immunity weakens evasion-layered defenses that rely on accuracy suppression.",
+                ),
+                rule(
+                    "Monsters deal",
+                    HazardSeverity::Warning,
+                    "Large monster damage bonuses are dangerous when avoidance fails.",
+                ),
+            ],
+        },
+        HazardProfile {
+            id: "flask_sustain".to_string(),
+            label: "Flask Sustain".to_string(),
+            rules: vec![
+                rule(
+                    "reduced Flask Charges",
+                    HazardSeverity::Danger,
+                    "Reduced flask charge generation can disable uptime for builds that rely on flasks.",
+                ),
+                rule(
+                    "Players gain reduced Flask Charges",
+                    HazardSeverity::Danger,
+                    "Reduced flask charges directly weakens sustain and panic recovery.",
+                ),
+                rule(
+                    "less Recovery",
+                    HazardSeverity::Warning,
+                    "Recovery penalties make flask downtime more punishing.",
+                ),
+            ],
+        },
+        HazardProfile {
+            id: "bossing".to_string(),
+            label: "Bossing".to_string(),
+            rules: vec![
+                rule(
+                    "Unique Boss",
+                    HazardSeverity::Warning,
+                    "Boss modifiers can turn otherwise safe maps into burst-damage checks.",
+                ),
+                rule(
+                    "Monsters deal",
+                    HazardSeverity::Warning,
+                    "Extra monster damage is especially dangerous during boss arenas.",
+                ),
+                rule(
+                    "Monsters have increased Area of Effect",
+                    HazardSeverity::Warning,
+                    "Larger boss and rare monster skills reduce dodge space.",
+                ),
+            ],
+        },
+        HazardProfile {
+            id: "xp_safe".to_string(),
+            label: "XP-safe".to_string(),
+            rules: vec![
+                rule(
+                    "Monsters deal",
+                    HazardSeverity::Danger,
+                    "XP-safe mapping should avoid broad monster damage multipliers.",
+                ),
+                rule(
+                    "Monsters penetrate",
+                    HazardSeverity::Danger,
+                    "Penetration is a common source of unexpected deaths during XP pushes.",
+                ),
+                rule(
+                    "Area contains patches",
+                    HazardSeverity::Warning,
+                    "Ground effects add avoidable death risk during fast clear.",
+                ),
+            ],
+        },
     ]
 }
 
@@ -293,5 +398,61 @@ mod tests {
         assert_eq!(summary.danger, 1);
         assert_eq!(summary.build_breaking, 1);
         assert_eq!(summary.total(), 3);
+    }
+
+    #[test]
+    fn armour_profile_flags_armour_specific_mods() {
+        let profile = default_hazard_profiles()
+            .into_iter()
+            .find(|profile| profile.id == "armour")
+            .unwrap();
+        let modifiers = vec![
+            "Monsters Overwhelm 35% Physical Damage Reduction".to_string(),
+            "Players have 40% less Armour".to_string(),
+        ];
+
+        let warnings = check_waystone_profile_hazards(&modifiers, &profile);
+
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings
+            .iter()
+            .all(|warning| warning.severity == HazardSeverity::Danger));
+    }
+
+    #[test]
+    fn evasion_profile_flags_accuracy_but_not_safe_pack_size() {
+        let profile = default_hazard_profiles()
+            .into_iter()
+            .find(|profile| profile.id == "evasion")
+            .unwrap();
+        let modifiers = vec![
+            "Monsters have 38% increased Accuracy Rating".to_string(),
+            "9% increased Pack Size".to_string(),
+        ];
+
+        let warnings = check_waystone_profile_hazards(&modifiers, &profile);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(
+            warnings[0].matched_pattern,
+            "Monsters have increased Accuracy"
+        );
+    }
+
+    #[test]
+    fn flask_profile_flags_reduced_flask_charges() {
+        let profile = default_hazard_profiles()
+            .into_iter()
+            .find(|profile| profile.id == "flask_sustain")
+            .unwrap();
+        let modifiers = vec![
+            "Players gain 34% reduced Flask Charges".to_string(),
+            "12% increased Rarity of Items found in this Area".to_string(),
+        ];
+
+        let warnings = check_waystone_profile_hazards(&modifiers, &profile);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].severity, HazardSeverity::Danger);
     }
 }
