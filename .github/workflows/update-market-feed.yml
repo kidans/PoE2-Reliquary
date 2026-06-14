@@ -3,7 +3,9 @@ name: Update shared market feed
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17,47 * * * *"
+    # Run more often than the upstream cadence so delayed GitHub cron jobs do
+    # not leave the 30-minute comparison without a usable checkpoint.
+    - cron: "2,17,32,47 * * * *"
 
 permissions:
   contents: read
