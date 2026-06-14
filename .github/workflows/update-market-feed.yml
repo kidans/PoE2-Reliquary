@@ -1,0 +1,57 @@
+name: Update shared market feed
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17,47 * * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: market-feed-pages
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Restore rolling history
+        uses: actions/cache/restore@v4
+        with:
+          path: .market-history
+          key: market-history-${{ github.run_id }}
+          restore-keys: |
+            market-history-
+      - name: Collect and calculate market periods
+        run: npm run market:collect
+      - name: Save rolling history
+        uses: actions/cache/save@v4
+        with:
+          path: .market-history
+          key: market-history-${{ github.run_id }}
+      - name: Stage Pages artifact
+        run: |
+          rm -rf _site
+          mkdir -p _site/market-feed
+          cp -R site/. _site/
+          cp -R public/. _site/
+          mkdir -p _site/brand
+          cp src-tauri/icons/icon.ico _site/brand/reliquary.ico
+          cp -R market-feed/. _site/market-feed/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - name: Deploy product site and shared feed
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -63,6 +63,20 @@ import {
   type ExchangeWatchlistState,
 } from "./exchange-watchlist";
 import {
+  MARKET_INITIAL_ROWS,
+  MARKET_ROW_INCREMENT,
+  marketBaselineMessage,
+  readTradeViewPreference,
+  visibleMarketMovers,
+  writeTradeViewPreference,
+  type MarketBoardDataset,
+  type MarketConfidence,
+  type MarketDirection,
+  type MarketMover,
+  type TradeSubView,
+} from "./market-board";
+import { loadMarketBoardDataset, type MarketFeedResult } from "./market-feed";
+import {
   clearAtlasRunHistory as clearAtlasRunHistoryStorage,
   completeAtlasRun as completeAtlasRunRecord,
   incrementAtlasRunDeaths as incrementAtlasRunDeathsRecord,
@@ -522,6 +536,7 @@ const CAMPAIGN_STORAGE_KEY = "reliquary.campaign.progress";
 const CAMPAIGN_ZONES_KEY = "reliquary.campaign.zones";
 const ATLAS_FOCUS_STORAGE_KEY = "reliquary.atlas.focus";
 const EXCHANGE_WATCHLIST_STORAGE_KEY = "reliquary.exchange.watchlist";
+const TRADE_VIEW_STORAGE_KEY = "reliquary.trade.view.v1";
 
 const ATLAS_FOCUS_PRESETS: {
   id: AtlasFocusId;
@@ -590,7 +605,25 @@ let campaignMapRuns: MapRun[] = [];
 let atlasRunHistory: AtlasRunRecord[] = [];
 let atlasFocusState: AtlasFocusState = readAtlasFocusState();
 let exchangeWatchlistState: ExchangeWatchlistState = readExchangeWatchlistState();
-let tradeWatchlistMode = false;
+let tradeViewPreference = readTradeViewPreference(localStorage, TRADE_VIEW_STORAGE_KEY);
+let tradeWatchlistMode = tradeViewPreference.view === "favorites";
+let marketBoardLoadState: {
+  key: string | null;
+  status: "idle" | "loading" | "ready" | "error";
+  dataset: MarketBoardDataset | null;
+  source: MarketFeedResult["source"];
+  error: string | null;
+} = {
+  key: null,
+  status: "idle",
+  dataset: null,
+  source: "none",
+  error: null,
+};
+let marketBoardVisibleRows: Record<MarketDirection, number> = {
+  winner: MARKET_INITIAL_ROWS,
+  loser: MARKET_INITIAL_ROWS,
+};
 let campaignResetConfirmHandle = 0;
 let atlasHistoryClearConfirmHandle = 0;
 
@@ -762,6 +795,49 @@ function saveExchangeWatchlistState() {
   } catch {
     pushStatus("exchange", "Unable to save exchange watchlist locally.");
   }
+}
+
+function setTradeSubView(view: TradeSubView) {
+  tradeViewPreference = { ...tradeViewPreference, view };
+  tradeWatchlistMode = view === "favorites";
+  writeTradeViewPreference(localStorage, TRADE_VIEW_STORAGE_KEY, tradeViewPreference);
+}
+
+function setMarketPeriod(period: typeof tradeViewPreference.period) {
+  tradeViewPreference = { view: "market", period };
+  tradeWatchlistMode = false;
+  marketBoardVisibleRows = { winner: MARKET_INITIAL_ROWS, loser: MARKET_INITIAL_ROWS };
+  writeTradeViewPreference(localStorage, TRADE_VIEW_STORAGE_KEY, tradeViewPreference);
+}
+
+function marketBoardKey() {
+  return `${state.trade_league.toLowerCase()}::${tradeViewPreference.period}`;
+}
+
+function ensureMarketBoardLoaded(force = false) {
+  if (tradeViewPreference.view !== "market") return;
+  const key = marketBoardKey();
+  if (!force && marketBoardLoadState.key === key && marketBoardLoadState.status !== "idle") return;
+
+  marketBoardLoadState = {
+    key,
+    status: "loading",
+    dataset: force || marketBoardLoadState.key !== key ? null : marketBoardLoadState.dataset,
+    source: "none",
+    error: null,
+  };
+
+  void loadMarketBoardDataset(state.trade_league, tradeViewPreference.period).then((result) => {
+    if (marketBoardLoadState.key !== key) return;
+    marketBoardLoadState = {
+      key,
+      status: result.dataset ? "ready" : "error",
+      dataset: result.dataset,
+      source: result.source,
+      error: result.error,
+    };
+    render();
+  });
 }
 
 function exchangeWatchlistPinCount(categoryId?: string) {
@@ -1264,6 +1340,9 @@ function render() {
     if (activeTab === "trade") {
       const previousSidebarScrollTop =
         panelElement!.querySelector<HTMLElement>(".trade-sidebar-scroll")?.scrollTop ?? tradeSidebarScrollTop;
+      if (tradeViewPreference.view === "market") {
+        ensureMarketBoardLoaded();
+      }
       panelElement!.innerHTML = renderTradePanel(state.exchange_tab);
       const nextSidebar = panelElement!.querySelector<HTMLElement>(".trade-sidebar-scroll");
       if (nextSidebar) {
@@ -1272,7 +1351,7 @@ function render() {
       hoveredListingPreview = null;
       void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
 
-      if (!state.exchange_tab.overview && !state.exchange_tab.status.includes("Loading")) {
+      if (tradeViewPreference.view !== "market" && !state.exchange_tab.overview && !state.exchange_tab.status.includes("Loading")) {
         const cat = state.exchange_tab.selected_category_id || "currency";
         state.exchange_tab.status = `Loading ${exchangeCategoryLabel(cat)} overview...`;
         void invoke("set_exchange_category", { categoryId: cat }).catch((err) =>
@@ -3002,6 +3081,13 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
   const categories = exchangeTab.categories.length
     ? exchangeTab.categories
     : fallbackExchangeTab().categories;
+  if (tradeViewPreference.view === "market") {
+    return `
+      <section class="trade-market">
+        ${renderTradeSidebar(exchangeTab, categories)}
+        ${renderMarketBoardMain()}
+      </section>`;
+  }
   const selectedCategory =
     categories.find((category) => category.id === exchangeTab.selected_category_id) ?? categories[0];
   const overview = exchangeTab.overview;
@@ -3025,7 +3111,11 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
       <aside class="trade-sidebar">
         <div class="trade-sidebar-section">
           <p class="section-label">Personal</p>
-          <button class="trade-favorite-button ${tradeWatchlistMode ? "is-active" : ""}" data-exchange-watchlist-toggle type="button">
+          <button class="trade-market-board-button" data-market-board-toggle type="button">
+            <span class="trade-market-board-glyph">↗</span>
+            <span>Market Board</span>
+          </button>
+          <button class="trade-favorite-button ${tradeViewPreference.view === "favorites" ? "is-active" : ""}" data-exchange-watchlist-toggle type="button">
             <span>Favorites</span>
             <strong>${exchangeWatchlistState.pins.length}</strong>
           </button>
@@ -3033,7 +3123,7 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
         </div>
         <div class="trade-sidebar-section trade-sidebar-scroll">
           <p class="section-label">General</p>
-          ${renderExchangeCategoryGroups(categories, exchangeTab.selected_category_id)}
+          ${renderExchangeCategoryGroups(categories, tradeViewPreference.view === "category" ? exchangeTab.selected_category_id : "")}
         </div>
       </aside>
 
@@ -3084,6 +3174,128 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
   `;
 }
 
+function renderTradeSidebar(exchangeTab: ExchangeTabState, categories: ExchangeCategory[]) {
+  return `
+    <aside class="trade-sidebar">
+      <div class="trade-sidebar-section">
+        <p class="section-label">Personal</p>
+        <button class="trade-market-board-button is-active" data-market-board-toggle type="button">
+          <span class="trade-market-board-glyph">↗</span>
+          <span>Market Board</span>
+        </button>
+        <button class="trade-favorite-button" data-exchange-watchlist-toggle type="button">
+          <span>Favorites</span>
+          <strong>${exchangeWatchlistState.pins.length}</strong>
+        </button>
+        ${renderExchangeFocusPreset(exchangeTab, categories)}
+      </div>
+      <div class="trade-sidebar-section trade-sidebar-scroll">
+        <p class="section-label">General</p>
+        ${renderExchangeCategoryGroups(categories, "")}
+      </div>
+    </aside>`;
+}
+
+function renderMarketBoardMain() {
+  const dataset = marketBoardLoadState.key === marketBoardKey() ? marketBoardLoadState.dataset : null;
+  const updatedAt = dataset ? formatTimestamp(dataset.generated_at_epoch_ms) : "Waiting for shared snapshot";
+  const sourceText = marketBoardLoadState.source === "cache"
+    ? "Cached shared feed"
+    : dataset?.source ?? "GitHub Pages shared history";
+  const baselineMessage = dataset ? marketBaselineMessage(dataset) : null;
+
+  return `
+    <div class="trade-market-main market-board-main">
+      <header class="trade-market-header market-board-header">
+        <div>
+          <p class="section-label">Shared Economy Tape</p>
+          <h2>Market Board</h2>
+          <p>${escapeHtml(state.trade_league)} · ${escapeHtml(updatedAt)}</p>
+        </div>
+        <div class="market-period-switch" aria-label="Market comparison period">
+          ${(["30m", "1d", "7d"] as const).map((period) => `
+            <button class="${tradeViewPreference.period === period ? "is-active" : ""}" data-market-period="${period}" type="button">${period.toUpperCase()}</button>
+          `).join("")}
+        </div>
+      </header>
+
+      <div class="market-board-meta">
+        <span>${escapeHtml(sourceText)}</span>
+        <strong>${escapeHtml(marketBoardLoadState.error && dataset ? "Offline · using last valid snapshot" : "All exchange + unique feeds")}</strong>
+        <button class="trade-refresh-button" data-refresh-market type="button">Refresh</button>
+      </div>
+
+      ${renderMarketBoardBody(dataset, baselineMessage)}
+    </div>
+  `;
+}
+
+function renderMarketBoardBody(dataset: MarketBoardDataset | null, baselineMessage: string | null) {
+  if (marketBoardLoadState.status === "loading" && !dataset) {
+    return `<div class="market-board-state"><strong>Loading shared market history...</strong><span>Checking the latest published dataset for ${escapeHtml(state.trade_league)}.</span></div>`;
+  }
+  if (!dataset) {
+    return `<div class="market-board-state is-error"><strong>Shared market feed is not available yet.</strong><span>${escapeHtml(marketBoardLoadState.error ?? "The first published snapshot has not landed.")}</span></div>`;
+  }
+  if (dataset.status === "building") {
+    const progress = Math.min(100, Math.round((dataset.snapshots_collected / dataset.snapshots_required) * 100));
+    return `
+      <div class="market-board-state is-building">
+        <strong>${escapeHtml(baselineMessage ?? "Building market baseline")}</strong>
+        <span>Reliquary will not rank movers until the shared comparison window is complete.</span>
+        <div class="market-baseline-track"><i style="width:${progress}%"></i></div>
+      </div>`;
+  }
+
+  return `
+    <div class="market-board-columns">
+      ${renderMarketMoverColumn("winner", dataset.winners)}
+      ${renderMarketMoverColumn("loser", dataset.losers)}
+    </div>`;
+}
+
+function renderMarketMoverColumn(direction: MarketDirection, movers: MarketMover[]) {
+  const visible = visibleMarketMovers(movers, marketBoardVisibleRows[direction]);
+  const hasMore = movers.length > visible.length && movers.slice(visible.length).some((mover) => mover.score >= 1);
+  const title = direction === "winner" ? "Biggest Winners" : "Biggest Losers";
+  const subtitle = direction === "winner" ? "Strongest risk-adjusted gains" : "Sharpest risk-adjusted declines";
+  return `
+    <section class="market-mover-column is-${direction}">
+      <header>
+        <div><span>${escapeHtml(title)}</span><small>${escapeHtml(subtitle)}</small></div>
+        <strong>${movers.length}</strong>
+      </header>
+      <div class="market-mover-list">
+        ${visible.length ? visible.map((mover, index) => renderMarketMoverRow(mover, direction, index + 1)).join("") : `<div class="market-column-empty">No ${direction === "winner" ? "positive" : "negative"} movers cleared confidence checks.</div>`}
+      </div>
+      ${hasMore ? `<button class="market-load-more" data-market-load-more="${direction}" type="button">Load 10 more</button>` : ""}
+    </section>`;
+}
+
+function renderMarketMoverRow(mover: MarketMover, direction: MarketDirection, rank: number) {
+  const icon = mover.icon_url
+    ? `<img src="${escapeAttribute(mover.icon_url)}" alt="" loading="lazy" />`
+    : `<span class="market-mover-icon-fallback">${escapeHtml(mover.name.slice(0, 1))}</span>`;
+  const sign = mover.change_percent > 0 ? "+" : "";
+  return `
+    <article class="market-mover-row is-${direction}">
+      <span class="market-mover-rank">${rank}</span>
+      <span class="market-mover-icon">${icon}</span>
+      <span class="market-mover-name"><strong>${escapeHtml(mover.name)}</strong><small>${escapeHtml(mover.category_label)}</small></span>
+      <span class="market-mover-price"><strong>${escapeHtml(formatMarketPrice(mover.current_price))}</strong><small>from ${escapeHtml(formatMarketPrice(mover.baseline_price))}</small></span>
+      <span class="market-mover-change">${sign}${mover.change_percent.toFixed(1)}%</span>
+      <span class="market-confidence is-${mover.confidence}">${escapeHtml(marketConfidenceLabel(mover.confidence))}</span>
+    </article>`;
+}
+
+function formatMarketPrice(value: number) {
+  return value >= 1000 ? formatCompactNumber(value) : value >= 10 ? value.toFixed(1) : value.toFixed(2);
+}
+
+function marketConfidenceLabel(confidence: MarketConfidence) {
+  return confidence === "high" ? "High" : confidence === "medium" ? "Med" : "Low";
+}
+
 function renderExchangeFocusPreset(exchangeTab: ExchangeTabState, categories: ExchangeCategory[]) {
   const focus = atlasFocusPreset();
   const categoryIds = exchangeWatchlistFocusCategoryIds(atlasFocusState.selected);
@@ -3091,7 +3303,7 @@ function renderExchangeFocusPreset(exchangeTab: ExchangeTabState, categories: Ex
     .map((categoryId) => categories.find((category) => category.id === categoryId))
     .filter((category): category is ExchangeCategory => Boolean(category?.available));
   const selectedIsRelevant = categoryIds.includes(exchangeTab.selected_category_id);
-  const canPinCurrent = selectedIsRelevant && (exchangeTab.overview?.entries.length ?? 0) > 0 && !tradeWatchlistMode;
+  const canPinCurrent = selectedIsRelevant && (exchangeTab.overview?.entries.length ?? 0) > 0 && tradeViewPreference.view === "category";
 
   return `
     <div class="trade-focus-preset">
@@ -3100,7 +3312,7 @@ function renderExchangeFocusPreset(exchangeTab: ExchangeTabState, categories: Ex
       <div class="trade-focus-preset-actions">
         ${canPinCurrent ? `<button class="trade-mini-action" data-exchange-focus-pin type="button">Pin visible</button>` : ""}
         ${relevantCategories.slice(0, 3).map((category) => `
-          <button class="trade-mini-action ${category.id === exchangeTab.selected_category_id && !tradeWatchlistMode ? "is-active" : ""}" data-exchange-category="${escapeAttribute(category.id)}" type="button">
+          <button class="trade-mini-action ${category.id === exchangeTab.selected_category_id && tradeViewPreference.view === "category" ? "is-active" : ""}" data-exchange-category="${escapeAttribute(category.id)}" type="button">
             ${escapeHtml(category.label)}
           </button>
         `).join("")}
@@ -5189,6 +5401,7 @@ if (!isListingPreviewWindow && leagueElement) {
   leagueElement.addEventListener("change", async () => {
     state.trade_league = leagueElement.value;
     state.price_check = null;
+    marketBoardLoadState = { key: null, status: "idle", dataset: null, source: "none", error: null };
     loadingMoreMarketplaceResults = false;
     await invoke("set_trade_league", { league: state.trade_league }).catch((error) =>
       pushStatus("league", String(error)),
@@ -5222,6 +5435,10 @@ if (!isListingPreviewWindow && leagueElement) {
     const exchangePinButton = target.closest<HTMLButtonElement>("[data-pin-exchange]");
     const exchangeUnpinButton = target.closest<HTMLButtonElement>("[data-unpin-exchange]");
     const exchangeFocusPinButton = target.closest<HTMLButtonElement>("[data-exchange-focus-pin]");
+    const marketBoardToggle = target.closest<HTMLButtonElement>("[data-market-board-toggle]");
+    const marketPeriodButton = target.closest<HTMLButtonElement>("[data-market-period]");
+    const marketRefreshButton = target.closest<HTMLButtonElement>("[data-refresh-market]");
+    const marketLoadMoreButton = target.closest<HTMLButtonElement>("[data-market-load-more]");
     const stashNoteButton = target.closest<HTMLButtonElement>("[data-copy-stash-note]");
     const resetVisualSettingsButton = target.closest<HTMLButtonElement>("[data-reset-visual-settings]");
     const campaignStepButton = target.closest<HTMLElement>("[data-campaign-step-key]");
@@ -5503,6 +5720,38 @@ if (!isListingPreviewWindow && leagueElement) {
       return;
     }
 
+    if (marketBoardToggle) {
+      setTradeSubView("market");
+      marketBoardVisibleRows = { winner: MARKET_INITIAL_ROWS, loser: MARKET_INITIAL_ROWS };
+      render();
+      return;
+    }
+
+    if (marketPeriodButton?.dataset.marketPeriod) {
+      const period = marketPeriodButton.dataset.marketPeriod;
+      if (period === "30m" || period === "1d" || period === "7d") {
+        setMarketPeriod(period);
+        marketBoardLoadState = { key: null, status: "idle", dataset: null, source: "none", error: null };
+        render();
+      }
+      return;
+    }
+
+    if (marketRefreshButton) {
+      ensureMarketBoardLoaded(true);
+      render();
+      return;
+    }
+
+    if (marketLoadMoreButton?.dataset.marketLoadMore) {
+      const direction = marketLoadMoreButton.dataset.marketLoadMore;
+      if (direction === "winner" || direction === "loser") {
+        marketBoardVisibleRows[direction] += MARKET_ROW_INCREMENT;
+        render();
+      }
+      return;
+    }
+
     if (exchangeQuoteButton?.dataset.exchangeQuote) {
       state.exchange_tab.selected_quote_currency_id = exchangeQuoteButton.dataset.exchangeQuote;
       render();
@@ -5510,7 +5759,7 @@ if (!isListingPreviewWindow && leagueElement) {
     }
 
     if (exchangeWatchlistToggle) {
-      tradeWatchlistMode = !tradeWatchlistMode;
+      setTradeSubView("favorites");
       render();
       return;
     }
@@ -5547,7 +5796,7 @@ if (!isListingPreviewWindow && leagueElement) {
     if (exchangeCategoryButton?.dataset.exchangeCategory) {
       const categoryId = exchangeCategoryButton.dataset.exchangeCategory;
       const categoryLabel = exchangeCategoryButton.textContent?.trim() ?? exchangeCategoryLabel(categoryId);
-      tradeWatchlistMode = false;
+      setTradeSubView("category");
       tradeSidebarScrollTop =
         exchangeCategoryButton.closest<HTMLElement>(".trade-sidebar-scroll")?.scrollTop ?? tradeSidebarScrollTop;
       state.exchange_tab = {
@@ -5982,6 +6231,7 @@ if (!isListingPreviewWindow && leagueElement) {
     };
     if (event.payload.is_exchange) {
       state.exchange_tab.status = `Loading cached exchange overview for ${event.payload.base_type ?? event.payload.name}...`;
+      setTradeSubView("category");
       activeTab = "trade";
     } else {
       activeTab = "scan";

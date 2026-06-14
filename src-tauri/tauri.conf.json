@@ -26,7 +26,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https://web.poecdn.com https://www.pathofexile.com https://cdn.poe2db.tw https://poe.ninja https://assets.poe.ninja; connect-src 'self' ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https://web.poecdn.com https://www.pathofexile.com https://cdn.poe2db.tw https://poe.ninja https://assets.poe.ninja; connect-src 'self' ipc: http://ipc.localhost https://kidans.github.io https://raw.githubusercontent.com"
     }
   },
   "bundle": {
