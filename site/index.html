@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Reliquary is a lightweight Path of Exile 2 companion for price checking, map safety, temple planning, and shared market intelligence." />
+    <meta name="theme-color" content="#071011" />
+    <title>Reliquary | Path of Exile 2 companion</title>
+    <link rel="icon" href="./brand/reliquary.ico" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <div class="site-shell">
+      <header class="site-header">
+        <a class="brand" href="#top" aria-label="Reliquary home">
+          <span class="brand-name">Reliquary</span>
+          <span class="brand-note">Path of Exile 2 field companion</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="#market">Market</a>
+          <a href="#field-tools">Tools</a>
+          <a href="#screens">Screens</a>
+        </nav>
+        <a class="download-link" href="https://github.com/kidans/PoE2-Reliquary/releases/latest">Download</a>
+      </header>
+
+      <main id="top">
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">An unofficial companion for Path of Exile 2</p>
+            <h1>Read the item.<br />Read the map.<br /><span>Keep moving.</span></h1>
+            <p class="hero-intro">
+              Reliquary brings price checks, build-aware map warnings, live economy context, and temple planning into one focused overlay.
+            </p>
+            <div class="hero-actions">
+              <a class="primary-action" href="https://github.com/kidans/PoE2-Reliquary/releases/latest">Get the latest build</a>
+              <a class="text-action" href="https://github.com/kidans/PoE2-Reliquary">View source</a>
+            </div>
+            <dl class="hero-facts">
+              <div><dt>Platform</dt><dd>Windows</dd></div>
+              <div><dt>Runtime</dt><dd>Tauri + native Rust</dd></div>
+              <div><dt>Data</dt><dd>Official trade + PoE.ninja</dd></div>
+            </dl>
+          </div>
+          <div class="hero-visual" aria-label="Reliquary scan and price-check interface">
+            <div class="hero-frame">
+              <img src="./readme/Scan.png" alt="Reliquary item scan interface showing item modifiers and market listings" />
+            </div>
+            <div class="feed-pulse">
+              <span class="pulse-dot" aria-hidden="true"></span>
+              <span>Shared economy tape</span>
+              <strong id="hero-feed-status">Checking feed</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="market-section" id="market">
+          <header class="section-heading market-heading">
+            <div>
+              <p class="eyebrow">Shared economy tape</p>
+              <h2>Market Board</h2>
+              <p id="market-summary">Loading the latest shared snapshots.</p>
+            </div>
+            <div class="market-controls">
+              <label>
+                <span>League</span>
+                <select id="league-select" aria-label="Market league" disabled>
+                  <option>Loading leagues</option>
+                </select>
+              </label>
+              <div class="period-tabs" role="group" aria-label="Market period">
+                <button type="button" data-period="30m">30M</button>
+                <button type="button" class="is-active" data-period="1d">1D</button>
+                <button type="button" data-period="7d">7D</button>
+              </div>
+            </div>
+          </header>
+
+          <div class="market-meta">
+            <span id="market-source">GitHub Pages shared history</span>
+            <span id="market-updated">Waiting for snapshot</span>
+            <button type="button" id="market-refresh">Refresh</button>
+          </div>
+
+          <div id="market-state" class="market-state" aria-live="polite">
+            <div class="state-rule"></div>
+            <strong>Connecting to the shared feed</strong>
+            <span>Reliquary will show only measured movement from real snapshots.</span>
+          </div>
+
+          <div id="market-lists" class="market-lists" hidden>
+            <section class="mover-column winner-column">
+              <header><span>Gaining</span><strong>Winners</strong></header>
+              <div id="winner-list" class="mover-list"></div>
+              <button type="button" class="load-more" data-direction="winner" hidden>Load more winners</button>
+            </section>
+            <section class="mover-column loser-column">
+              <header><span>Falling</span><strong>Losers</strong></header>
+              <div id="loser-list" class="mover-list"></div>
+              <button type="button" class="load-more" data-direction="loser" hidden>Load more losers</button>
+            </section>
+          </div>
+        </section>
+
+        <section class="field-tools" id="field-tools">
+          <header class="section-heading">
+            <p class="eyebrow">Built around the run</p>
+            <h2>Less tabbing out. Better decisions in motion.</h2>
+          </header>
+          <div class="tool-ledger">
+            <article>
+              <span class="tool-index">01</span>
+              <div><h3>Scan and price</h3><p>Parse copied items, select meaningful modifiers, and compare official trade listings without losing the game window.</p></div>
+              <strong>Ctrl + C</strong>
+            </article>
+            <article>
+              <span class="tool-index">02</span>
+              <div><h3>Atlas field read</h3><p>Read the in-game Tab overlay, retain map context, and surface build-aware danger, rarity, pack size, and experience.</p></div>
+              <strong>OCR</strong>
+            </article>
+            <article>
+              <span class="tool-index">03</span>
+              <div><h3>Temple workshop</h3><p>Lay out rooms on the isometric grid, inspect upgrade paths, calculate effects, and simulate destabilization safely.</p></div>
+              <strong>Planner</strong>
+            </article>
+            <article>
+              <span class="tool-index">04</span>
+              <div><h3>Economy context</h3><p>Browse exchange and unique categories or use the shared tape to find liquid movers across 30-minute, 1-day, and 7-day periods.</p></div>
+              <strong>Market</strong>
+            </article>
+          </div>
+        </section>
+
+        <section class="screens" id="screens">
+          <header class="section-heading screens-heading">
+            <div><p class="eyebrow">The instrument panel</p><h2>One visual language across every mode.</h2></div>
+            <p>OLED-dark surfaces, rarity-aware item frames, configurable hue and transparency, and a compact line mode that stays out of the way.</p>
+          </header>
+          <div class="screen-grid">
+            <figure class="screen-wide"><img src="./readme/MapRuns.png" alt="Reliquary Atlas and map run interface" loading="lazy" /><figcaption>Map context and build-aware warnings</figcaption></figure>
+            <figure><img src="./readme/Temple.png" alt="Reliquary Atziri temple planner" loading="lazy" /><figcaption>Temple layout and simulation</figcaption></figure>
+            <figure><img src="./readme/Currency.png" alt="Reliquary economy category browser" loading="lazy" /><figcaption>Exchange and unique-item feeds</figcaption></figure>
+          </div>
+        </section>
+
+        <section class="closing">
+          <div><p class="eyebrow">Built in public</p><h2>Carry the data.<br />Leave the browser behind.</h2></div>
+          <div><p>Reliquary is free, source-available, and actively refined around real Path of Exile 2 play.</p><a class="primary-action" href="https://github.com/kidans/PoE2-Reliquary/releases/latest">Download Reliquary</a></div>
+        </section>
+      </main>
+
+      <footer>
+        <span>Reliquary is an unofficial community project and is not affiliated with or endorsed by Grinding Gear Games.</span>
+        <span>Economy data sourced from PoE.ninja. Trade results use pathofexile.com/trade.</span>
+      </footer>
+    </div>
+  </body>
+</html>
