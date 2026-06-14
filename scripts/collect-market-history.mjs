@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 import { gunzip, gzip } from "node:zlib";
 import { promisify } from "node:util";
 
+import { mergeRetainedSnapshots } from "./market-history-policy.mjs";
+
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
 const ROOT = process.cwd();
@@ -60,15 +62,12 @@ async function main() {
     const fingerprint = snapshotFingerprint(items);
     const previous = [...history.snapshots].reverse().find((snapshot) => snapshot.league === league);
     if (previous?.fingerprint === fingerprint) {
-      console.log(`[${league}] upstream snapshot is unchanged; keeping the prior timestamp.`);
-      continue;
+      console.log(`[${league}] upstream snapshot is unchanged; recording a zero-movement cadence checkpoint.`);
     }
     snapshots.push({ league, captured_at_epoch_ms: now, fingerprint, items });
   }
 
-  history.snapshots = [...history.snapshots, ...snapshots]
-    .filter((snapshot) => snapshot.captured_at_epoch_ms >= now - RETENTION_MS)
-    .sort((left, right) => left.captured_at_epoch_ms - right.captured_at_epoch_ms);
+  history.snapshots = mergeRetainedSnapshots(history.snapshots, snapshots, now, RETENTION_MS);
 
   await rm(OUTPUT_DIR, { recursive: true, force: true });
   await mkdir(OUTPUT_DIR, { recursive: true });
