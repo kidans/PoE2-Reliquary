@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 arboard = "3"
 base64 = "0.22"
+discord-rich-presence = "1.1"
 fuzzy-matcher = "0.3"
 flate2 = "1"
 linemux = "0.3"

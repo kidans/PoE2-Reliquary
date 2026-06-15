@@ -33,6 +33,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 mod build_profile;
 pub mod debug_log;
+mod discord_presence;
 mod exchange;
 mod hazards;
 mod item_parser;
@@ -99,6 +100,8 @@ const LISTING_PREVIEW_GAP: f64 = 12.0;
 const MAP_OCR_COOLDOWN_MS: u64 = 2_500;
 static LISTING_PREVIEW_VISIBLE: AtomicBool = AtomicBool::new(false);
 static LISTING_PREVIEW_SHOWN_AT_MS: AtomicU64 = AtomicU64::new(0);
+static CLIPBOARD_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+static SIMULATING_INPUT: AtomicBool = AtomicBool::new(false);
 const REPOE_WORLD_AREAS_URL: &str = "https://repoe-fork.github.io/poe2/world_areas.min.json";
 const REPOE_WORLD_AREAS_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 const PROFILE_STATE_VERSION: u32 = 1;
@@ -551,6 +554,11 @@ enum ClipboardScanMode {
 }
 
 enum InputAction {
+    TriggerClipboardScan {
+        mode: ClipboardScanMode,
+        key: Key,
+        modifier: String,
+    },
     ClipboardScan {
         raw_text: String,
         mode: ClipboardScanMode,
@@ -558,6 +566,100 @@ enum InputAction {
     OpenTradeSearch,
     ReadMapOverlayOcr,
     DismissListingPreview,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HotkeyPressAction {
+    ClipboardScan {
+        mode: ClipboardScanMode,
+        key: Key,
+        modifier: String,
+    },
+    OpenTradeSearch,
+    ReadMapOverlayOcr,
+}
+
+#[cfg(test)]
+mod input_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn only_exact_configured_chords_dispatch_actions() {
+        let hotkeys = HotkeyConfig::default();
+
+        assert_eq!(
+            configured_hotkey_action(&hotkeys, Key::KeyA, false, true),
+            None
+        );
+        assert_eq!(
+            configured_hotkey_action(&hotkeys, Key::KeyW, false, true),
+            Some(HotkeyPressAction::ClipboardScan {
+                mode: ClipboardScanMode::Waystone,
+                key: Key::KeyW,
+                modifier: "Alt".to_string(),
+            })
+        );
+        assert_eq!(
+            configured_hotkey_action(&hotkeys, Key::KeyC, true, false),
+            Some(HotkeyPressAction::ClipboardScan {
+                mode: ClipboardScanMode::Item,
+                key: Key::KeyC,
+                modifier: "Ctrl".to_string(),
+            })
+        );
+        assert_eq!(
+            configured_hotkey_action(&hotkeys, Key::KeyD, false, true),
+            Some(HotkeyPressAction::OpenTradeSearch)
+        );
+        assert_eq!(
+            configured_hotkey_action(&hotkeys, Key::KeyW, true, true),
+            None
+        );
+        assert_eq!(
+            configured_hotkey_action(&hotkeys, Key::Tab, false, true),
+            None
+        );
+    }
+}
+
+#[cfg(test)]
+mod client_log_tail_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn startup_tail_returns_only_the_three_latest_area_entries() {
+        let path = env::temp_dir().join(format!(
+            "reliquary-client-tail-{}-{}.txt",
+            std::process::id(),
+            now_epoch_ms()
+        ));
+        let mut file = std::fs::File::create(&path).expect("create temporary Client.txt");
+        for index in 0..8 {
+            writeln!(file, "noise before area {index}").expect("write noise");
+            writeln!(
+                file,
+                "2026/06/13 [DEBUG Client] Generating level {} area \"MapArea{}\" with seed {}",
+                70 + index,
+                index,
+                index
+            )
+            .expect("write area entry");
+        }
+        drop(file);
+
+        let generating_re =
+            Regex::new(r#"Generating level (\d+) area "([^"]+)""#).expect("valid regex");
+        let lines = read_recent_matching_log_lines(&path, &generating_re, 3)
+            .expect("read latest area entries");
+
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].contains("MapArea5"));
+        assert!(lines[1].contains("MapArea6"));
+        assert!(lines[2].contains("MapArea7"));
+
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 #[derive(Debug, Error)]
@@ -1460,6 +1562,37 @@ fn debug_log_path() -> String {
     debug_log::path().display().to_string()
 }
 
+fn current_discord_presence_payload(state: &AppState) -> Option<discord_presence::PresencePayload> {
+    let context = discord_presence::context_from_sources(
+        state.build_snapshot.as_ref(),
+        state.current_area.as_ref(),
+        state.active_map_run.as_ref(),
+    );
+    discord_presence::build_presence_payload(&context)
+}
+
+#[tauri::command]
+fn get_discord_presence_status(
+    service: tauri::State<'_, discord_presence::DiscordPresenceService>,
+) -> discord_presence::DiscordPresenceStatus {
+    service.status()
+}
+
+#[tauri::command]
+async fn set_discord_presence_enabled(
+    enabled: bool,
+    state: tauri::State<'_, SharedAppState>,
+    service: tauri::State<'_, discord_presence::DiscordPresenceService>,
+) -> Result<discord_presence::DiscordPresenceStatus, String> {
+    service.set_enabled(enabled);
+    let payload = {
+        let locked_state = state.lock().await;
+        current_discord_presence_payload(&locked_state)
+    };
+    service.update(payload);
+    Ok(service.status())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -1470,10 +1603,12 @@ pub fn run() {
             }
         }))
         .manage(Arc::new(Mutex::new(AppState::new())) as SharedAppState)
+        .manage(discord_presence::DiscordPresenceService::new())
         .invoke_handler(tauri::generate_handler![
             invite_buyer,
             get_app_state,
             get_hazard_profiles,
+            get_discord_presence_status,
             get_listing_preview,
             debug_log_path,
             hide_listing_preview,
@@ -1499,6 +1634,7 @@ pub fn run() {
             set_compact_window_height,
             set_scan_window_height,
             set_click_passthrough,
+            set_discord_presence_enabled,
             show_listing_preview,
             start_drag_window,
             trade_with_buyer,
@@ -1569,6 +1705,7 @@ pub fn run() {
 
             spawn_trade_league_worker(app_handle.clone(), state.clone());
             spawn_build_profile_refresh_worker(app_handle.clone(), state.clone());
+            spawn_discord_presence_sync_worker(app_handle.clone(), state.clone());
             spawn_global_input_worker(app_handle.clone(), state.clone());
             spawn_window_attachment_worker(app_handle.clone());
 
@@ -1590,7 +1727,7 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
         let (input_tx, mut input_rx) = mpsc::unbounded_channel::<InputAction>();
         let listener_handle = app_handle.clone();
 
-        if let Err(error) = start_rdev_listener(input_tx, state.clone()) {
+        if let Err(error) = start_rdev_listener(input_tx.clone(), state.clone()) {
             emit_worker_error(&listener_handle, WorkerError::InputListener(error));
             return;
         }
@@ -1603,6 +1740,18 @@ fn spawn_global_input_worker(app_handle: tauri::AppHandle, state: SharedAppState
 
         while let Some(action) = input_rx.recv().await {
             match action {
+                InputAction::TriggerClipboardScan {
+                    mode,
+                    key,
+                    modifier,
+                } => {
+                    let input_tx = input_tx.clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if let Some(raw_text) = capture_clipboard_for_scan(key, &modifier) {
+                            let _ = input_tx.send(InputAction::ClipboardScan { raw_text, mode });
+                        }
+                    });
+                }
                 InputAction::ClipboardScan { raw_text, mode } => {
                     if !looks_like_poe_item_buffer(&raw_text) {
                         debug_log::append(
@@ -1999,6 +2148,34 @@ fn spawn_build_profile_refresh_worker(app_handle: tauri::AppHandle, state: Share
         loop {
             tokio::time::sleep(BUILD_PROFILE_REFRESH_INTERVAL).await;
             refresh_current_build_profile(&app_handle, &state).await;
+        }
+    });
+}
+
+fn spawn_discord_presence_sync_worker(app_handle: tauri::AppHandle, state: SharedAppState) {
+    tauri::async_runtime::spawn(async move {
+        let mut last_payload: Option<Option<discord_presence::PresencePayload>> = None;
+        let mut last_status: Option<discord_presence::DiscordPresenceStatus> = None;
+
+        loop {
+            let payload = {
+                let locked_state = state.lock().await;
+                current_discord_presence_payload(&locked_state)
+            };
+            let service = app_handle.state::<discord_presence::DiscordPresenceService>();
+
+            if last_payload.as_ref() != Some(&payload) {
+                service.update(payload.clone());
+                last_payload = Some(payload);
+            }
+
+            let status = service.status();
+            if last_status.as_ref() != Some(&status) {
+                let _ = app_handle.emit("scan://discord-presence-status", &status);
+                last_status = Some(status);
+            }
+
+            tokio::time::sleep(Duration::from_secs(2)).await;
         }
     });
 }
@@ -2400,93 +2577,43 @@ fn handle_global_input_event(
         EventType::KeyRelease(Key::Alt) | EventType::KeyRelease(Key::AltGr) => {
             alt_down.store(false, Ordering::SeqCst);
         }
-        EventType::KeyPress(ref key) if active_window_is_poe2() => {
-            static SIMULATING: std::sync::atomic::AtomicBool =
-                std::sync::atomic::AtomicBool::new(false);
-            if SIMULATING.load(Ordering::SeqCst) {
+        EventType::KeyPress(key) => {
+            if SIMULATING_INPUT.load(Ordering::SeqCst) {
                 return;
             }
-            if key == &Key::Tab {
-                let _ = input_tx.send(InputAction::ReadMapOverlayOcr);
-                return;
-            }
+
             let hotkeys = hotkey_config_snapshot();
-            let Some(scan_key) = shortcut_key_to_rdev(hotkeys.scan_key) else {
+            let Some(action) = configured_hotkey_action(
+                &hotkeys,
+                key,
+                ctrl_down.load(Ordering::SeqCst),
+                alt_down.load(Ordering::SeqCst),
+            ) else {
                 return;
-            };
-            let Some(waystone_key) = shortcut_key_to_rdev(hotkeys.waystone_key) else {
-                return;
-            };
-            let Some(trade_key) = shortcut_key_to_rdev(hotkeys.trade_key) else {
-                return;
-            };
-            let is_scan =
-                key == &scan_key && modifier_is_down(&hotkeys.scan_mod, ctrl_down, alt_down);
-            let is_waystone_scan = key == &waystone_key
-                && modifier_is_down(&hotkeys.waystone_mod, ctrl_down, alt_down);
-            let is_trade =
-                key == &trade_key && modifier_is_down(&hotkeys.trade_mod, ctrl_down, alt_down);
-
-            let scan_request = if is_waystone_scan {
-                Some((
-                    ClipboardScanMode::Waystone,
-                    waystone_key,
-                    hotkeys.waystone_mod.clone(),
-                ))
-            } else if is_scan {
-                Some((ClipboardScanMode::Item, scan_key, hotkeys.scan_mod.clone()))
-            } else {
-                None
             };
 
-            if let Some((mode, active_scan_key, active_scan_mod)) = scan_request {
-                let needs_simulate = active_scan_key != Key::KeyC || active_scan_mod != "Ctrl";
-                let clipboard_before_simulation = needs_simulate
-                    .then(read_clipboard_text)
-                    .transpose()
-                    .unwrap_or_default()
-                    .unwrap_or_default();
-                if needs_simulate {
-                    SIMULATING.store(true, Ordering::SeqCst);
-                    let _ = rdev::simulate(&EventType::KeyPress(Key::ControlLeft));
-                    let _ = rdev::simulate(&EventType::KeyPress(Key::KeyC));
-                    let _ = rdev::simulate(&EventType::KeyRelease(Key::KeyC));
-                    let _ = rdev::simulate(&EventType::KeyRelease(Key::ControlLeft));
-                    thread::sleep(Duration::from_millis(80));
-                    SIMULATING.store(false, Ordering::SeqCst);
-                }
-                let before = read_clipboard_text().unwrap_or_default();
-                if !needs_simulate
-                    && !before.trim().is_empty()
-                    && looks_like_poe_item_buffer(&before)
-                {
-                    let _ = input_tx.send(InputAction::ClipboardScan {
-                        raw_text: before,
-                        mode,
-                    });
-                    return;
-                }
-                for _ in 0..25 {
-                    thread::sleep(Duration::from_millis(20));
-                    match read_clipboard_text() {
-                        Ok(text)
-                            if !text.trim().is_empty()
-                                && text != before
-                                && (!needs_simulate || text != clipboard_before_simulation)
-                                && looks_like_poe_item_buffer(&text) =>
-                        {
-                            let _ = input_tx.send(InputAction::ClipboardScan {
-                                raw_text: text,
-                                mode,
-                            });
-                            return;
-                        }
-                        _ => {}
-                    }
-                }
+            if !active_window_is_poe2() {
+                return;
             }
-            if is_trade {
-                let _ = input_tx.send(InputAction::OpenTradeSearch);
+
+            match action {
+                HotkeyPressAction::ClipboardScan {
+                    mode,
+                    key,
+                    modifier,
+                } => {
+                    let _ = input_tx.send(InputAction::TriggerClipboardScan {
+                        mode,
+                        key,
+                        modifier,
+                    });
+                }
+                HotkeyPressAction::OpenTradeSearch => {
+                    let _ = input_tx.send(InputAction::OpenTradeSearch);
+                }
+                HotkeyPressAction::ReadMapOverlayOcr => {
+                    let _ = input_tx.send(InputAction::ReadMapOverlayOcr);
+                }
             }
         }
         EventType::ButtonPress(_) if LISTING_PREVIEW_VISIBLE.load(Ordering::SeqCst) => {
@@ -2496,23 +2623,97 @@ fn handle_global_input_event(
     }
 }
 
+fn configured_hotkey_action(
+    hotkeys: &HotkeyConfig,
+    key: Key,
+    ctrl_down: bool,
+    alt_down: bool,
+) -> Option<HotkeyPressAction> {
+    if key == Key::Tab && !ctrl_down && !alt_down {
+        return Some(HotkeyPressAction::ReadMapOverlayOcr);
+    }
+
+    let scan_key = shortcut_key_to_rdev(hotkeys.scan_key)?;
+    let waystone_key = shortcut_key_to_rdev(hotkeys.waystone_key)?;
+    let trade_key = shortcut_key_to_rdev(hotkeys.trade_key)?;
+
+    if key == waystone_key && modifier_matches_exact(&hotkeys.waystone_mod, ctrl_down, alt_down) {
+        return Some(HotkeyPressAction::ClipboardScan {
+            mode: ClipboardScanMode::Waystone,
+            key: waystone_key,
+            modifier: hotkeys.waystone_mod.clone(),
+        });
+    }
+    if key == scan_key && modifier_matches_exact(&hotkeys.scan_mod, ctrl_down, alt_down) {
+        return Some(HotkeyPressAction::ClipboardScan {
+            mode: ClipboardScanMode::Item,
+            key: scan_key,
+            modifier: hotkeys.scan_mod.clone(),
+        });
+    }
+    if key == trade_key && modifier_matches_exact(&hotkeys.trade_mod, ctrl_down, alt_down) {
+        return Some(HotkeyPressAction::OpenTradeSearch);
+    }
+
+    None
+}
+
+fn modifier_matches_exact(modifier: &str, ctrl_down: bool, alt_down: bool) -> bool {
+    match modifier {
+        "Ctrl" => ctrl_down && !alt_down,
+        "Alt" => alt_down && !ctrl_down,
+        _ => false,
+    }
+}
+
+fn capture_clipboard_for_scan(active_scan_key: Key, active_scan_mod: &str) -> Option<String> {
+    if CLIPBOARD_CAPTURE_ACTIVE.swap(true, Ordering::SeqCst) {
+        return None;
+    }
+
+    let result = (|| {
+        let needs_simulate = active_scan_key != Key::KeyC || active_scan_mod != "Ctrl";
+        let clipboard_before = read_clipboard_text().unwrap_or_default();
+
+        if needs_simulate {
+            SIMULATING_INPUT.store(true, Ordering::SeqCst);
+            let _ = rdev::simulate(&EventType::KeyPress(Key::ControlLeft));
+            let _ = rdev::simulate(&EventType::KeyPress(Key::KeyC));
+            let _ = rdev::simulate(&EventType::KeyRelease(Key::KeyC));
+            let _ = rdev::simulate(&EventType::KeyRelease(Key::ControlLeft));
+            // Let the injected events clear the low-level hook before it can classify them.
+            thread::sleep(Duration::from_millis(20));
+            SIMULATING_INPUT.store(false, Ordering::SeqCst);
+        }
+
+        for _ in 0..25 {
+            // Clipboard contents are committed after the key event reaches the game.
+            thread::sleep(Duration::from_millis(20));
+            match read_clipboard_text() {
+                Ok(text)
+                    if !text.trim().is_empty()
+                        && looks_like_poe_item_buffer(&text)
+                        && (!needs_simulate || text != clipboard_before) =>
+                {
+                    return Some(text);
+                }
+                _ => {}
+            }
+        }
+
+        None
+    })();
+
+    SIMULATING_INPUT.store(false, Ordering::SeqCst);
+    CLIPBOARD_CAPTURE_ACTIVE.store(false, Ordering::SeqCst);
+    result
+}
+
 fn hotkey_config_snapshot() -> HotkeyConfig {
     HOTKEY_CONFIG
         .read()
         .map(|hotkeys| hotkeys.clone())
         .unwrap_or_default()
-}
-
-fn modifier_is_down(
-    modifier: &str,
-    ctrl_down: &Arc<AtomicBool>,
-    alt_down: &Arc<AtomicBool>,
-) -> bool {
-    match modifier {
-        "Ctrl" => ctrl_down.load(Ordering::SeqCst),
-        "Alt" => alt_down.load(Ordering::SeqCst),
-        _ => false,
-    }
 }
 
 fn shortcut_key_to_rdev(key: char) -> Option<Key> {
@@ -3047,32 +3248,22 @@ async fn stream_client_log(
     if last_size > 0 {
         debug_log::append(
             "client-log.catch-up",
-            serde_json::json!({ "total_size": last_size, "catch_up_start": 0 }),
+            serde_json::json!({
+                "total_size": last_size,
+                "strategy": "latest-three-area-entries",
+            }),
         );
-        if let Ok(mut file) = File::open(&client_log_path).await {
-            // Read from start to find the current zone — the last "Generating level" entry wins
-            use tokio::io::AsyncSeekExt;
-            let _ = file.seek(std::io::SeekFrom::Start(0)).await;
-            let mut reader = BufReader::new(file);
-            let mut line_buf = String::new();
-            loop {
-                line_buf.clear();
-                match reader.read_line(&mut line_buf).await {
-                    Ok(0) => break,
-                    Ok(_) => {
-                        let content = line_buf.trim_end().to_string();
-                        process_log_line(
-                            &content,
-                            &generating_re,
-                            &death_re,
-                            false,
-                            &app_handle,
-                            &state,
-                        )
-                        .await;
-                    }
-                    Err(_) => break,
-                }
+        if let Ok(lines) = read_recent_matching_log_lines(&client_log_path, &generating_re, 3) {
+            if let Some(content) = lines.last() {
+                process_log_line(
+                    content,
+                    &generating_re,
+                    &death_re,
+                    false,
+                    &app_handle,
+                    &state,
+                )
+                .await;
             }
         }
     }
@@ -3120,6 +3311,57 @@ async fn stream_client_log(
         }
         tokio::time::sleep(Duration::from_millis(1000)).await;
     }
+}
+
+fn read_recent_matching_log_lines(
+    path: &Path,
+    pattern: &Regex,
+    limit: usize,
+) -> std::io::Result<Vec<String>> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    const CHUNK_SIZE: u64 = 64 * 1024;
+    let mut file = std::fs::File::open(path)?;
+    let mut position = file.metadata()?.len();
+    let mut buffer = Vec::new();
+
+    while position > 0 {
+        let read_size = position.min(CHUNK_SIZE);
+        position -= read_size;
+        file.seek(SeekFrom::Start(position))?;
+
+        let mut chunk = vec![0u8; read_size as usize];
+        file.read_exact(&mut chunk)?;
+        chunk.extend_from_slice(&buffer);
+        buffer = chunk;
+
+        let text = String::from_utf8_lossy(&buffer);
+        let mut lines = text.lines();
+        if position > 0 {
+            lines.next();
+        }
+        let matches = lines
+            .filter(|line| pattern.is_match(line))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+
+        if matches.len() >= limit {
+            return Ok(matches[matches.len() - limit..].to_vec());
+        }
+    }
+
+    let text = String::from_utf8_lossy(&buffer);
+    let matches = text
+        .lines()
+        .filter(|line| pattern.is_match(line))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let start = matches.len().saturating_sub(limit);
+    Ok(matches[start..].to_vec())
 }
 
 async fn process_log_line(
