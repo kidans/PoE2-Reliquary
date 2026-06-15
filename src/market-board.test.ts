@@ -4,6 +4,7 @@ import {
   MARKET_INITIAL_ROWS,
   calculateMarketMovers,
   marketBaselineMessage,
+  normalizeMarketIconUrl,
   normalizeMarketBoardDataset,
   normalizeTradeViewPreference,
   visibleMarketMovers,
@@ -64,7 +65,21 @@ describe("market board", () => {
     });
 
     expect(dataset).not.toBeNull();
+    expect(dataset?.quote_currency_id).toBe("divine");
+    expect(dataset?.quote_currency_label).toBe("Divine Orb");
     expect(marketBaselineMessage(dataset!)).toBe("Building 1-day baseline - 11/48 snapshots collected");
+  });
+
+  it("normalizes relative poe.ninja item images to the asset host", () => {
+    expect(normalizeMarketIconUrl("/gen/image/example.png")).toBe(
+      "https://web.poecdn.com/gen/image/example.png",
+    );
+    expect(normalizeMarketIconUrl("https://web.poecdn.com/gen/image/example.png")).toBe(
+      "https://web.poecdn.com/gen/image/example.png",
+    );
+    expect(normalizeMarketIconUrl("https://assets.poe.ninja/gen/image/example.png")).toBe(
+      "https://web.poecdn.com/gen/image/example.png",
+    );
   });
 
   it("normalizes movement per category before ranking", () => {
@@ -92,12 +107,13 @@ describe("market board", () => {
     expect(result.winners.every((entry) => entry.confidence !== "low")).toBe(true);
   });
 
-  it("always fills the first ten valid rows but gates continuation rows", () => {
+  it("returns every requested ranked row after the initial ten", () => {
     const movers = Array.from({ length: 15 }, (_, index) => mover(index, index < 10 ? 2 - index * 0.05 : index === 10 ? 1.2 : 0.5));
     const visible = visibleMarketMovers(movers, 20);
 
     expect(visible.slice(0, MARKET_INITIAL_ROWS)).toHaveLength(10);
     expect(visible.some((entry) => entry.score === 1.2)).toBe(true);
-    expect(visible.filter((entry) => entry.score === 0.5)).toHaveLength(0);
+    expect(visible.filter((entry) => entry.score === 0.5)).toHaveLength(4);
+    expect(visible).toHaveLength(15);
   });
 });

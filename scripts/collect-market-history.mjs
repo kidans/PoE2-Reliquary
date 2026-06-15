@@ -5,6 +5,7 @@ import { gunzip, gzip } from "node:zlib";
 import { promisify } from "node:util";
 
 import { mergeRetainedSnapshots } from "./market-history-policy.mjs";
+import { normalizePoeNinjaAssetUrl } from "./market-feed-normalize.mjs";
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
@@ -16,6 +17,8 @@ const EXCHANGE_URL = "https://poe.ninja/poe2/api/economy/exchange/current/overvi
 const STASH_URL = "https://poe.ninja/poe2/api/economy/stash/current/item/overview";
 const RETENTION_MS = 8 * 24 * 60 * 60 * 1000;
 const USER_AGENT = "Reliquary-Market-Collector/1.0";
+const QUOTE_CURRENCY_ID = "divine";
+const QUOTE_CURRENCY_LABEL = "Divine Orb";
 
 const CATEGORIES = [
   ["currency", "Currency", "exchange", "Currency"],
@@ -137,7 +140,7 @@ function normalizeCategory(response, category) {
       category_id: category.id,
       category_label: category.label,
       name,
-      icon_url: stringOrNull(line.icon ?? item?.image ?? item?.icon),
+      icon_url: normalizePoeNinjaAssetUrl(line.icon ?? item?.image ?? item?.icon),
       price,
       liquidity,
     }];
@@ -157,6 +160,8 @@ function buildDataset(league, period, config, snapshots, now) {
     generated_at_epoch_ms: current?.captured_at_epoch_ms ?? now,
     baseline_at_epoch_ms: ready ? baseline.captured_at_epoch_ms : null,
     source: "poe.ninja shared snapshot collector",
+    quote_currency_id: QUOTE_CURRENCY_ID,
+    quote_currency_label: QUOTE_CURRENCY_LABEL,
     snapshots_collected: snapshots.length,
     snapshots_required: config.required,
     winners: movers.winners,
@@ -269,8 +274,4 @@ function median(values) {
 
 function finiteNumber(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function stringOrNull(value) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
 }

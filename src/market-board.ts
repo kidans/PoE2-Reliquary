@@ -41,6 +41,8 @@ export type MarketBoardDataset = {
   generated_at_epoch_ms: number;
   baseline_at_epoch_ms: number | null;
   source: string;
+  quote_currency_id: string;
+  quote_currency_label: string;
   snapshots_collected: number;
   snapshots_required: number;
   winners: MarketMover[];
@@ -54,7 +56,8 @@ export const DEFAULT_TRADE_VIEW: TradeViewPreference = {
 
 export const MARKET_INITIAL_ROWS = 10;
 export const MARKET_ROW_INCREMENT = 10;
-export const MARKET_CONTINUATION_SCORE = 1;
+export const MARKET_QUOTE_CURRENCY_ID = "divine";
+export const MARKET_QUOTE_CURRENCY_LABEL = "Divine Orb";
 
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
@@ -115,6 +118,8 @@ export function normalizeMarketBoardDataset(value: unknown): MarketBoardDataset 
     generated_at_epoch_ms: generatedAt,
     baseline_at_epoch_ms: finiteNumber(raw.baseline_at_epoch_ms),
     source: stringValue(raw.source) ?? "shared market feed",
+    quote_currency_id: stringValue(raw.quote_currency_id) ?? MARKET_QUOTE_CURRENCY_ID,
+    quote_currency_label: stringValue(raw.quote_currency_label) ?? MARKET_QUOTE_CURRENCY_LABEL,
     snapshots_collected: Math.max(0, Math.trunc(finiteNumber(raw.snapshots_collected) ?? 0)),
     snapshots_required: Math.max(1, Math.trunc(finiteNumber(raw.snapshots_required) ?? 1)),
     winners: normalizeMovers(raw.winners, "winner"),
@@ -130,15 +135,20 @@ export function marketBaselineMessage(dataset: MarketBoardDataset) {
 
 export function visibleMarketMovers(movers: MarketMover[], requestedRows: number) {
   const sorted = [...movers].sort((left, right) => right.score - left.score);
-  if (requestedRows <= MARKET_INITIAL_ROWS) {
-    return sorted.slice(0, MARKET_INITIAL_ROWS);
+  return sorted.slice(0, Math.max(MARKET_INITIAL_ROWS, requestedRows));
+}
+
+export function normalizeMarketIconUrl(value: string | null | undefined) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("/gen/image/")) {
+    return `https://web.poecdn.com${trimmed}`;
   }
-  const initial = sorted.slice(0, MARKET_INITIAL_ROWS);
-  const continuation = sorted
-    .slice(MARKET_INITIAL_ROWS)
-    .filter((mover) => mover.score >= MARKET_CONTINUATION_SCORE)
-    .slice(0, Math.max(0, requestedRows - MARKET_INITIAL_ROWS));
-  return [...initial, ...continuation];
+  if (trimmed.startsWith("https://assets.poe.ninja/gen/image/")) {
+    return trimmed.replace("https://assets.poe.ninja", "https://web.poecdn.com");
+  }
+  return trimmed;
 }
 
 export function calculateMarketMovers(
@@ -230,7 +240,7 @@ function normalizeMover(value: unknown): MarketMover | null {
     category_id: categoryId,
     category_label: categoryLabel,
     name,
-    icon_url: stringValue(raw.icon_url),
+    icon_url: normalizeMarketIconUrl(stringValue(raw.icon_url)),
     current_price: currentPrice,
     baseline_price: baselinePrice,
     change_percent: change,
