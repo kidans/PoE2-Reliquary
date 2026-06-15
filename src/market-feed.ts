@@ -7,10 +7,13 @@ import {
 export const DEFAULT_MARKET_FEED_BASE_URL =
   (import.meta.env.VITE_MARKET_FEED_BASE_URL as string | undefined)?.trim() ||
   "https://kidans.github.io/PoE2-Reliquary/market-feed";
+export const DEFAULT_MARKET_FEED_FUNCTION_URL =
+  (import.meta.env.VITE_MARKET_FEED_FUNCTION_URL as string | undefined)?.trim() ||
+  "https://tzxclvrmmptvqhzobgse.supabase.co/functions/v1/market-feed";
 
 export type MarketFeedResult = {
   dataset: MarketBoardDataset | null;
-  source: "network" | "cache" | "none";
+  source: "supabase" | "github" | "cache" | "none";
   error: string | null;
 };
 
@@ -23,33 +26,62 @@ export async function loadMarketBoardDataset(
     fetcher?: typeof fetch;
     storage?: CacheStorage;
     baseUrl?: string;
+    primaryUrl?: string;
+    fallbackBaseUrl?: string;
   } = {},
 ): Promise<MarketFeedResult> {
   const fetcher = options.fetcher ?? fetch;
   const storage = options.storage ?? localStorage;
-  const baseUrl = (options.baseUrl ?? DEFAULT_MARKET_FEED_BASE_URL).replace(/\/$/, "");
+  const fallbackBaseUrl = (options.fallbackBaseUrl ?? options.baseUrl ?? DEFAULT_MARKET_FEED_BASE_URL).replace(/\/$/, "");
+  const primaryUrl = options.baseUrl
+    ? null
+    : (options.primaryUrl ?? DEFAULT_MARKET_FEED_FUNCTION_URL).replace(/\/$/, "");
   const cacheKey = marketFeedCacheKey(league, period);
-  const url = `${baseUrl}/leagues/${marketLeagueSlug(league)}/market-${period}.json`;
+  const candidates = [
+    primaryUrl ? {
+      source: "supabase" as const,
+      url: `${primaryUrl}?league=${encodeURIComponent(league)}&period=${encodeURIComponent(period)}`,
+    } : null,
+    {
+      source: "github" as const,
+      url: `${fallbackBaseUrl}/leagues/${marketLeagueSlug(league)}/market-${period}.json`,
+    },
+  ].filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null);
 
-  try {
-    const response = await fetcher(url, { cache: "no-cache" });
-    if (!response.ok) {
-      throw new Error(`shared feed returned HTTP ${response.status}`);
+  const failures: string[] = [];
+  let warmingDataset: MarketBoardDataset | null = null;
+  for (const candidate of candidates) {
+    try {
+      const response = await fetcher(candidate.url, { cache: "no-cache" });
+      if (!response.ok) {
+        throw new Error(`${candidate.source} feed returned HTTP ${response.status}`);
+      }
+      const dataset = normalizeMarketBoardDataset(await response.json());
+      if (!dataset || dataset.league.toLowerCase() !== league.toLowerCase() || dataset.period !== period) {
+        throw new Error(`${candidate.source} feed payload did not match the selected league and period`);
+      }
+      if (candidate.source === "supabase" && dataset.status === "building") {
+        warmingDataset = dataset;
+        continue;
+      }
+      storage.setItem(cacheKey, JSON.stringify(dataset));
+      return { dataset, source: candidate.source, error: failures.length ? failures.join("; ") : null };
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
     }
-    const dataset = normalizeMarketBoardDataset(await response.json());
-    if (!dataset || dataset.league.toLowerCase() !== league.toLowerCase() || dataset.period !== period) {
-      throw new Error("shared feed payload did not match the selected league and period");
-    }
-    storage.setItem(cacheKey, JSON.stringify(dataset));
-    return { dataset, source: "network", error: null };
-  } catch (error) {
-    const cached = readCachedDataset(storage, cacheKey, league, period);
-    return {
-      dataset: cached,
-      source: cached ? "cache" : "none",
-      error: error instanceof Error ? error.message : String(error),
-    };
   }
+
+  if (warmingDataset) {
+    storage.setItem(cacheKey, JSON.stringify(warmingDataset));
+    return { dataset: warmingDataset, source: "supabase", error: failures.length ? failures.join("; ") : null };
+  }
+
+  const cached = readCachedDataset(storage, cacheKey, league, period);
+  return {
+    dataset: cached,
+    source: cached ? "cache" : "none",
+    error: failures.join("; ") || "shared market feeds were unavailable",
+  };
 }
 
 export function marketLeagueSlug(league: string) {

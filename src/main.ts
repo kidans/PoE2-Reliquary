@@ -3203,7 +3203,7 @@ function renderMarketBoardMain() {
   const updatedAt = dataset ? formatTimestamp(dataset.generated_at_epoch_ms) : "Waiting for shared snapshot";
   const sourceText = marketBoardLoadState.source === "cache"
     ? "Cached shared feed"
-    : dataset?.source ?? "GitHub Pages shared history";
+    : dataset?.source ?? "Supabase shared history";
   const comparisonText = dataset?.status === "ready" && dataset.comparison_window_ms
     ? ` · ${formatMarketComparisonWindow(dataset.comparison_window_ms)} comparison`
     : "";

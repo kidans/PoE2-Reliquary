@@ -84,7 +84,7 @@ async function main() {
     schema_version: 1,
     generated_at_epoch_ms: now,
     source: "poe.ninja shared snapshot collector",
-    refresh_policy: "approximately every 30 minutes; upstream and GitHub schedules may be delayed",
+    refresh_policy: "daily GitHub backup; primary live feed is served by Supabase",
     leagues: [],
   };
 

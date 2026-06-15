@@ -36,8 +36,44 @@ describe("market feed", () => {
       baseUrl: "https://example.test/feed",
     });
 
-    expect(result.source).toBe("network");
+    expect(result.source).toBe("github");
     expect(result.dataset?.generated_at_epoch_ms).toBe(2000);
+  });
+
+  it("uses GitHub only when the Supabase feed is unavailable", async () => {
+    const requests: string[] = [];
+    const result = await loadMarketBoardDataset("Fate of the Vaal", "1d", {
+      storage: memoryStorage(),
+      primaryUrl: "https://supabase.example/functions/v1/market-feed",
+      fallbackBaseUrl: "https://github.example/market-feed",
+      fetcher: async (input) => {
+        const url = String(input);
+        requests.push(url);
+        return url.startsWith("https://supabase.example")
+          ? new Response("offline", { status: 503 })
+          : new Response(JSON.stringify(payload), { status: 200 });
+      },
+    });
+
+    expect(result.source).toBe("github");
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toContain("league=Fate%20of%20the%20Vaal");
+    expect(requests[1]).toContain("/leagues/fate-of-the-vaal/market-1d.json");
+  });
+
+  it("uses a mature GitHub baseline while Supabase is still warming up", async () => {
+    const building = { ...payload, status: "building", snapshots_collected: 1, winners: [], losers: [] };
+    const result = await loadMarketBoardDataset("Fate of the Vaal", "1d", {
+      storage: memoryStorage(),
+      primaryUrl: "https://supabase.example/functions/v1/market-feed",
+      fallbackBaseUrl: "https://github.example/market-feed",
+      fetcher: async (input) => String(input).startsWith("https://supabase.example")
+        ? new Response(JSON.stringify(building), { status: 200 })
+        : new Response(JSON.stringify(payload), { status: 200 }),
+    });
+
+    expect(result.source).toBe("github");
+    expect(result.dataset?.status).toBe("ready");
   });
 
   it("falls back to the last valid cached dataset", async () => {
