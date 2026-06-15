@@ -87,6 +87,7 @@ import {
   type MapRunConfidence,
 } from "./atlas-run-history";
 import "./styles.css";
+import { DEFAULT_APP_SETTINGS, type AppSettings } from "./app-settings";
 
 type GuideStep = {
   text: string;
@@ -342,16 +343,11 @@ type AtlasFocusState = {
   checklist: Record<string, boolean>;
 };
 
-type AppSettings = {
-  accentHue: number;
-  panelAlpha: number;
-  saturation: number;
-  scanMod: "Ctrl" | "Alt";
-  scanKey: string;
-  waystoneMod: "Ctrl" | "Alt";
-  waystoneKey: string;
-  tradeMod: "Ctrl" | "Alt";
-  tradeKey: string;
+type DiscordPresenceStatus = {
+  enabled: boolean;
+  configured: boolean;
+  connected: boolean;
+  message: string;
 };
 
 type TradeLeague = {
@@ -1060,17 +1056,8 @@ const PRICE_REQUEST_COOLDOWN_MS = 10_000;
 const recentPriceRequestSignatures = new Map<string, number>();
 
 const SETTINGS_STORAGE_KEY = "reliquary.ui.settings";
-const DEFAULT_APP_SETTINGS: AppSettings = {
-  accentHue: 355,
-  panelAlpha: 0.98,
-  saturation: 100,
-  scanMod: "Ctrl",
-  scanKey: "C",
-  waystoneMod: "Alt",
-  waystoneKey: "W",
-  tradeMod: "Alt",
-  tradeKey: "D",
-};
+let discordPresenceStatus: DiscordPresenceStatus | null = null;
+let lastSyncedDiscordPresenceEnabled: boolean | null = null;
 let appSettings = readAppSettings();
 applyAppSettings(appSettings);
 loadCampaignProgress();
@@ -4466,9 +4453,12 @@ function renderSettingsPanel() {
   return `
     <section class="settings-panel">
       <div class="settings-hero">
-        <p class="section-label">Settings</p>
-        <h2>Overlay feel</h2>
-        <p>Visual controls apply instantly and stay local to this machine.</p>
+        <div>
+          <p class="section-label">Settings</p>
+          <h2>Overlay feel</h2>
+          <p>Visual controls apply instantly and stay local to this machine.</p>
+        </div>
+        <button class="action-button settings-reset-button" data-reset-visual-settings type="button">Reset visuals</button>
       </div>
 
       <div class="settings-grid">
@@ -4583,9 +4573,20 @@ function renderSettingsPanel() {
           </div>
         </div>
 
-        <div class="settings-field settings-field-static">
-          <button class="action-button" data-reset-visual-settings type="button">Reset visuals</button>
-        </div>
+        <label class="settings-field settings-field-toggle settings-field-wide">
+          <span>
+            <strong>Discord Rich Presence</strong>
+            <small>Opt in to show your character, level, current campaign area, hideout, or map on Discord. Confirmed OCR mechanics may appear beside the map name.</small>
+            <small data-discord-presence-status>${escapeHtml(discordPresenceStatus?.message ?? "Checking Discord availability...")}</small>
+          </span>
+          <input
+            data-setting="discordPresenceEnabled"
+            type="checkbox"
+            ${appSettings.discordPresenceEnabled ? "checked" : ""}
+            aria-label="Enable Discord Rich Presence"
+          />
+        </label>
+
       </div>
     </section>
   `;
@@ -4977,6 +4978,10 @@ function readAppSettings(): AppSettings {
       accentHue: clampNumber(Number(parsed.accentHue), 0, 359, DEFAULT_APP_SETTINGS.accentHue),
       panelAlpha: clampNumber(Number(parsed.panelAlpha), 0, 1, DEFAULT_APP_SETTINGS.panelAlpha),
       saturation: clampNumber(Number(parsed.saturation), 0, 200, DEFAULT_APP_SETTINGS.saturation),
+      discordPresenceEnabled:
+        typeof parsed.discordPresenceEnabled === "boolean"
+          ? parsed.discordPresenceEnabled
+          : DEFAULT_APP_SETTINGS.discordPresenceEnabled,
       scanMod: parsed.scanMod === "Ctrl" || parsed.scanMod === "Alt" ? parsed.scanMod : DEFAULT_APP_SETTINGS.scanMod,
       scanKey: normalizeShortcutKey(parsed.scanKey, DEFAULT_APP_SETTINGS.scanKey),
       waystoneMod: parsed.waystoneMod === "Ctrl" || parsed.waystoneMod === "Alt" ? parsed.waystoneMod : DEFAULT_APP_SETTINGS.waystoneMod,
@@ -5034,6 +5039,36 @@ function applyAppSettings(settings: AppSettings) {
     tradeMod: settings.tradeMod,
     tradeKey: settings.tradeKey,
   }).catch((err) => pushStatus("keybinds", String(err)));
+
+  if (lastSyncedDiscordPresenceEnabled !== settings.discordPresenceEnabled) {
+    lastSyncedDiscordPresenceEnabled = settings.discordPresenceEnabled;
+    void syncDiscordPresenceSetting(settings.discordPresenceEnabled);
+  }
+}
+
+async function syncDiscordPresenceSetting(enabled: boolean) {
+  try {
+    discordPresenceStatus = await invoke<DiscordPresenceStatus>(
+      "set_discord_presence_enabled",
+      { enabled },
+    );
+    updateDiscordPresenceStatusText();
+  } catch (error) {
+    discordPresenceStatus = {
+      enabled,
+      configured: false,
+      connected: false,
+      message: String(error),
+    };
+    updateDiscordPresenceStatusText();
+  }
+}
+
+function updateDiscordPresenceStatusText() {
+  const output = document.querySelector<HTMLElement>("[data-discord-presence-status]");
+  if (output) {
+    output.textContent = discordPresenceStatus?.message ?? "Checking Discord availability...";
+  }
 }
 
 function updateSettingOutput(settingName: keyof AppSettings) {
@@ -5976,6 +6011,9 @@ if (!isListingPreviewWindow && leagueElement) {
     if (settingInput?.dataset.setting) {
       const el = settingInput as HTMLInputElement | HTMLSelectElement;
       const name = el.dataset.setting!;
+      if (name === "discordPresenceEnabled" && el instanceof HTMLInputElement) {
+        appSettings.discordPresenceEnabled = el.checked;
+      }
       if (name === "scanMod" || name === "waystoneMod" || name === "tradeMod") {
         const val = el.value as "Ctrl" | "Alt";
         if (val === "Ctrl" || val === "Alt") {
@@ -6073,6 +6111,9 @@ if (!isListingPreviewWindow && leagueElement) {
 
     if (settingInput?.dataset.setting) {
       const name = settingInput.dataset.setting;
+      if (name === "discordPresenceEnabled") {
+        return;
+      }
       if (name === "accentHue") {
         appSettings.accentHue = clampNumber(Number(settingInput.value), 0, 359, DEFAULT_APP_SETTINGS.accentHue);
         updateSettingOutput("accentHue");
@@ -6448,6 +6489,11 @@ if (!isListingPreviewWindow && leagueElement) {
 
   void listen<WorkerStatus>("scan://worker-error", (event) => {
     pushStatus(event.payload.worker, event.payload.message);
+  });
+
+  void listen<DiscordPresenceStatus>("scan://discord-presence-status", (event) => {
+    discordPresenceStatus = event.payload;
+    updateDiscordPresenceStatusText();
   });
 
   listen<WaystoneSnapshot>("scan://pending-waystone-updated", (event) => {

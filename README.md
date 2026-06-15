@@ -72,6 +72,8 @@ Reliquary gives you control over how the overlay looks and behaves. The Settings
 
 Hotkeys for scanning item metadata, scanning waystone metadata, and opening trade searches are configurable to `Ctrl`, `Alt`, or any letter or digit key. Shortcuts that do not pass validation fall back to safe defaults automatically. All preferences are saved to your local machine and applied instantly.
 
+Discord Rich Presence is enabled by default and can be turned off in Settings. It can show the imported character name, level, class artwork, current campaign area, hideout, or map, elapsed area time, and confirmed OCR mechanics. Discord login and OAuth are not required; the integration talks only to the locally running Discord client.
+
 ![Settings](public/readme/Settings.png)
 
 ---
@@ -140,6 +142,7 @@ reliquary.exe debug-log --tail 40
 | `RELIQUARY_BANNED_MODS` | Use a custom hazard catalog JSON file. |
 | `RELIQUARY_POE2_LEAGUE` | Override the startup league. |
 | `RELIQUARY_DEBUG_LOG` | Override the debug log path. |
+| `RELIQUARY_DISCORD_APP_ID` | Optional override for Reliquary's built-in public Discord Application ID. |
 
 ---
 
