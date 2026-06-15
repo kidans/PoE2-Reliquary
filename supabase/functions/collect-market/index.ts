@@ -6,6 +6,7 @@ import {
   type MarketPeriod,
   type MarketSnapshot,
 } from "../_shared/market-engine.ts";
+import { normalizePoeNinjaCategory } from "../_shared/poe-ninja-normalize.ts";
 
 const INDEX_URL = "https://poe.ninja/poe2/api/data/index-state";
 const EXCHANGE_URL = "https://poe.ninja/poe2/api/economy/exchange/current/overview";
@@ -137,34 +138,12 @@ async function collectLeague(league: string) {
     try {
       const endpoint = category.feed === "exchange" ? EXCHANGE_URL : STASH_URL;
       const url = `${endpoint}?league=${encodeURIComponent(league)}&type=${encodeURIComponent(category.type)}`;
-      results.push(...normalizeCategory(await fetchJson(url), category));
+      results.push(...normalizePoeNinjaCategory(await fetchJson(url), category));
     } catch (error) {
       console.warn(`[${league}] ${category.label}: ${error instanceof Error ? error.message : error}`);
     }
   }
   return results.sort((left, right) => `${left.category_id}:${left.id}`.localeCompare(`${right.category_id}:${right.id}`));
-}
-
-function normalizeCategory(response: Record<string, unknown>, category: typeof CATEGORIES[number]) {
-  const lines = Array.isArray(response.lines) ? response.lines : [];
-  const items = Array.isArray(response.items) ? response.items : [];
-  const itemById = new Map(items.map((item: Record<string, unknown>) => [String(item.id ?? item.name ?? ""), item]));
-  return lines.flatMap((line: Record<string, unknown>) => {
-    const item = itemById.get(String(line.id ?? ""));
-    const name = stringValue(line.name ?? item?.name);
-    const price = finiteNumber(line.primaryValue ?? line.divineValue ?? line.value);
-    const liquidity = finiteNumber(line.count ?? line.listingCount ?? line.volume) ?? 0;
-    if (!name || price === null) return [];
-    return [{
-      id: stableId(category.id, String(line.id ?? name)),
-      category_id: category.id,
-      category_label: category.label,
-      name,
-      icon_url: normalizeAssetUrl(line.icon ?? item?.image ?? item?.icon),
-      price,
-      liquidity,
-    } satisfies MarketItem];
-  });
 }
 
 async function findBaseline(
@@ -223,29 +202,6 @@ async function snapshotFingerprint(items: MarketItem[]) {
   const bytes = new TextEncoder().encode(JSON.stringify(items.map((item) => [item.id, item.price, item.liquidity])));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
-}
-
-function normalizeAssetUrl(value: unknown) {
-  const url = stringValue(value);
-  if (!url) return null;
-  if (url.startsWith("/gen/image/")) return `https://web.poecdn.com${url}`;
-  if (url.startsWith("https://assets.poe.ninja/gen/image/")) {
-    return url.replace("https://assets.poe.ninja", "https://web.poecdn.com");
-  }
-  return url;
-}
-
-function stableId(categoryId: string, value: string) {
-  return `${categoryId}-${value}`.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-function finiteNumber(value: unknown) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function stringValue(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function requiredEnv(name: string) {
