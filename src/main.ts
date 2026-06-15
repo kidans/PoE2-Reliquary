@@ -624,6 +624,7 @@ let marketBoardVisibleRows: Record<MarketDirection, number> = {
   winner: MARKET_INITIAL_ROWS,
   loser: MARKET_INITIAL_ROWS,
 };
+let marketBoardScrollTop: Record<MarketDirection, number> = { winner: 0, loser: 0 };
 let campaignResetConfirmHandle = 0;
 let atlasHistoryClearConfirmHandle = 0;
 
@@ -807,6 +808,7 @@ function setMarketPeriod(period: typeof tradeViewPreference.period) {
   tradeViewPreference = { view: "market", period };
   tradeWatchlistMode = false;
   marketBoardVisibleRows = { winner: MARKET_INITIAL_ROWS, loser: MARKET_INITIAL_ROWS };
+  marketBoardScrollTop = { winner: 0, loser: 0 };
   writeTradeViewPreference(localStorage, TRADE_VIEW_STORAGE_KEY, tradeViewPreference);
 }
 
@@ -3221,7 +3223,7 @@ function renderMarketBoardMain() {
 
       <div class="market-board-meta">
         <span>${escapeHtml(sourceText)}</span>
-        <strong>${escapeHtml(marketBoardLoadState.error && dataset ? "Offline · using last valid snapshot" : "All exchange + unique feeds")}</strong>
+        <strong>${escapeHtml(marketBoardLoadState.error && dataset ? "Offline · using last valid snapshot" : `All exchange + unique feeds · prices in ${dataset?.quote_currency_label ?? "Divine Orb"}`)}</strong>
         <button class="trade-refresh-button" data-refresh-market type="button">Refresh</button>
       </div>
 
@@ -3249,14 +3251,18 @@ function renderMarketBoardBody(dataset: MarketBoardDataset | null, baselineMessa
 
   return `
     <div class="market-board-columns">
-      ${renderMarketMoverColumn("winner", dataset.winners)}
-      ${renderMarketMoverColumn("loser", dataset.losers)}
+      ${renderMarketMoverColumn("winner", dataset.winners, dataset.quote_currency_id, dataset.quote_currency_label)}
+      ${renderMarketMoverColumn("loser", dataset.losers, dataset.quote_currency_id, dataset.quote_currency_label)}
     </div>`;
 }
 
-function renderMarketMoverColumn(direction: MarketDirection, movers: MarketMover[]) {
+function renderMarketMoverColumn(
+  direction: MarketDirection,
+  movers: MarketMover[],
+  quoteCurrencyId: string,
+  quoteCurrencyLabel: string,
+) {
   const visible = visibleMarketMovers(movers, marketBoardVisibleRows[direction]);
-  const hasMore = movers.length > visible.length && movers.slice(visible.length).some((mover) => mover.score >= 1);
   const title = direction === "winner" ? "Biggest Winners" : "Biggest Losers";
   const subtitle = direction === "winner" ? "Strongest risk-adjusted gains" : "Sharpest risk-adjusted declines";
   return `
@@ -3265,24 +3271,34 @@ function renderMarketMoverColumn(direction: MarketDirection, movers: MarketMover
         <div><span>${escapeHtml(title)}</span><small>${escapeHtml(subtitle)}</small></div>
         <strong>${movers.length}</strong>
       </header>
-      <div class="market-mover-list">
-        ${visible.length ? visible.map((mover, index) => renderMarketMoverRow(mover, direction, index + 1)).join("") : `<div class="market-column-empty">No ${direction === "winner" ? "positive" : "negative"} movers cleared confidence checks.</div>`}
+      <div class="market-mover-list" data-market-scroll="${direction}" tabindex="0" aria-label="${direction === "winner" ? "Market winners" : "Market losers"}">
+        ${visible.length ? visible.map((mover, index) => renderMarketMoverRow(mover, direction, index + 1, quoteCurrencyId, quoteCurrencyLabel)).join("") : `<div class="market-column-empty">No ${direction === "winner" ? "positive" : "negative"} movers cleared confidence checks.</div>`}
       </div>
-      ${hasMore ? `<button class="market-load-more" data-market-load-more="${direction}" type="button">Load 10 more</button>` : ""}
+      ${visible.length < movers.length ? `<div class="market-scroll-hint">Showing ${visible.length} of ${movers.length} · scroll for more</div>` : ""}
     </section>`;
 }
 
-function renderMarketMoverRow(mover: MarketMover, direction: MarketDirection, rank: number) {
+function renderMarketMoverRow(
+  mover: MarketMover,
+  direction: MarketDirection,
+  rank: number,
+  quoteCurrencyId: string,
+  quoteCurrencyLabel: string,
+) {
   const icon = mover.icon_url
     ? `<img src="${escapeAttribute(mover.icon_url)}" alt="" loading="lazy" />`
     : `<span class="market-mover-icon-fallback">${escapeHtml(mover.name.slice(0, 1))}</span>`;
+  const quoteIconUrl = resolveCurrencyIcon(quoteCurrencyId, null);
+  const quoteIcon = quoteIconUrl
+    ? `<img class="market-quote-icon" src="${escapeAttribute(quoteIconUrl)}" alt="${escapeAttribute(quoteCurrencyLabel)}" title="${escapeAttribute(`${quoteCurrencyLabel} equivalent`)}" />`
+    : "";
   const sign = mover.change_percent > 0 ? "+" : "";
   return `
     <article class="market-mover-row is-${direction}">
       <span class="market-mover-rank">${rank}</span>
       <span class="market-mover-icon">${icon}</span>
       <span class="market-mover-name"><strong>${escapeHtml(mover.name)}</strong><small>${escapeHtml(mover.category_label)}</small></span>
-      <span class="market-mover-price"><strong>${escapeHtml(formatMarketPrice(mover.current_price))}</strong><small>from ${escapeHtml(formatMarketPrice(mover.baseline_price))}</small></span>
+      <span class="market-mover-price" title="Prices in ${escapeAttribute(`${quoteCurrencyLabel} equivalent`)}"><strong>${escapeHtml(formatMarketPrice(mover.current_price))}${quoteIcon}</strong><small>from ${escapeHtml(formatMarketPrice(mover.baseline_price))} ${escapeHtml(quoteCurrencyLabel)}</small></span>
       <span class="market-mover-change">${sign}${mover.change_percent.toFixed(1)}%</span>
       <span class="market-confidence is-${mover.confidence}">${escapeHtml(marketConfidenceLabel(mover.confidence))}</span>
     </article>`;
@@ -5402,6 +5418,8 @@ if (!isListingPreviewWindow && leagueElement) {
     state.trade_league = leagueElement.value;
     state.price_check = null;
     marketBoardLoadState = { key: null, status: "idle", dataset: null, source: "none", error: null };
+    marketBoardVisibleRows = { winner: MARKET_INITIAL_ROWS, loser: MARKET_INITIAL_ROWS };
+    marketBoardScrollTop = { winner: 0, loser: 0 };
     loadingMoreMarketplaceResults = false;
     await invoke("set_trade_league", { league: state.trade_league }).catch((error) =>
       pushStatus("league", String(error)),
@@ -5438,7 +5456,6 @@ if (!isListingPreviewWindow && leagueElement) {
     const marketBoardToggle = target.closest<HTMLButtonElement>("[data-market-board-toggle]");
     const marketPeriodButton = target.closest<HTMLButtonElement>("[data-market-period]");
     const marketRefreshButton = target.closest<HTMLButtonElement>("[data-refresh-market]");
-    const marketLoadMoreButton = target.closest<HTMLButtonElement>("[data-market-load-more]");
     const stashNoteButton = target.closest<HTMLButtonElement>("[data-copy-stash-note]");
     const resetVisualSettingsButton = target.closest<HTMLButtonElement>("[data-reset-visual-settings]");
     const campaignStepButton = target.closest<HTMLElement>("[data-campaign-step-key]");
@@ -5723,6 +5740,7 @@ if (!isListingPreviewWindow && leagueElement) {
     if (marketBoardToggle) {
       setTradeSubView("market");
       marketBoardVisibleRows = { winner: MARKET_INITIAL_ROWS, loser: MARKET_INITIAL_ROWS };
+      marketBoardScrollTop = { winner: 0, loser: 0 };
       render();
       return;
     }
@@ -5740,15 +5758,6 @@ if (!isListingPreviewWindow && leagueElement) {
     if (marketRefreshButton) {
       ensureMarketBoardLoaded(true);
       render();
-      return;
-    }
-
-    if (marketLoadMoreButton?.dataset.marketLoadMore) {
-      const direction = marketLoadMoreButton.dataset.marketLoadMore;
-      if (direction === "winner" || direction === "loser") {
-        marketBoardVisibleRows[direction] += MARKET_ROW_INCREMENT;
-        render();
-      }
       return;
     }
 
@@ -6112,6 +6121,28 @@ if (!isListingPreviewWindow && leagueElement) {
     "scroll",
     (event) => {
       const target = event.target as HTMLElement;
+      const marketScroll = target.closest<HTMLElement>("[data-market-scroll]");
+
+      if (marketScroll?.dataset.marketScroll === "winner" || marketScroll?.dataset.marketScroll === "loser") {
+        const direction = marketScroll.dataset.marketScroll;
+        marketBoardScrollTop[direction] = marketScroll.scrollTop;
+        const dataset = marketBoardLoadState.key === marketBoardKey() ? marketBoardLoadState.dataset : null;
+        const movers = direction === "winner" ? dataset?.winners : dataset?.losers;
+        const remaining = marketScroll.scrollHeight - marketScroll.scrollTop - marketScroll.clientHeight;
+
+        if (movers && remaining <= 56 && marketBoardVisibleRows[direction] < movers.length) {
+          marketBoardVisibleRows[direction] += MARKET_ROW_INCREMENT;
+          render();
+          window.requestAnimationFrame(() => {
+            (Object.keys(marketBoardScrollTop) as MarketDirection[]).forEach((marketDirection) => {
+              const restored = root.querySelector<HTMLElement>(`[data-market-scroll="${marketDirection}"]`);
+              if (restored) restored.scrollTop = marketBoardScrollTop[marketDirection];
+            });
+          });
+        }
+        return;
+      }
+
       const listingScroll = target.closest<HTMLElement>("[data-load-more-marketplace='true']");
 
       if (!listingScroll || loadingMoreMarketplaceResults || !canLoadMoreMarketplaceResults()) {

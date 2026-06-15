@@ -5368,6 +5368,20 @@ kbd {
   font-size: 10px;
 }
 
+.market-mover-price strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.market-quote-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.65));
+}
+
 .market-mover-name small,
 .market-mover-price small {
   color: var(--vellum-muted);
@@ -5415,22 +5429,16 @@ kbd {
   text-align: center;
 }
 
-.market-load-more {
-  cursor: pointer;
-  border: 0;
+.market-scroll-hint {
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(255, 255, 255, 0.025);
-  color: var(--vellum-dim);
+  color: var(--vellum-muted);
   padding: 9px;
   font-size: 9px;
   font-weight: 900;
   letter-spacing: 0.08em;
+  text-align: center;
   text-transform: uppercase;
-}
-
-.market-load-more:hover {
-  color: #fff1f2;
-  background: hsl(var(--accent-hue, 355) 46% 17% / 0.7);
 }
 
 @media (max-width: 760px) {

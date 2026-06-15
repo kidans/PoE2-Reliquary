@@ -45,13 +45,8 @@ leagueSelect.addEventListener("change", async () => {
 });
 
 refreshButton.addEventListener("click", loadManifest);
-document.querySelectorAll(".load-more").forEach((button) => {
-  button.addEventListener("click", () => {
-    if (button.dataset.direction === "winner") state.winnerRows += PAGE_SIZE;
-    else state.loserRows += PAGE_SIZE;
-    renderDataset();
-  });
-});
+winnerList.addEventListener("scroll", () => loadMoreOnScroll("winner", winnerList));
+loserList.addEventListener("scroll", () => loadMoreOnScroll("loser", loserList));
 
 await loadManifest();
 
@@ -96,7 +91,7 @@ function renderDataset() {
   if (!dataset) return;
   source.textContent = dataset.source || "PoE.ninja shared snapshot collector";
   updated.textContent = `Updated ${formatTimestamp(dataset.generated_at_epoch_ms)}`;
-  summary.textContent = `${dataset.league} · ${periodLabel(dataset.period)} measured price movement`;
+  summary.textContent = `${dataset.league} · ${periodLabel(dataset.period)} movement · prices in ${dataset.quote_currency_label || "Divine Orb"}`;
   if (dataset.status !== "ready") {
     const collected = Number(dataset.snapshots_collected || 0);
     const required = Number(dataset.snapshots_required || 1);
@@ -115,19 +110,20 @@ function renderDataset() {
   }
   marketState.hidden = true;
   marketLists.hidden = false;
-  renderMovers(winnerList, winners.slice(0, state.winnerRows), "positive");
-  renderMovers(loserList, losers.slice(0, state.loserRows), "negative");
-  setLoadMore("winner", state.winnerRows < winners.length);
-  setLoadMore("loser", state.loserRows < losers.length);
+  renderMovers(winnerList, winners.slice(0, state.winnerRows), "positive", dataset);
+  renderMovers(loserList, losers.slice(0, state.loserRows), "negative", dataset);
 }
 
-function renderMovers(container, movers, direction) {
+function renderMovers(container, movers, direction, dataset) {
+  const quoteCurrencyLabel = dataset.quote_currency_label || "Divine Orb";
+  const quoteCurrencyId = dataset.quote_currency_id || "divine";
   container.replaceChildren(...movers.map((mover, index) => {
     const row = document.createElement("article");
     row.className = "mover-row";
     row.style.setProperty("--row-index", String(index));
-    const icon = mover.icon_url
-      ? element("img", { src: mover.icon_url, alt: "", loading: "lazy", referrerpolicy: "no-referrer" })
+    const iconUrl = normalizeAssetUrl(mover.icon_url);
+    const icon = iconUrl
+      ? element("img", { src: iconUrl, alt: "", loading: "lazy", referrerpolicy: "no-referrer" })
       : element("span", { class: "icon-fallback", text: mover.name.slice(0, 1) });
     icon.addEventListener?.("error", () => icon.replaceWith(element("span", { class: "icon-fallback", text: mover.name.slice(0, 1) })), { once: true });
     const name = element("div", { class: "mover-name" }, [
@@ -135,13 +131,41 @@ function renderMovers(container, movers, direction) {
       element("span", { text: mover.category_label }),
     ]);
     const value = element("div", { class: "mover-value" }, [
-      element("strong", { text: formatPrice(mover.current_price) }),
+      element("strong", { class: "mover-price-primary", title: `${quoteCurrencyLabel} equivalent` }, [
+        element("span", { text: formatPrice(mover.current_price) }),
+        element("img", { class: "quote-currency-icon", src: quoteCurrencyIcon(quoteCurrencyId), alt: quoteCurrencyLabel }),
+      ]),
+      element("small", { class: "mover-price-baseline", text: `from ${formatPrice(mover.baseline_price)} ${quoteCurrencyLabel}` }),
       element("span", { class: direction === "positive" ? "change-positive" : "change-negative", text: `${signed(mover.change_percent)}%` }),
       element("small", { class: "confidence", text: mover.confidence }),
     ]);
     row.append(icon, name, value);
     return row;
   }));
+}
+
+function loadMoreOnScroll(direction, container) {
+  if (!state.dataset || container.scrollHeight - container.scrollTop - container.clientHeight > 80) return;
+  const movers = direction === "winner" ? state.dataset.winners : state.dataset.losers;
+  const key = direction === "winner" ? "winnerRows" : "loserRows";
+  if (state[key] >= movers.length) return;
+  const previousScrollTop = container.scrollTop;
+  state[key] += PAGE_SIZE;
+  renderDataset();
+  container.scrollTop = previousScrollTop;
+}
+
+function normalizeAssetUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  if (value.startsWith("/gen/image/")) return `https://web.poecdn.com${value}`;
+  if (value.startsWith("https://assets.poe.ninja/gen/image/")) {
+    return value.replace("https://assets.poe.ninja", "https://web.poecdn.com");
+  }
+  return value;
+}
+
+function quoteCurrencyIcon(currencyId) {
+  return currencyId === "divine" ? "./currency/divine.webp" : "./currency/divine.webp";
 }
 
 function renderLeagueOptions(leagues) {
@@ -177,7 +201,6 @@ function showState(title, detail) {
 }
 
 function resetRows() { state.winnerRows = PAGE_SIZE; state.loserRows = PAGE_SIZE; }
-function setLoadMore(direction, visible) { document.querySelector(`[data-direction="${direction}"]`).hidden = !visible; }
 function preferredLeague(leagues) { return leagues.find((league) => league !== "Standard" && !/hardcore/i.test(league)) || leagues[0]; }
 function periodLabel(period) { return period === "30m" ? "30-minute" : period === "1d" ? "1-day" : "7-day"; }
 function leagueSlug(value) { return value.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "unknown"; }
