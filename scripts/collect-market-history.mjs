@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { gunzip, gzip } from "node:zlib";
 import { promisify } from "node:util";
 
-import { mergeRetainedSnapshots } from "./market-history-policy.mjs";
+import { mergeRetainedSnapshots, selectComparisonBaseline } from "./market-history-policy.mjs";
 import { normalizePoeNinjaAssetUrl } from "./market-feed-normalize.mjs";
 
 const gzipAsync = promisify(gzip);
@@ -46,7 +46,12 @@ const CATEGORIES = [
 ].map(([id, label, feed, type]) => ({ id, label, feed, type }));
 
 const PERIODS = {
-  "30m": { targetMs: 30 * 60 * 1000, toleranceMs: 20 * 60 * 1000, required: 2 },
+  "30m": {
+    targetMs: 30 * 60 * 1000,
+    toleranceMs: 20 * 60 * 1000,
+    maxFallbackAgeMs: 4 * 60 * 60 * 1000,
+    required: 2,
+  },
   "1d": { targetMs: 24 * 60 * 60 * 1000, toleranceMs: 4 * 60 * 60 * 1000, required: 48 },
   "7d": { targetMs: 7 * 24 * 60 * 60 * 1000, toleranceMs: 12 * 60 * 60 * 1000, required: 336 },
 };
@@ -149,7 +154,13 @@ function normalizeCategory(response, category) {
 
 function buildDataset(league, period, config, snapshots, now) {
   const current = snapshots.at(-1) ?? null;
-  const baseline = current ? nearestBaseline(snapshots, current.captured_at_epoch_ms - config.targetMs, config.toleranceMs) : null;
+  const baseline = selectComparisonBaseline(
+    snapshots,
+    current,
+    config.targetMs,
+    config.toleranceMs,
+    config.maxFallbackAgeMs,
+  );
   const ready = Boolean(current && baseline && baseline !== current);
   const movers = ready ? calculateMovers(current.items, baseline.items) : { winners: [], losers: [] };
   return {
@@ -159,6 +170,7 @@ function buildDataset(league, period, config, snapshots, now) {
     status: ready ? "ready" : "building",
     generated_at_epoch_ms: current?.captured_at_epoch_ms ?? now,
     baseline_at_epoch_ms: ready ? baseline.captured_at_epoch_ms : null,
+    comparison_window_ms: ready ? current.captured_at_epoch_ms - baseline.captured_at_epoch_ms : null,
     source: "poe.ninja shared snapshot collector",
     quote_currency_id: QUOTE_CURRENCY_ID,
     quote_currency_label: QUOTE_CURRENCY_LABEL,
@@ -167,19 +179,6 @@ function buildDataset(league, period, config, snapshots, now) {
     winners: movers.winners,
     losers: movers.losers,
   };
-}
-
-function nearestBaseline(snapshots, target, tolerance) {
-  let best = null;
-  let bestDistance = Infinity;
-  for (const snapshot of snapshots) {
-    const distance = Math.abs(snapshot.captured_at_epoch_ms - target);
-    if (distance <= tolerance && distance < bestDistance) {
-      best = snapshot;
-      bestDistance = distance;
-    }
-  }
-  return best;
 }
 
 function calculateMovers(current, baseline) {

@@ -3204,6 +3204,9 @@ function renderMarketBoardMain() {
   const sourceText = marketBoardLoadState.source === "cache"
     ? "Cached shared feed"
     : dataset?.source ?? "GitHub Pages shared history";
+  const comparisonText = dataset?.status === "ready" && dataset.comparison_window_ms
+    ? ` · ${formatMarketComparisonWindow(dataset.comparison_window_ms)} comparison`
+    : "";
   const baselineMessage = dataset ? marketBaselineMessage(dataset) : null;
 
   return `
@@ -3222,7 +3225,7 @@ function renderMarketBoardMain() {
       </header>
 
       <div class="market-board-meta">
-        <span>${escapeHtml(sourceText)}</span>
+        <span>${escapeHtml(`${sourceText}${comparisonText}`)}</span>
         <strong>${escapeHtml(marketBoardLoadState.error && dataset ? "Offline · using last valid snapshot" : `All exchange + unique feeds · prices in ${dataset?.quote_currency_label ?? "Divine Orb"}`)}</strong>
         <button class="trade-refresh-button" data-refresh-market type="button">Refresh</button>
       </div>
@@ -3230,6 +3233,14 @@ function renderMarketBoardMain() {
       ${renderMarketBoardBody(dataset, baselineMessage)}
     </div>
   `;
+}
+
+function formatMarketComparisonWindow(milliseconds: number) {
+  const minutes = Math.max(1, Math.round(milliseconds / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
 }
 
 function renderMarketBoardBody(dataset: MarketBoardDataset | null, baselineMessage: string | null) {

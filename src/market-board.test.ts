@@ -67,6 +67,7 @@ describe("market board", () => {
     expect(dataset).not.toBeNull();
     expect(dataset?.quote_currency_id).toBe("divine");
     expect(dataset?.quote_currency_label).toBe("Divine Orb");
+    expect(dataset?.comparison_window_ms).toBeNull();
     expect(marketBaselineMessage(dataset!)).toBe("Building 1-day baseline - 11/48 snapshots collected");
   });
 
