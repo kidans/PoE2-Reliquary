@@ -91,7 +91,10 @@ function renderDataset() {
   if (!dataset) return;
   source.textContent = dataset.source || "PoE.ninja shared snapshot collector";
   updated.textContent = `Updated ${formatTimestamp(dataset.generated_at_epoch_ms)}`;
-  summary.textContent = `${dataset.league} · ${periodLabel(dataset.period)} movement · prices in ${dataset.quote_currency_label || "Divine Orb"}`;
+  const comparison = dataset.status === "ready" && Number(dataset.comparison_window_ms) > 0
+    ? `${formatComparisonWindow(dataset.comparison_window_ms)} comparison`
+    : `${periodLabel(dataset.period)} movement`;
+  summary.textContent = `${dataset.league} · ${comparison} · prices in ${dataset.quote_currency_label || "Divine Orb"}`;
   if (dataset.status !== "ready") {
     const collected = Number(dataset.snapshots_collected || 0);
     const required = Number(dataset.snapshots_required || 1);
@@ -203,6 +206,13 @@ function showState(title, detail) {
 function resetRows() { state.winnerRows = PAGE_SIZE; state.loserRows = PAGE_SIZE; }
 function preferredLeague(leagues) { return leagues.find((league) => league !== "Standard" && !/hardcore/i.test(league)) || leagues[0]; }
 function periodLabel(period) { return period === "30m" ? "30-minute" : period === "1d" ? "1-day" : "7-day"; }
+function formatComparisonWindow(milliseconds) {
+  const minutes = Math.max(1, Math.round(Number(milliseconds) / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+}
 function leagueSlug(value) { return value.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "unknown"; }
 function formatTimestamp(value) { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
 function formatPrice(value) { return new Intl.NumberFormat(undefined, { maximumFractionDigits: value >= 100 ? 0 : value >= 10 ? 1 : 2, notation: value >= 10000 ? "compact" : "standard" }).format(value); }

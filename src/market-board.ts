@@ -40,6 +40,7 @@ export type MarketBoardDataset = {
   status: MarketDatasetStatus;
   generated_at_epoch_ms: number;
   baseline_at_epoch_ms: number | null;
+  comparison_window_ms: number | null;
   source: string;
   quote_currency_id: string;
   quote_currency_label: string;
@@ -117,6 +118,7 @@ export function normalizeMarketBoardDataset(value: unknown): MarketBoardDataset 
     status,
     generated_at_epoch_ms: generatedAt,
     baseline_at_epoch_ms: finiteNumber(raw.baseline_at_epoch_ms),
+    comparison_window_ms: finiteNumber(raw.comparison_window_ms),
     source: stringValue(raw.source) ?? "shared market feed",
     quote_currency_id: stringValue(raw.quote_currency_id) ?? MARKET_QUOTE_CURRENCY_ID,
     quote_currency_label: stringValue(raw.quote_currency_label) ?? MARKET_QUOTE_CURRENCY_LABEL,
