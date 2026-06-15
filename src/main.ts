@@ -67,7 +67,7 @@ import {
   MARKET_ROW_INCREMENT,
   marketBaselineMessage,
   readTradeViewPreference,
-  visibleMarketMovers,
+  scrollableMarketMovers,
   writeTradeViewPreference,
   type MarketBoardDataset,
   type MarketConfidence,
@@ -3273,7 +3273,7 @@ function renderMarketMoverColumn(
   quoteCurrencyId: string,
   quoteCurrencyLabel: string,
 ) {
-  const visible = visibleMarketMovers(movers, marketBoardVisibleRows[direction]);
+  const visible = scrollableMarketMovers(movers, marketBoardVisibleRows[direction]);
   const title = direction === "winner" ? "Biggest Winners" : "Biggest Losers";
   const subtitle = direction === "winner" ? "Strongest risk-adjusted gains" : "Sharpest risk-adjusted declines";
   return `
@@ -3285,7 +3285,7 @@ function renderMarketMoverColumn(
       <div class="market-mover-list" data-market-scroll="${direction}" tabindex="0" aria-label="${direction === "winner" ? "Market winners" : "Market losers"}">
         ${visible.length ? visible.map((mover, index) => renderMarketMoverRow(mover, direction, index + 1, quoteCurrencyId, quoteCurrencyLabel)).join("") : `<div class="market-column-empty">No ${direction === "winner" ? "positive" : "negative"} movers cleared confidence checks.</div>`}
       </div>
-      ${visible.length < movers.length ? `<div class="market-scroll-hint">Showing ${visible.length} of ${movers.length} · scroll for more</div>` : ""}
+      ${visible.length < movers.length ? `<div class="market-scroll-hint">${movers.length} ranked movers · scroll for more</div>` : ""}
     </section>`;
 }
 
