@@ -1,4 +1,5 @@
 const FEED_ROOT = "./market-feed";
+const SUPABASE_FEED_URL = "https://tzxclvrmmptvqhzobgse.supabase.co/functions/v1/market-feed";
 const PERIODS = ["30m", "1d", "7d"];
 const PAGE_SIZE = 10;
 
@@ -51,11 +52,12 @@ loserList.addEventListener("scroll", () => loadMoreOnScroll("loser", loserList))
 await loadManifest();
 
 async function loadManifest() {
-  showLoading("Connecting to the shared feed", "Checking GitHub Pages for the latest league snapshots.");
+  showLoading("Connecting to the shared feed", "Checking Supabase for the latest league snapshots.");
   try {
-    const response = await fetch(`${FEED_ROOT}/manifest.json?ts=${Date.now()}`, { cache: "no-store" });
-    if (!response.ok) throw new Error(`Feed returned HTTP ${response.status}`);
-    const manifest = await response.json();
+    const manifest = await fetchFirstJson([
+      `${SUPABASE_FEED_URL}?manifest=1&ts=${Date.now()}`,
+      `${FEED_ROOT}/manifest.json?ts=${Date.now()}`,
+    ]);
     if (!Array.isArray(manifest.leagues) || manifest.leagues.length === 0) {
       throw new Error("No league snapshots have been published yet");
     }
@@ -76,14 +78,49 @@ async function loadDataset() {
   showLoading("Loading market history", `${state.league} · ${periodLabel(state.period)}`);
   const slug = state.manifest?.leagues.find((league) => league.name === state.league)?.slug || leagueSlug(state.league);
   try {
-    const response = await fetch(`${FEED_ROOT}/leagues/${slug}/market-${state.period}.json?ts=${Date.now()}`, { cache: "no-store" });
-    if (!response.ok) throw new Error(`Dataset returned HTTP ${response.status}`);
-    state.dataset = await response.json();
+    state.dataset = await fetchMarketDataset(
+      `${SUPABASE_FEED_URL}?league=${encodeURIComponent(state.league)}&period=${encodeURIComponent(state.period)}&ts=${Date.now()}`,
+      `${FEED_ROOT}/leagues/${slug}/market-${state.period}.json?ts=${Date.now()}`,
+    );
     renderDataset();
   } catch (error) {
     state.dataset = null;
     showError("This market period could not be loaded", error instanceof Error ? error.message : String(error));
   }
+}
+
+async function fetchMarketDataset(primaryUrl, fallbackUrl) {
+  let warmingDataset = null;
+  try {
+    const primary = await fetchFirstJson([primaryUrl]);
+    if (primary.status !== "building") return primary;
+    warmingDataset = primary;
+  } catch {
+    // The GitHub copy below is also the network fallback.
+  }
+
+  try {
+    const fallback = await fetchFirstJson([fallbackUrl]);
+    if (fallback.status === "ready") return fallback;
+  } catch {
+    // Preserve the honest Supabase warm-up state when no mature fallback exists.
+  }
+  if (warmingDataset) return warmingDataset;
+  return fetchFirstJson([fallbackUrl]);
+}
+
+async function fetchFirstJson(urls) {
+  const failures = [];
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } catch (error) {
+      failures.push(`${url}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  throw new Error(failures.join("; "));
 }
 
 function renderDataset() {

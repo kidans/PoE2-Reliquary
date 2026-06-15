@@ -1,11 +1,11 @@
-name: Update shared market feed
+name: Update product site and backup market feed
 
 on:
   workflow_dispatch:
   schedule:
-    # Run more often than the upstream cadence so delayed GitHub cron jobs do
-    # not leave the 30-minute comparison without a usable checkpoint.
-    - cron: "2,17,32,47 * * * *"
+    # Supabase owns the live 30-minute cadence. GitHub retains one daily
+    # disaster-recovery snapshot and deploys the product site.
+    - cron: "17 3 * * *"
 
 permissions:
   contents: read
