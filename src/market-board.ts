@@ -140,6 +140,11 @@ export function visibleMarketMovers(movers: MarketMover[], requestedRows: number
   return sorted.slice(0, Math.max(MARKET_INITIAL_ROWS, requestedRows));
 }
 
+export function scrollableMarketMovers(movers: MarketMover[], requestedRows: number) {
+  const preloadRows = Math.max(MARKET_INITIAL_ROWS, requestedRows) + MARKET_ROW_INCREMENT;
+  return visibleMarketMovers(movers, Math.min(movers.length, preloadRows));
+}
+
 export function normalizeMarketIconUrl(value: string | null | undefined) {
   if (!value) return null;
   const trimmed = value.trim();

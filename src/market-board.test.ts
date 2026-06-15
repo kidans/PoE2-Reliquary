@@ -7,6 +7,7 @@ import {
   normalizeMarketIconUrl,
   normalizeMarketBoardDataset,
   normalizeTradeViewPreference,
+  scrollableMarketMovers,
   visibleMarketMovers,
   type MarketMover,
   type MarketSnapshotItem,
@@ -116,5 +117,11 @@ describe("market board", () => {
     expect(visible.some((entry) => entry.score === 1.2)).toBe(true);
     expect(visible.filter((entry) => entry.score === 0.5)).toHaveLength(4);
     expect(visible).toHaveLength(15);
+  });
+
+  it("preloads another page so a ten-row market viewport can actually scroll", () => {
+    const movers = Array.from({ length: 25 }, (_, index) => mover(index, 25 - index));
+
+    expect(scrollableMarketMovers(movers, MARKET_INITIAL_ROWS)).toHaveLength(20);
   });
 });
