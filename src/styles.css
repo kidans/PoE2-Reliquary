@@ -876,7 +876,7 @@ kbd {
     0 10px 20px rgba(0, 0, 0, 0.28);
   font-size: 10px;
   line-height: 1;
-  overflow: hidden;
+  overflow: visible;
   white-space: nowrap;
   transition:
     transform var(--motion-fast) var(--ease-strike),
@@ -897,12 +897,16 @@ kbd {
 }
 
 .tab-button::before {
-  inset: 7px 6px;
-  border: 1px solid hsl(var(--accent-hue, 355) 78% 66% / 0.22);
-  border-radius: 999px;
+  inset: -8px -7px;
+  border-radius: inherit;
   background:
-    radial-gradient(circle, hsl(var(--accent-hue, 355) 88% 62% / 0.14), transparent 62%);
-  opacity: 0.46;
+    radial-gradient(circle at 18% 30%, hsl(var(--accent-hue, 355) 92% 70% / 0.32) 0 5%, transparent 17%),
+    radial-gradient(circle at 78% 22%, hsl(var(--accent-hue, 355) 86% 62% / 0.22) 0 4%, transparent 15%),
+    radial-gradient(circle at 82% 76%, hsl(var(--accent-hue, 355) 94% 72% / 0.28) 0 4%, transparent 17%),
+    radial-gradient(circle at 28% 82%, hsl(var(--accent-hue, 355) 82% 58% / 0.2) 0 3%, transparent 14%);
+  opacity: 0;
+  filter: blur(3px);
+  transform: scale(0.84) rotate(-8deg);
 }
 
 .tab-button::after {
@@ -921,6 +925,7 @@ kbd {
   position: absolute;
   left: calc(100% + 8px);
   top: 50%;
+  z-index: 2;
   opacity: 0;
   pointer-events: none;
   border: 1px solid hsl(var(--accent-hue, 355) 70% 58% / 0.42);
@@ -1016,8 +1021,12 @@ kbd {
 .tab-button:hover::before,
 .tab-button:focus-visible::before,
 .tab-button.is-active::before {
-  opacity: 0.92;
-  transform: scale(1.06);
+  opacity: 0.88;
+  transform: scale(1.08) rotate(0deg);
+}
+
+.tab-button.is-active::before {
+  opacity: 1;
 }
 
 .tab-button:hover .reliquary-glyph .glyph-frame,
