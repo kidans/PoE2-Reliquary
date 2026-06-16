@@ -90,6 +90,12 @@
   --frame-overscan-top: 14px;
   --frame-overscan-right: 0px;
   --frame-overscan-bottom: 0px;
+  --motion-instant: 80ms;
+  --motion-fast: 120ms;
+  --motion-panel: 190ms;
+  --motion-shell: 240ms;
+  --ease-reliquary: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-strike: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 html,
@@ -114,6 +120,17 @@ input,
 textarea,
 select {
   font: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .overlay-root {
@@ -793,8 +810,8 @@ kbd {
   overflow: visible;
   transform: translate(-62%, -50%);
   transition:
-    transform 180ms ease,
-    filter 180ms ease;
+    transform var(--motion-panel) var(--ease-reliquary),
+    filter var(--motion-panel) var(--ease-reliquary);
 }
 
 .tab-row:hover,
@@ -813,10 +830,10 @@ kbd {
     var(--char);
   color: var(--vellum);
   transition:
-    transform 140ms ease,
-    border-color 140ms ease,
-    background 140ms ease,
-    color 140ms ease;
+    transform var(--motion-fast) var(--ease-strike),
+    border-color var(--motion-fast) var(--ease-reliquary),
+    background var(--motion-fast) var(--ease-reliquary),
+    color var(--motion-fast) var(--ease-reliquary);
 }
 
 .tab-button {
@@ -834,11 +851,11 @@ kbd {
   overflow: hidden;
   white-space: nowrap;
   transition:
-    transform 140ms ease,
-    border-color 140ms ease,
-    background 140ms ease,
-    color 140ms ease,
-    box-shadow 140ms ease;
+    transform var(--motion-fast) var(--ease-strike),
+    border-color var(--motion-fast) var(--ease-reliquary),
+    background var(--motion-fast) var(--ease-reliquary),
+    color var(--motion-fast) var(--ease-reliquary),
+    box-shadow var(--motion-fast) var(--ease-reliquary);
 }
 
 .tab-label {
@@ -856,9 +873,9 @@ kbd {
   text-transform: uppercase;
   transform: translate(-4px, -50%);
   transition:
-    opacity 140ms ease,
-    color 140ms ease,
-    transform 140ms ease;
+    opacity var(--motion-fast) var(--ease-reliquary),
+    color var(--motion-fast) var(--ease-reliquary),
+    transform var(--motion-fast) var(--ease-reliquary);
 }
 
 .tab-button:hover .tab-label,
@@ -921,13 +938,75 @@ kbd {
 }
 
 .panel {
+  position: relative;
   height: 100%;
   max-height: none;
   overflow: hidden;
   min-height: 0;
   margin-left: 0;
   padding: 6px 10px 8px;
+  isolation: isolate;
   scrollbar-color: hsl(var(--accent-hue, 355) 62% 36% / 0.66) rgba(21, 13, 6, 0.75);
+}
+
+.panel.is-tab-entering {
+  --panel-enter-x: 8px;
+  animation: reliquary-panel-enter var(--motion-panel) var(--ease-reliquary) both;
+}
+
+.panel.is-tab-entering[data-motion-direction="backward"] {
+  --panel-enter-x: -8px;
+}
+
+.panel.is-tab-entering[data-motion-direction="neutral"] {
+  --panel-enter-x: 0px;
+}
+
+.panel.is-tab-entering::before {
+  content: "";
+  position: absolute;
+  inset: 6px 10px 8px;
+  z-index: 8;
+  pointer-events: none;
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      105deg,
+      transparent 0%,
+      hsl(var(--accent-hue, 355) 82% 62% / 0.04) 36%,
+      hsl(var(--accent-hue, 355) 92% 68% / 0.22) 48%,
+      transparent 62%
+    );
+  mix-blend-mode: screen;
+  transform: translateX(calc(var(--panel-enter-x) * -3)) scaleX(0.74);
+  opacity: 0;
+  animation: reliquary-panel-sweep var(--motion-shell) var(--ease-strike) both;
+}
+
+@keyframes reliquary-panel-enter {
+  from {
+    opacity: 0.78;
+    transform: translate3d(var(--panel-enter-x), 4px, 0) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes reliquary-panel-sweep {
+  0% {
+    opacity: 0;
+    clip-path: inset(0 90% 0 0);
+  }
+  38% {
+    opacity: 0.86;
+  }
+  100% {
+    opacity: 0;
+    clip-path: inset(0 0 0 82%);
+    transform: translateX(calc(var(--panel-enter-x) * 2)) scaleX(1);
+  }
 }
 
 .hud-card.is-compact .hud-header,

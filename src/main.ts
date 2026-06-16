@@ -88,6 +88,11 @@ import {
 } from "./atlas-run-history";
 import "./styles.css";
 import { DEFAULT_APP_SETTINGS, type AppSettings } from "./app-settings";
+import {
+  shouldAnimateTabTransition,
+  tabMotionDirection,
+  type MotionTabId,
+} from "./ui-motion";
 
 type GuideStep = {
   text: string;
@@ -499,6 +504,8 @@ const state: AppState = {
 };
 
 let activeTab: TabId = "profile";
+let lastRenderedPanelTab: TabId | null = null;
+let panelTransitionTimer: number | null = null;
 let workerMessages: WorkerStatus[] = [];
 let compactMode = false;
 let selectedSpecKeys = new Set<string>();
@@ -1251,6 +1258,10 @@ function render() {
   hudElement!.classList.toggle("is-compact", compactMode);
   hudElement!.dataset.tab = activeTab;
   panelElement!.dataset.tab = activeTab;
+  const previousPanelTab = lastRenderedPanelTab as MotionTabId | null;
+  const nextPanelTab = activeTab as MotionTabId;
+  const animatePanelTransition = shouldAnimateTabTransition(previousPanelTab, nextPanelTab, compactMode);
+  panelElement!.dataset.motionDirection = tabMotionDirection(previousPanelTab, nextPanelTab);
 
   tabButtons.forEach((button) => {
     button.classList.toggle("is-active", button.dataset.tab === activeTab);
@@ -1392,12 +1403,46 @@ function render() {
       hoveredListingPreview = null;
       void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
     }
+
+    commitPanelTransition(animatePanelTransition);
+  } else {
+    clearPanelTransition();
   }
 
   syncWindowLayout();
   if (compactMode) {
     queueCompactWindowHeightSync();
   }
+}
+
+function commitPanelTransition(shouldAnimate: boolean) {
+  lastRenderedPanelTab = activeTab;
+  if (!shouldAnimate || !panelElement) {
+    clearPanelTransition();
+    return;
+  }
+
+  if (panelTransitionTimer) {
+    window.clearTimeout(panelTransitionTimer);
+    panelTransitionTimer = null;
+  }
+
+  panelElement.classList.remove("is-tab-entering");
+  void panelElement.offsetWidth;
+  panelElement.classList.add("is-tab-entering");
+  panelTransitionTimer = window.setTimeout(() => {
+    panelElement?.classList.remove("is-tab-entering");
+    panelTransitionTimer = null;
+  }, 280);
+}
+
+function clearPanelTransition() {
+  if (!panelElement) return;
+  if (panelTransitionTimer) {
+    window.clearTimeout(panelTransitionTimer);
+    panelTransitionTimer = null;
+  }
+  panelElement.classList.remove("is-tab-entering");
 }
 
 function renderLeagueOptions() {
