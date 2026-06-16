@@ -814,6 +814,26 @@ kbd {
     filter var(--motion-panel) var(--ease-reliquary);
 }
 
+.tab-row::before {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 50%;
+  z-index: -1;
+  width: 1px;
+  content: "";
+  background: linear-gradient(
+    180deg,
+    transparent,
+    hsl(var(--accent-hue, 355) 86% 62% / 0.28) 18%,
+    hsl(var(--accent-hue, 355) 86% 62% / 0.46) 50%,
+    hsl(var(--accent-hue, 355) 86% 62% / 0.28) 82%,
+    transparent
+  );
+  box-shadow: 0 0 12px hsl(var(--accent-hue, 355) 88% 56% / 0.22);
+  transform: translateX(-50%);
+}
+
 .tab-row:hover,
 .tab-row:focus-within {
   transform: translate(-8%, -50%);
@@ -841,11 +861,19 @@ kbd {
   position: relative;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 42px;
-  min-height: 42px;
+  width: 34px;
+  height: 44px;
+  min-height: 44px;
   padding: 0;
   border-radius: 999px;
+  background:
+    radial-gradient(circle at 50% 30%, hsl(var(--accent-hue, 355) 82% 56% / 0.18), transparent 42%),
+    linear-gradient(180deg, hsl(var(--accent-hue, 355) 46% 12% / 0.92), rgba(4, 5, 6, 0.98)),
+    var(--char);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035),
+    inset 0 -10px 18px rgba(0, 0, 0, 0.34),
+    0 10px 20px rgba(0, 0, 0, 0.28);
   font-size: 10px;
   line-height: 1;
   overflow: hidden;
@@ -856,6 +884,37 @@ kbd {
     background var(--motion-fast) var(--ease-reliquary),
     color var(--motion-fast) var(--ease-reliquary),
     box-shadow var(--motion-fast) var(--ease-reliquary);
+}
+
+.tab-button::before,
+.tab-button::after {
+  position: absolute;
+  pointer-events: none;
+  content: "";
+  transition:
+    opacity var(--motion-fast) var(--ease-reliquary),
+    transform var(--motion-fast) var(--ease-reliquary);
+}
+
+.tab-button::before {
+  inset: 7px 6px;
+  border: 1px solid hsl(var(--accent-hue, 355) 78% 66% / 0.22);
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, hsl(var(--accent-hue, 355) 88% 62% / 0.14), transparent 62%);
+  opacity: 0.46;
+}
+
+.tab-button::after {
+  left: 50%;
+  bottom: 5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: hsl(var(--accent-hue, 355) 84% 64% / 0.9);
+  box-shadow: 0 0 10px hsl(var(--accent-hue, 355) 92% 62% / 0.6);
+  opacity: 0;
+  transform: translateX(-50%) scale(0.62);
 }
 
 .tab-label {
@@ -887,52 +946,99 @@ kbd {
 .tab-icon {
   display: inline-grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  position: relative;
+  z-index: 1;
+  width: 21px;
+  height: 21px;
 }
 
-.tab-icon svg {
-  width: 18px;
-  height: 18px;
+.tab-icon svg,
+.reliquary-glyph {
+  width: 21px;
+  height: 21px;
   stroke: currentColor;
-  stroke-width: 1.7;
+  stroke-width: 1.45;
   stroke-linecap: round;
   stroke-linejoin: round;
   fill: none;
+}
+
+.reliquary-glyph .glyph-frame {
+  stroke: currentColor;
+  stroke-width: 1.18;
+  opacity: 0.58;
+}
+
+.reliquary-glyph .glyph-line {
+  stroke: currentColor;
+  stroke-width: 1.45;
+  opacity: 0.9;
+}
+
+.reliquary-glyph .glyph-accent {
+  stroke: hsl(var(--accent-hue, 355) 92% 70% / 0.96);
+  stroke-width: 1.38;
+  opacity: 0.82;
+}
+
+.reliquary-glyph .glyph-fill {
+  fill: hsl(var(--accent-hue, 355) 78% 58% / 0.2);
+  stroke: hsl(var(--accent-hue, 355) 92% 70% / 0.84);
+  stroke-width: 1.2;
 }
 
 .tab-button-icon {
-  min-height: 42px;
-}
-
-.tab-cog {
-  width: 15px;
-  height: 15px;
-  stroke: currentColor;
-  stroke-width: 1.55;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  fill: none;
+  min-height: 44px;
 }
 
 .tab-button:hover,
 .tab-button:focus-visible,
 .tab-button.is-active {
-  box-shadow: 0 10px 18px rgba(15, 8, 2, 0.28);
-  transform: translateX(4px);
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--accent-hue, 355) 92% 72% / 0.12),
+    inset 0 -10px 18px rgba(0, 0, 0, 0.3),
+    0 10px 18px rgba(0, 0, 0, 0.34),
+    0 0 20px hsl(var(--accent-hue, 355) 84% 56% / 0.2);
+  transform: translateX(5px) scale(1.02);
 }
 
 .tab-button:hover,
 .tab-button.is-active,
 .action-button:hover {
-  border-color: var(--gold-bright);
+  border-color: hsl(var(--accent-hue, 355) 86% 66% / 0.88);
   background:
-    linear-gradient(180deg, hsl(var(--accent-hue, 355) 58% 24% / 0.94), hsl(var(--accent-hue, 355) 24% 8% / 0.98)),
+    radial-gradient(circle at 50% 30%, hsl(var(--accent-hue, 355) 90% 62% / 0.28), transparent 45%),
+    linear-gradient(180deg, hsl(var(--accent-hue, 355) 58% 21% / 0.95), hsl(var(--accent-hue, 355) 24% 8% / 0.98)),
     var(--char);
   color: #fff1f2;
 }
 
-.tab-button:active,
+.tab-button:hover::before,
+.tab-button:focus-visible::before,
+.tab-button.is-active::before {
+  opacity: 0.92;
+  transform: scale(1.06);
+}
+
+.tab-button:hover .reliquary-glyph .glyph-frame,
+.tab-button:focus-visible .reliquary-glyph .glyph-frame,
+.tab-button.is-active .reliquary-glyph .glyph-frame {
+  opacity: 0.82;
+}
+
+.tab-button.is-active {
+  transform: translateX(7px) scale(1.04);
+}
+
+.tab-button.is-active::after {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
+.tab-button:active {
+  transform: translateX(5px) scale(0.96);
+}
+
 .action-button:active {
   transform: translateY(1px) scale(0.99);
 }

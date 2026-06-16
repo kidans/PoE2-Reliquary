@@ -1106,6 +1106,61 @@ const CURRENCY_ICON_ALIASES: Record<string, string> = {
   augment: "aug",
 };
 
+function renderTabGlyph(tab: TabId) {
+  const glyphs: Record<TabId, string> = {
+    profile: `
+      <path class="glyph-frame" d="M12 2.5 20.5 8v8L12 21.5 3.5 16V8Z" />
+      <path class="glyph-line" d="M12 7.1a2.7 2.7 0 1 0 0 5.4 2.7 2.7 0 0 0 0-5.4Z" />
+      <path class="glyph-line" d="M7.2 17.2c1-2.1 2.6-3.2 4.8-3.2s3.8 1.1 4.8 3.2" />
+      <path class="glyph-accent" d="M6.7 8.5 4.9 10m12.4-1.5 1.8 1.5" />
+    `,
+    scan: `
+      <path class="glyph-frame" d="M5.1 8V5.1H8M16 5.1h2.9V8M18.9 16v2.9H16M8 18.9H5.1V16" />
+      <path class="glyph-line" d="M12 6.3v11.4M6.3 12h11.4" />
+      <path class="glyph-fill" d="M12 9.2 14.8 12 12 14.8 9.2 12Z" />
+    `,
+    trade: `
+      <path class="glyph-frame" d="M4.7 7.2h11.6l2.9 2.8-2.9 2.8H4.7" />
+      <path class="glyph-frame" d="M19.3 16.8H7.7l-2.9-2.8 2.9-2.8h11.6" />
+      <path class="glyph-accent" d="M8.2 7.2 5.4 10l2.8 2.8M15.8 11.2l2.8 2.8-2.8 2.8" />
+    `,
+    campaign: `
+      <path class="glyph-frame" d="M12 3.4a8.6 8.6 0 1 0 0 17.2 8.6 8.6 0 0 0 0-17.2Z" />
+      <path class="glyph-line" d="M12 7.1v5.1l3.4 2" />
+      <path class="glyph-accent" d="M7.3 5.3 5.6 3.6M16.7 5.3l1.7-1.7M12 20.6v-2.1" />
+    `,
+    atlas: `
+      <path class="glyph-frame" d="M12 2.8 19.6 7v10L12 21.2 4.4 17V7Z" />
+      <path class="glyph-line" d="M12 2.8v18.4M4.4 7l7.6 4.2L19.6 7" />
+      <path class="glyph-accent" d="M6.1 16.1 12 12.8l5.9 3.3" />
+    `,
+    data: `
+      <path class="glyph-frame" d="M6 6.6c0-1.8 2.7-3.1 6-3.1s6 1.3 6 3.1-2.7 3.1-6 3.1-6-1.3-6-3.1Z" />
+      <path class="glyph-line" d="M6 6.6v5.2c0 1.8 2.7 3.1 6 3.1s6-1.3 6-3.1V6.6" />
+      <path class="glyph-line" d="M6 11.8V17c0 1.8 2.7 3.1 6 3.1s6-1.3 6-3.1v-5.2" />
+      <path class="glyph-accent" d="M8.4 15.7c.9.6 2.1.9 3.6.9s2.7-.3 3.6-.9" />
+    `,
+    temple: `
+      <path class="glyph-frame" d="M12 2.5 21.5 12 12 21.5 2.5 12Z" />
+      <path class="glyph-line" d="M12 6.2 17.8 12 12 17.8 6.2 12Z" />
+      <path class="glyph-accent" d="M12 2.5v3.7M12 17.8v3.7M2.5 12h3.7M17.8 12h3.7" />
+    `,
+    settings: `
+      <path class="glyph-frame" d="M12 3.3 14.2 5l2.7-.5 1.2 2.5-1.5 2.3.6 2.7 2.1 1.7-1.2 2.5-2.8-.1-2.1 1.8-.7 2.7h-3l-.7-2.7-2.1-1.8-2.8.1-1.2-2.5L4.8 12l.6-2.7L3.9 7l1.2-2.5 2.7.5Z" />
+      <path class="glyph-line" d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" />
+      <path class="glyph-fill" d="M12 10.6 13.4 12 12 13.4 10.6 12Z" />
+    `,
+  };
+
+  return `
+    <span class="tab-icon tab-icon-${tab}" aria-hidden="true">
+      <svg class="reliquary-glyph" viewBox="0 0 24 24" focusable="false">
+        ${glyphs[tab]}
+      </svg>
+    </span>
+  `;
+}
+
 root.innerHTML = isListingPreviewWindow
   ? `
     <main class="preview-overlay-root">
@@ -1146,54 +1201,35 @@ root.innerHTML = isListingPreviewWindow
 
         <nav class="tab-row" aria-label="Overlay panels">
           <button class="tab-button" data-tab="profile" type="button" title="Profile">
-            <span class="tab-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
-            </span>
+            ${renderTabGlyph("profile")}
             <span class="tab-label">Profile</span>
           </button>
           <button class="tab-button" data-tab="scan" type="button" title="Scan">
-            <span class="tab-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M8 4H5a1 1 0 0 0-1 1v3M16 4h3a1 1 0 0 1 1 1v3M8 20H5a1 1 0 0 1-1-1v-3M16 20h3a1 1 0 0 0 1-1v-3"/><path d="M7 12h10M12 7v10"/></svg>
-            </span>
+            ${renderTabGlyph("scan")}
             <span class="tab-label">Scan</span>
           </button>
           <button class="tab-button" data-tab="trade" type="button" title="Trade">
-            <span class="tab-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M5 7h14M7 5l-2 2 2 2M19 17H5M17 15l2 2-2 2"/><path d="M8 12h8"/></svg>
-            </span>
+            ${renderTabGlyph("trade")}
             <span class="tab-label">Trade</span>
           </button>
           <button class="tab-button" data-tab="campaign" type="button" title="Campaign">
-            <span class="tab-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-            </span>
+            ${renderTabGlyph("campaign")}
             <span class="tab-label">Campaign</span>
           </button>
           <button class="tab-button" data-tab="atlas" type="button" title="Atlas">
-            <span class="tab-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M12 2 4 6v12l8 4 8-4V6Z"/><path d="M12 2v20M4 6l8 4 8-4M4 18l8-4 8 4"/></svg>
-            </span>
+            ${renderTabGlyph("atlas")}
             <span class="tab-label">Atlas</span>
           </button>
           <button class="tab-button" data-tab="data" type="button" title="Data">
-            <span class="tab-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M5 6c0-1.7 3.1-3 7-3s7 1.3 7 3-3.1 3-7 3-7-1.3-7-3Z"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
-            </span>
+            ${renderTabGlyph("data")}
             <span class="tab-label">Data</span>
           </button>
           <button class="tab-button" data-tab="temple" type="button" title="Temple">
-            <span class="tab-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M12 2 21 12 12 22 3 12Z"/><path d="M12 6 17 12 12 18 7 12Z"/><path d="M12 2v4M12 18v4M3 12h4M17 12h4"/></svg>
-            </span>
+            ${renderTabGlyph("temple")}
             <span class="tab-label">Temple</span>
           </button>
           <button class="tab-button tab-button-icon" data-tab="settings" type="button" title="Settings" aria-label="Settings">
-            <span class="tab-icon" aria-hidden="true">
-            <svg class="tab-cog" viewBox="0 0 24 24">
-              <path d="M12 8.2a3.8 3.8 0 1 1 0 7.6 3.8 3.8 0 0 1 0-7.6Z" />
-              <path d="M18.6 13.4c.1-.5.1-.9.1-1.4s0-.9-.1-1.4l2-1.5-1.9-3.3-2.4 1a8.2 8.2 0 0 0-2.3-1.3L13.7 3h-3.8l-.4 2.5a8.2 8.2 0 0 0-2.3 1.3l-2.3-1L3 9.1l2 1.5c-.1.5-.1.9-.1 1.4s0 .9.1 1.4l-2 1.5 1.9 3.3 2.3-1a8.2 8.2 0 0 0 2.3 1.3l.4 2.5h3.8l.4-2.5a8.2 8.2 0 0 0 2.3-1.3l2.4 1 1.9-3.3-2.1-1.5Z" />
-            </svg>
-            </span>
+            ${renderTabGlyph("settings")}
             <span class="tab-label">Settings</span>
           </button>
         </nav>

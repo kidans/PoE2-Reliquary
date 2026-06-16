@@ -65,6 +65,9 @@ Polish the existing tab spine after Phase 2 is verified in-game.
 - Hover/focus can add a small glow and optical lift.
 - Click should give a short pressed response.
 - Labels should stay secondary and never crowd the game view.
+- Use custom CSS/SVG glyphs instead of rendered icon assets so the spine stays lightweight, hue-aware, and easy to recolor.
+- Treat each tab as a small relic socket: subtle connector line, inner socket glow, active jewel/notch, and no permanent looping animation.
+- Keep rendered art/icons out of the spine for now; revisit only if the app later gains an icon atlas that is already loaded elsewhere.
 
 ## Phase 4: Stateful Feedback
 
@@ -94,4 +97,3 @@ Line mode should remain brutally fast and readable.
 - Reduced-motion mode disables most motion.
 - No new scroll clipping in Scan, Trade, Atlas, Temple, Settings, or Data.
 - No permanent animation runs in idle line mode.
-
