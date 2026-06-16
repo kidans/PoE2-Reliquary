@@ -64,6 +64,14 @@ export async function loadMarketBoardDataset(
         warmingDataset = dataset;
         continue;
       }
+      if (
+        candidate.source === "github" &&
+        dataset.status === "building" &&
+        warmingDataset &&
+        compareBuildingDatasets(warmingDataset, dataset) >= 0
+      ) {
+        continue;
+      }
       storage.setItem(cacheKey, JSON.stringify(dataset));
       return { dataset, source: candidate.source, error: failures.length ? failures.join("; ") : null };
     } catch (error) {
@@ -94,6 +102,13 @@ export function marketLeagueSlug(league: string) {
 
 function marketFeedCacheKey(league: string, period: MarketPeriod) {
   return `reliquary.market-feed.v1.${marketLeagueSlug(league)}.${period}`;
+}
+
+function compareBuildingDatasets(left: MarketBoardDataset, right: MarketBoardDataset) {
+  if (left.snapshots_collected !== right.snapshots_collected) {
+    return left.snapshots_collected - right.snapshots_collected;
+  }
+  return left.generated_at_epoch_ms - right.generated_at_epoch_ms;
 }
 
 function readCachedDataset(

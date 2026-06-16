@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildMarketDataset, calculateMovers, selectComparisonBaseline } from "./market-engine";
+import {
+  buildMarketDataset,
+  calculateMovers,
+  selectComparisonBaseline,
+  selectPublishedMarketDataset,
+} from "./market-engine";
 
 const minute = 60_000;
 
@@ -38,6 +43,22 @@ describe("Supabase market engine", () => {
     ], 30 * minute);
     expect(dataset.status).toBe("ready");
     expect(dataset.quote_currency_label).toBe("Divine Orb");
+  });
+
+  it("keeps the previous non-empty 30-minute board when the latest comparison has no movement", () => {
+    const previous = buildMarketDataset("Runes of Aldur", "30m", [
+      { captured_at_epoch_ms: 0, items: [item("currency", "Exalted Orb", 0.01, 80)] },
+      { captured_at_epoch_ms: 30 * minute, items: [item("currency", "Exalted Orb", 0.012, 80)] },
+    ], 30 * minute);
+    const flat = buildMarketDataset("Runes of Aldur", "30m", [
+      { captured_at_epoch_ms: 30 * minute, items: [item("currency", "Exalted Orb", 0.012, 80)] },
+      { captured_at_epoch_ms: 60 * minute, items: [item("currency", "Exalted Orb", 0.012, 80)] },
+    ], 60 * minute);
+
+    const selected = selectPublishedMarketDataset(flat, previous);
+
+    expect(selected.generated_at_epoch_ms).toBe(previous.generated_at_epoch_ms);
+    expect(selected.winners).toHaveLength(1);
   });
 });
 

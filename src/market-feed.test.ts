@@ -76,6 +76,38 @@ describe("market feed", () => {
     expect(result.dataset?.status).toBe("ready");
   });
 
+  it("keeps fresher Supabase warming progress over an older GitHub warming payload", async () => {
+    const supabaseBuilding = {
+      ...payload,
+      status: "building",
+      generated_at_epoch_ms: 3000,
+      snapshots_collected: 38,
+      snapshots_required: 48,
+      winners: [],
+      losers: [],
+    };
+    const githubBuilding = {
+      ...payload,
+      status: "building",
+      generated_at_epoch_ms: 1000,
+      snapshots_collected: 8,
+      snapshots_required: 48,
+      winners: [],
+      losers: [],
+    };
+    const result = await loadMarketBoardDataset("Fate of the Vaal", "1d", {
+      storage: memoryStorage(),
+      primaryUrl: "https://supabase.example/functions/v1/market-feed",
+      fallbackBaseUrl: "https://github.example/market-feed",
+      fetcher: async (input) => String(input).startsWith("https://supabase.example")
+        ? new Response(JSON.stringify(supabaseBuilding), { status: 200 })
+        : new Response(JSON.stringify(githubBuilding), { status: 200 }),
+    });
+
+    expect(result.source).toBe("supabase");
+    expect(result.dataset?.snapshots_collected).toBe(38);
+  });
+
   it("falls back to the last valid cached dataset", async () => {
     const storage = memoryStorage({
       "reliquary.market-feed.v1.fate-of-the-vaal.1d": JSON.stringify(payload),

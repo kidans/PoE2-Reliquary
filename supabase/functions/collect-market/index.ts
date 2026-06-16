@@ -2,6 +2,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import {
   buildMarketDataset,
   MARKET_PERIODS,
+  selectPublishedMarketDataset,
+  type MarketDataset,
   type MarketItem,
   type MarketPeriod,
   type MarketSnapshot,
@@ -90,10 +92,12 @@ Deno.serve(async (request) => {
           now,
         );
         dataset.snapshots_collected = snapshotCount ?? 1;
+        const previousDataset = await findPreviousMarketBoard(supabase, league, period);
+        const publishedDataset = selectPublishedMarketDataset(dataset, previousDataset);
         const { error: boardError } = await supabase.from("market_boards").upsert({
           league,
           period,
-          payload: dataset,
+          payload: publishedDataset,
           generated_at: capturedAt,
           updated_at: capturedAt,
         }, { onConflict: "league,period" });
@@ -186,6 +190,21 @@ async function findBaseline(
     baseline = fallback ? databaseSnapshot(fallback) : null;
   }
   return baseline;
+}
+
+async function findPreviousMarketBoard(
+  supabase: ReturnType<typeof createClient>,
+  league: string,
+  period: MarketPeriod,
+): Promise<MarketDataset | null> {
+  const { data, error } = await supabase
+    .from("market_boards")
+    .select("payload")
+    .eq("league", league)
+    .eq("period", period)
+    .maybeSingle();
+  if (error) throw error;
+  return (data?.payload as MarketDataset | undefined) ?? null;
 }
 
 function databaseSnapshot(row: { captured_at: string; items: MarketItem[] }): MarketSnapshot {

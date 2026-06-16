@@ -1708,6 +1708,7 @@ pub fn run() {
             spawn_discord_presence_sync_worker(app_handle.clone(), state.clone());
             spawn_global_input_worker(app_handle.clone(), state.clone());
             spawn_window_attachment_worker(app_handle.clone());
+            spawn_poe_process_lifecycle_worker(app_handle.clone());
 
             let world_area_status = init_world_areas();
             {
@@ -2130,6 +2131,31 @@ fn spawn_window_attachment_worker(app_handle: tauri::AppHandle) {
             }
 
             tokio::time::sleep(Duration::from_millis(180)).await;
+        }
+    });
+}
+
+fn spawn_poe_process_lifecycle_worker(app_handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut has_seen_poe = false;
+
+        loop {
+            let is_running = poe_process_running_for_lifecycle();
+            has_seen_poe = has_seen_poe || is_running;
+
+            if should_exit_after_poe_lost(has_seen_poe, is_running) {
+                emit_worker_status(
+                    &app_handle,
+                    "lifecycle",
+                    "Path of Exile closed; shutting down Reliquary".to_string(),
+                );
+                let service = app_handle.state::<discord_presence::DiscordPresenceService>();
+                service.set_enabled(false);
+                app_handle.exit(0);
+                return;
+            }
+
+            tokio::time::sleep(Duration::from_secs(3)).await;
         }
     });
 }
@@ -2977,9 +3003,53 @@ mod overlay_capture_tests {
     }
 }
 
+#[cfg(test)]
+mod poe_process_lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_path_of_exile_process_names() {
+        assert!(is_poe_process_name("PathOfExileSteam.exe"));
+        assert!(is_poe_process_name("PathOfExile.exe"));
+        assert!(is_poe_process_name("PathOfExile_x64Steam.exe"));
+        assert!(is_poe_process_name("PathOfExile2Steam.exe"));
+
+        assert!(!is_poe_process_name("Reliquary.exe"));
+        assert!(!is_poe_process_name("PathOfBuilding.exe"));
+        assert!(!is_poe_process_name("pathofexile-notes.txt"));
+    }
+
+    #[test]
+    fn exits_only_after_poe_was_seen_once() {
+        assert!(!should_exit_after_poe_lost(false, false));
+        assert!(!should_exit_after_poe_lost(false, true));
+        assert!(!should_exit_after_poe_lost(true, true));
+        assert!(should_exit_after_poe_lost(true, false));
+    }
+}
+
 fn is_overlay_window_title(title: &str) -> bool {
     let normalized = title.to_ascii_lowercase();
     normalized.contains("reliquary")
+}
+
+fn is_poe_process_name(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase();
+    normalized.ends_with(".exe") && normalized.contains("pathofexile")
+}
+
+fn should_exit_after_poe_lost(has_seen_poe: bool, is_running: bool) -> bool {
+    has_seen_poe && !is_running
+}
+
+#[cfg(target_os = "windows")]
+fn poe_process_running_for_lifecycle() -> bool {
+    get_poe2_pid_cache().0
+}
+
+#[cfg(not(target_os = "windows"))]
+fn poe_process_running_for_lifecycle() -> bool {
+    true
 }
 
 #[cfg(target_os = "windows")]
@@ -3077,7 +3147,7 @@ fn find_poe2_process() -> Option<u32> {
                     .position(|&c| c == 0)
                     .unwrap_or(pe.szExeFile.len());
                 let name = String::from_utf16_lossy(&pe.szExeFile[..end]).to_ascii_lowercase();
-                if name.contains("pathofexilesteam") || name.contains("pathofexile") {
+                if is_poe_process_name(&name) {
                     pid = Some(pe.th32ProcessID);
                     break;
                 }

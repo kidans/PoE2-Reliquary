@@ -131,6 +131,31 @@ export function buildMarketDataset(
   };
 }
 
+export type MarketDataset = ReturnType<typeof buildMarketDataset>;
+
+export function selectPublishedMarketDataset(
+  candidate: MarketDataset,
+  previous: MarketDataset | null | undefined,
+) {
+  if (
+    candidate.period === "30m" &&
+    candidate.status === "ready" &&
+    !hasMovers(candidate) &&
+    previous &&
+    previous.league === candidate.league &&
+    previous.period === candidate.period &&
+    previous.status === "ready" &&
+    hasMovers(previous)
+  ) {
+    return previous;
+  }
+  return candidate;
+}
+
+function hasMovers(dataset: Pick<MarketDataset, "winners" | "losers">) {
+  return dataset.winners.length > 0 || dataset.losers.length > 0;
+}
+
 function byScore(left: Record<string, unknown>, right: Record<string, unknown>) {
   return Number(right.score) - Number(left.score);
 }
