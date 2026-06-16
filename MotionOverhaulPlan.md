@@ -79,6 +79,8 @@ Add micro-feedback to high-value states.
 - Market board update: changed numbers pulse once.
 - Discord/profile import: compact success flash.
 - Errors/rate limits: one red pulse, then settle.
+- Implementation uses timestamp-gated classes plus CSS keyframes only; no extra animation runtime, timers, or data-flow changes.
+- Row feedback is staggered with CSS variables so trade and market updates feel fresh without resorting or moving content.
 
 ## Phase 5: Line Mode Motion
 

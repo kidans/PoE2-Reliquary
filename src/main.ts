@@ -630,6 +630,19 @@ let marketBoardVisibleRows: Record<MarketDirection, number> = {
 let marketBoardScrollTop: Record<MarketDirection, number> = { winner: 0, loser: 0 };
 let campaignResetConfirmHandle = 0;
 let atlasHistoryClearConfirmHandle = 0;
+const FEEDBACK_WINDOW_MS = 1_800;
+let feedbackState = {
+  itemScannedAt: 0,
+  priceCheckUpdatedAt: 0,
+  exchangeUpdatedAt: 0,
+  marketUpdatedAt: 0,
+  profileImportedAt: 0,
+  ocrRequestedAt: 0,
+  ocrUpdatedAt: 0,
+  errorAt: 0,
+  rateLimitAt: 0,
+  lastMarketSignature: "",
+};
 
 const INTERLUDE_ZONE_MAP: Record<string, string> = {
   "scorched farmlands": "Interlude 5.1 — Ogham, The Refuge",
@@ -819,6 +832,29 @@ function marketBoardKey() {
   return `${state.trade_league.toLowerCase()}::${tradeViewPreference.period}`;
 }
 
+function feedbackClass(timestamp: number, className: string, windowMs = FEEDBACK_WINDOW_MS) {
+  return timestamp > 0 && Date.now() - timestamp < windowMs ? className : "";
+}
+
+function markFeedback(key: keyof Omit<typeof feedbackState, "lastMarketSignature">) {
+  feedbackState[key] = Date.now();
+}
+
+function marketDatasetSignature(dataset: MarketBoardDataset | null) {
+  if (!dataset) return "";
+  return [
+    dataset.status,
+    dataset.generated_at_epoch_ms,
+    dataset.snapshots_collected,
+    dataset.winners.length,
+    dataset.losers.length,
+    dataset.winners[0]?.id ?? "",
+    dataset.winners[0]?.change_percent ?? "",
+    dataset.losers[0]?.id ?? "",
+    dataset.losers[0]?.change_percent ?? "",
+  ].join("|");
+}
+
 function ensureMarketBoardLoaded(force = false) {
   if (tradeViewPreference.view !== "market") return;
   const key = marketBoardKey();
@@ -834,6 +870,11 @@ function ensureMarketBoardLoaded(force = false) {
 
   void loadMarketBoardDataset(state.trade_league, tradeViewPreference.period).then((result) => {
     if (marketBoardLoadState.key !== key) return;
+    const signature = marketDatasetSignature(result.dataset);
+    if (signature && signature !== feedbackState.lastMarketSignature) {
+      feedbackState.lastMarketSignature = signature;
+      markFeedback("marketUpdatedAt");
+    }
     marketBoardLoadState = {
       key,
       status: result.dataset ? "ready" : "error",
@@ -1445,6 +1486,10 @@ function render() {
     clearPanelTransition();
   }
 
+  const errorPulseActive = Boolean(feedbackClass(feedbackState.errorAt, "is-feedback-error"));
+  panelElement?.classList.toggle("is-feedback-error", errorPulseActive);
+  hudElement?.classList.toggle("is-feedback-error", errorPulseActive);
+
   syncWindowLayout();
   if (compactMode) {
     queueCompactWindowHeightSync();
@@ -1858,7 +1903,7 @@ function renderProfilePanel() {
 
   return `
     <div class="profile-panel-shell">
-      <section class="profile-hero">
+      <section class="profile-hero ${feedbackClass(feedbackState.profileImportedAt, "is-import-fresh")}">
         ${renderProfileAvatar(snapshot, characterName)}
         <div>
           <p class="profile-league">${escapeHtml(leagueLabel(league))}</p>
@@ -2079,7 +2124,7 @@ function resistanceValue(value: number | null | undefined, type: string) {
 function renderScanPanel(item: ScannedItem | null, priceCheck: PriceCheck | null) {
   if (!item) {
     return `
-      <div class="empty-state">
+      <div class="empty-state scan-waiting-state">
         <p class="section-label">Waiting for clipboard scan</p>
         <p>Hover an item in PoE2 and press ${renderScanShortcut()}. The parsed item and hazard profile will land here.</p>
       </div>
@@ -2112,7 +2157,7 @@ function renderScanPanel(item: ScannedItem | null, priceCheck: PriceCheck | null
     modifierCount >= 8 ? "density-tight" : modifierCount >= 6 ? "density-compact" : "density-normal";
 
   return `
-    <section class="evaluate-card ${rarityClass} ${densityClass}">
+    <section class="evaluate-card ${rarityClass} ${densityClass} ${feedbackClass(feedbackState.itemScannedAt, "is-scan-fresh")}">
       <div class="evaluate-sidebar" data-item-section>
         <div class="poe-item-banner">
           <div class="banner-corner banner-corner-left" aria-hidden="true"></div>
@@ -2791,8 +2836,11 @@ function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedIt
     ? visibleListingRanks.map((entry, index) => renderListingRow(entry.listing, item, index, entry)).join("")
     : `<button class="listing-row empty-listing" type="button">${escapeHtml(emptyListingMessage(priceCheck, selectedCurrency))}</button>`;
 
+  const freshClass = feedbackClass(feedbackState.priceCheckUpdatedAt, "is-fresh-results");
+  const errorClass = priceCheck.error ? "has-price-error" : "";
+
   return `
-    <section class="price-check">
+    <section class="price-check ${freshClass} ${errorClass}">
         <div class="price-check-meta">
         <div class="estimate-card">
           <div class="estimate-main">
@@ -3090,7 +3138,7 @@ function renderTradeRateLimit(rateLimit: TradeRateLimit | null) {
   const title = `${rateLimit.policy ?? "trade2"} ${rateLimit.scope} usage: ${usageText}${cooldownText}`;
 
   return `
-    <div class="trade-rate-limit" title="${escapeAttribute(title)}" aria-label="${escapeAttribute(title)}">
+    <div class="trade-rate-limit ${cooling ? "is-cooling" : ""} ${feedbackClass(feedbackState.rateLimitAt, "is-alerting")}" title="${escapeAttribute(title)}" aria-label="${escapeAttribute(title)}">
       <div class="trade-rate-limit-track">
         <div class="trade-rate-limit-fill ${cooling ? "is-cooling" : ""}" style="width:${width}%"></div>
       </div>
@@ -3126,7 +3174,11 @@ function renderListingRow(
     softMiss ? `Official row, local match ${rank!.score}/${rank!.maxScore}: ${rank!.penalties.join("; ")}` : "",
   ].filter(Boolean);
   const title = titleParts.length ? ` title="${escapeAttribute(titleParts.join(" | "))}"` : "";
-  const rowClass = softMiss ? "listing-row is-soft-miss" : "listing-row";
+  const rowClass = [
+    "listing-row",
+    softMiss ? "is-soft-miss" : "",
+    feedbackClass(feedbackState.priceCheckUpdatedAt, "is-fresh-row"),
+  ].filter(Boolean).join(" ");
   const matchNote = softMiss
     ? `<small class="listing-match-note">partial ${rank!.score}/${rank!.maxScore}</small>`
     : "";
@@ -3136,7 +3188,7 @@ function renderListingRow(
       : "";
 
   return `
-    <div class="${rowClass}"${title}>
+    <div class="${rowClass}" style="--row-index:${index}"${title}>
       <button class="inspect-eye ${pinnedListingPreviewIndex === index ? "is-active" : ""}" data-preview-listing="${index}" type="button" title="Click to inspect this exact listing">View</button>
       <span class="listing-price">${priceIcon}${escapeHtml(priceText)}${rawPriceNote}${listing.online ? '<i class="online-dot"></i>' : ""}</span>
       <span>${itemLevel}</span>
@@ -3234,7 +3286,7 @@ function renderTradePanel(exchangeTab: ExchangeTabState) {
                   ? filteredPins.map((pin) => renderExchangeWatchlistRow(pin, exchangeTab.selected_quote_currency_id ?? null)).join("")
                   : `<div class="trade-empty-row">${escapeHtml(exchangeWatchlistEmptyMessage())}</div>`
                 : filteredEntries.length
-                  ? filteredEntries.map((entry) => renderExchangeRow(entry, exchangeTab, exchangeTab.selected_item_id)).join("")
+                  ? filteredEntries.map((entry, index) => renderExchangeRow(entry, exchangeTab, exchangeTab.selected_item_id, index)).join("")
                   : `<div class="trade-empty-row">${escapeHtml(exchangeEmptyMessage(exchangeTab, selectedCategory))}</div>`
             }
           </div>
@@ -3278,7 +3330,7 @@ function renderMarketBoardMain() {
   const baselineMessage = dataset ? marketBaselineMessage(dataset) : null;
 
   return `
-    <div class="trade-market-main market-board-main">
+    <div class="trade-market-main market-board-main ${feedbackClass(feedbackState.marketUpdatedAt, "is-market-updated")}">
       <header class="trade-market-header market-board-header">
         <div>
           <p class="section-label">Shared Economy Tape</p>
@@ -3373,7 +3425,7 @@ function renderMarketMoverRow(
     : "";
   const sign = mover.change_percent > 0 ? "+" : "";
   return `
-    <article class="market-mover-row is-${direction}">
+    <article class="market-mover-row is-${direction} ${feedbackClass(feedbackState.marketUpdatedAt, "is-fresh-row")}" style="--row-index:${rank}">
       <span class="market-mover-rank">${rank}</span>
       <span class="market-mover-icon">${icon}</span>
       <span class="market-mover-name"><strong>${escapeHtml(mover.name)}</strong><small>${escapeHtml(mover.category_label)}</small></span>
@@ -3513,10 +3565,12 @@ function renderExchangeRow(
   entry: ExchangeEntry,
   exchangeTab: ExchangeTabState,
   selectedItemId: string | null,
+  index = 0,
 ) {
   const overview = exchangeTab.overview;
   const itemUrl = exchangeEntryUrl(entry, overview);
   const selected = selectedItemId === entry.id ? "is-selected" : "";
+  const fresh = feedbackClass(feedbackState.exchangeUpdatedAt, "is-fresh-row");
   const icon = entry.icon_url
     ? `<img class="trade-item-icon" src="${escapeAttribute(entry.icon_url)}" alt="" />`
     : `<span class="trade-item-icon fallback"></span>`;
@@ -3533,7 +3587,7 @@ function renderExchangeRow(
   const pinned = isExchangeWatchlistPinned(exchangeWatchlistState, categoryId, entry.id);
 
   return `
-    <article class="trade-table-row ${selected}">
+    <article class="trade-table-row ${selected} ${fresh}" style="--row-index:${index}">
       <div class="trade-item-cell">
         ${icon}
         <div>
@@ -4231,8 +4285,12 @@ function renderAtlasOcrEvidence(evidence: MapOcrEvidence) {
   const mods = evidence.normalized_mods.length
     ? evidence.normalized_mods.map((mod) => `<li>${escapeHtml(mod)}</li>`).join("")
     : `<li>${escapeHtml(evidence.reason ?? "No recognized map modifier lines yet.")}</li>`;
+  const feedbackClasses = [
+    feedbackClass(feedbackState.ocrRequestedAt, "is-reading"),
+    feedbackClass(feedbackState.ocrUpdatedAt, "is-fresh-ocr"),
+  ].filter(Boolean).join(" ");
   return `
-    <div class="atlas-ocr-evidence state-${escapeAttribute(evidence.state)}">
+    <div class="atlas-ocr-evidence state-${escapeAttribute(evidence.state)} ${feedbackClasses}">
       <strong>Tab OCR: ${escapeHtml(evidence.state.replace("_", " "))}${escapeHtml(score)}${escapeHtml(count)}</strong>
       ${summaryParts.length ? `<p>${escapeHtml(summaryParts.join(" · "))}</p>` : ""}
       <ul>${mods}</ul>
@@ -5520,6 +5578,9 @@ async function setPassthrough(passthrough: boolean) {
 
 function pushStatus(worker: string, message: string) {
   workerMessages = [...workerMessages.slice(-4), { worker, message }];
+  if (/error|failed|rate limit|429|timeout/i.test(message)) {
+    markFeedback("errorAt");
+  }
   render();
 }
 
@@ -5658,6 +5719,7 @@ if (!isListingPreviewWindow && leagueElement) {
           state.build_snapshot = result.snapshot;
           state.build_fingerprint = result.fingerprint;
           state.hazard_profile_id = result.fingerprint.recommended_profile_id;
+          markFeedback("profileImportedAt");
           pushStatus("build-profile", `Imported ${result.snapshot.character ?? "character"} snapshot.`);
           render();
         })
@@ -5686,6 +5748,7 @@ if (!isListingPreviewWindow && leagueElement) {
           state.build_snapshot = result.snapshot;
           state.build_fingerprint = result.fingerprint;
           state.hazard_profile_id = result.fingerprint.recommended_profile_id;
+          markFeedback("profileImportedAt");
           pushStatus("build-profile", `Imported ${result.snapshot.character ?? "build"} profile.`);
           render();
         })
@@ -5701,6 +5764,8 @@ if (!isListingPreviewWindow && leagueElement) {
     }
 
     if (requestMapOcrButton) {
+      markFeedback("ocrRequestedAt");
+      render();
       void invoke("request_map_overlay_ocr").catch((error) => pushStatus("map-ocr", String(error)));
       return;
     }
@@ -6373,6 +6438,7 @@ if (!isListingPreviewWindow && leagueElement) {
     compactMode = false;
     recentPriceRequestSignatures.clear();
     void hideListingPreview();
+    markFeedback("itemScannedAt");
     state.scanned_item = event.payload;
     applyProfileSelection(event.payload);
     latestRequestedFilterSignature = event.payload.is_exchange
@@ -6421,6 +6487,10 @@ if (!isListingPreviewWindow && leagueElement) {
     }
 
     state.price_check = nextPriceCheck;
+    markFeedback("priceCheckUpdatedAt");
+    if ((nextPriceCheck.rate_limit?.retry_after_seconds ?? 0) > 0 || (nextPriceCheck.rate_limit?.active_timeout_seconds ?? 0) > 0) {
+      markFeedback("rateLimitAt");
+    }
     state.price_currency = nextPriceCheck.selected_currency;
     state.price_option = nextPriceCheck.selected_price_option;
     activeTab = (state.scanned_item?.is_exchange ?? false) ? "trade" : "scan";
@@ -6429,6 +6499,7 @@ if (!isListingPreviewWindow && leagueElement) {
 
   void listen<ExchangeTabState>("scan://exchange-tab-updated", (event) => {
     state.exchange_tab = normalizeExchangeTab(event.payload);
+    markFeedback("exchangeUpdatedAt");
     if ((state.scanned_item?.is_exchange ?? false)) {
       activeTab = "trade";
     }
@@ -6569,6 +6640,7 @@ if (!isListingPreviewWindow && leagueElement) {
   });
 
   void listen<WorkerStatus>("scan://worker-error", (event) => {
+    markFeedback("errorAt");
     pushStatus(event.payload.worker, event.payload.message);
   });
 
@@ -6591,6 +6663,9 @@ if (!isListingPreviewWindow && leagueElement) {
     state.active_map_run = event.payload;
     state.current_area = event.payload.area;
     state.pending_waystone = null;
+    if (event.payload.ocr_evidence) {
+      markFeedback("ocrUpdatedAt");
+    }
     upsertAtlasRun(event.payload);
     render();
   });
@@ -6605,6 +6680,7 @@ if (!isListingPreviewWindow && leagueElement) {
     state.build_fingerprint = event.payload.fingerprint;
     state.hazard_profile_id = event.payload.fingerprint.recommended_profile_id;
     buildProfileUrlInput = event.payload.snapshot.source_url ?? buildProfileUrlInput;
+    markFeedback("profileImportedAt");
     render();
   });
 
