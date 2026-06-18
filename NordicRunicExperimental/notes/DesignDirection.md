@@ -39,6 +39,21 @@ The previous SVG board is kept only as a rejected rough reference. The next pass
 - one data/trade card example
 - no fake runic labels pretending to be identity
 
+## Mockup Pass 01
+
+Created `mockups/full-nordic-runic-scan.svg` as the first serious isolated direction.
+
+This version intentionally goes farther into the Nordic/runic surface language:
+
+- the app shell becomes an angular runestone/iron frame
+- the floating spine becomes carved diamond runestones
+- item/banner rarity colors remain intact
+- user accent hue is represented as cyan/frost marks
+- red remains danger-only
+- text remains readable normal UI typography instead of decorative runic copy
+
+This is still a mockup, not an implementation contract. The next decision is whether to keep this full runic direction, pull it back, or split it into separate variants.
+
 ## GSAP Consideration
 
 GSAP is viable as a selective motion layer, but not as a blanket replacement for CSS motion. Use it only where timelines materially improve the feel:
