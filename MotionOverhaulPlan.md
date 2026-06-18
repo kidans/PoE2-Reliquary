@@ -90,6 +90,8 @@ Line mode should remain brutally fast and readable.
 - Slide chips in by a few pixels on new OCR/map data.
 - Pulse once for danger/breaking warnings.
 - Avoid permanent motion unless severity is high.
+- Implementation keys compact updates off non-timer line signatures so the one-second map timer does not retrigger motion.
+- Warning severity flashes once; danger and critical severities may keep the compact pulse active.
 
 ## Verification Checklist
 

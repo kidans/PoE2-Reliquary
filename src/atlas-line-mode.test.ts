@@ -50,7 +50,7 @@ describe("atlasCompactLineState", () => {
     expect(state.riskReason).toBe("MONSTERS HAVE 30% INCREASED ACCURACY RATING");
     expect(state.riskDetail).toBe("MONSTERS HAVE 30% INCREASED ACCURACY RATING");
     expect(state.severity).toBe("warning");
-    expect(state.shouldPulse).toBe(true);
+    expect(state.shouldPulse).toBe(false);
   });
 
   it("uses critical severity for armed build-breaking waystone warnings", () => {

@@ -639,10 +639,29 @@ let feedbackState = {
   profileImportedAt: 0,
   ocrRequestedAt: 0,
   ocrUpdatedAt: 0,
+  compactLineUpdatedAt: 0,
+  compactSeverityChangedAt: 0,
+  compactWarningAt: 0,
   errorAt: 0,
   rateLimitAt: 0,
   lastMarketSignature: "",
+  lastCompactSignature: "",
+  lastCompactSeverity: "none" as AtlasCompactSeverity,
 };
+
+type FeedbackTimestampKey =
+  | "itemScannedAt"
+  | "priceCheckUpdatedAt"
+  | "exchangeUpdatedAt"
+  | "marketUpdatedAt"
+  | "profileImportedAt"
+  | "ocrRequestedAt"
+  | "ocrUpdatedAt"
+  | "compactLineUpdatedAt"
+  | "compactSeverityChangedAt"
+  | "compactWarningAt"
+  | "errorAt"
+  | "rateLimitAt";
 
 const INTERLUDE_ZONE_MAP: Record<string, string> = {
   "scorched farmlands": "Interlude 5.1 — Ogham, The Refuge",
@@ -836,7 +855,7 @@ function feedbackClass(timestamp: number, className: string, windowMs = FEEDBACK
   return timestamp > 0 && Date.now() - timestamp < windowMs ? className : "";
 }
 
-function markFeedback(key: keyof Omit<typeof feedbackState, "lastMarketSignature">) {
+function markFeedback(key: FeedbackTimestampKey) {
   feedbackState[key] = Date.now();
 }
 
@@ -853,6 +872,34 @@ function marketDatasetSignature(dataset: MarketBoardDataset | null) {
     dataset.losers[0]?.id ?? "",
     dataset.losers[0]?.change_percent ?? "",
   ].join("|");
+}
+
+function compactLineSignature(area: CurrentAreaInfo, line: AtlasCompactLineState) {
+  return [
+    area.name,
+    area.area_type,
+    area.area_level ?? "",
+    line.severity,
+    line.riskReason,
+    line.riskDetail,
+    line.indicators.map((indicator) => `${indicator.label}:${indicator.value}:${indicator.tone}`).join(","),
+    line.text.replace(/\s*\|\s*\d+:\d{2}$/, ""),
+  ].join("|");
+}
+
+function markCompactLineFeedback(area: CurrentAreaInfo, line: AtlasCompactLineState) {
+  const signature = compactLineSignature(area, line);
+  if (signature && signature !== feedbackState.lastCompactSignature) {
+    feedbackState.lastCompactSignature = signature;
+    markFeedback("compactLineUpdatedAt");
+  }
+  if (line.severity !== feedbackState.lastCompactSeverity) {
+    feedbackState.lastCompactSeverity = line.severity;
+    markFeedback("compactSeverityChangedAt");
+    if (line.severity === "warning" || line.severity === "danger" || line.severity === "critical") {
+      markFeedback("compactWarningAt");
+    }
+  }
 }
 
 function ensureMarketBoardLoaded(force = false) {
@@ -1377,7 +1424,11 @@ function render() {
     )
     : null;
   if (mapCompactState && state.current_area?.area_type === "map") {
+    markCompactLineFeedback(state.current_area, mapCompactState);
     applyCompactMapLine(mapCompactState, state.current_area);
+  } else {
+    feedbackState.lastCompactSignature = "";
+    feedbackState.lastCompactSeverity = "none";
   }
   if (compactStrip) {
     const hasMapDetail = mapCompactState ? compactLineHasMapDetail(mapCompactState) : false;
@@ -1387,6 +1438,9 @@ function render() {
     compactStrip.classList.toggle("is-hideout", state.current_area?.area_type === "hideout");
     compactStrip.classList.toggle("is-campaign", campaignGuideAct > 0);
     compactStrip.classList.toggle("is-pulsing", Boolean(mapCompactState?.shouldPulse));
+    compactStrip.classList.toggle("is-compact-updated", Boolean(feedbackClass(feedbackState.compactLineUpdatedAt, "is-compact-updated")));
+    compactStrip.classList.toggle("is-severity-changing", Boolean(feedbackClass(feedbackState.compactSeverityChangedAt, "is-severity-changing")));
+    compactStrip.classList.toggle("is-warning-flash", Boolean(feedbackClass(feedbackState.compactWarningAt, "is-warning-flash", 1_100)));
     setCompactSeverityClass(compactStrip, mapCompactState?.severity ?? "none");
     hudElement!.classList.toggle("compact-checklist-expanded", campaignExpanded && campaignGuideAct > 0);
   }
@@ -1789,8 +1843,8 @@ function compactLineHasMapDetail(line: AtlasCompactLineState) {
     || /^(\d+\s+mods|OCR\s+\d+\s+mods)/i.test(line.text);
 }
 
-function renderCompactIndicator(indicator: AtlasCompactIndicator) {
-  return `<span class="compact-indicator compact-indicator-${escapeAttribute(indicator.tone)} compact-indicator-${escapeAttribute(indicator.label.toLowerCase())}"><b>${escapeHtml(indicator.label)}</b><span>${escapeHtml(indicator.value)}</span></span>`;
+function renderCompactIndicator(indicator: AtlasCompactIndicator, index = 0) {
+  return `<span class="compact-indicator compact-indicator-${escapeAttribute(indicator.tone)} compact-indicator-${escapeAttribute(indicator.label.toLowerCase())}" style="--chip-index:${index}"><b>${escapeHtml(indicator.label)}</b><span>${escapeHtml(indicator.value)}</span></span>`;
 }
 
 function setCompactSeverityClass(element: HTMLElement, severity: AtlasCompactSeverity) {

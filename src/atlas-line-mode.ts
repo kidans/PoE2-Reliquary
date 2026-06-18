@@ -99,7 +99,7 @@ export function atlasCompactLineState(
 }
 
 function shouldPulse(severity: AtlasCompactSeverity): boolean {
-  return severity === "warning" || severity === "danger" || severity === "critical";
+  return severity === "danger" || severity === "critical";
 }
 
 function armedWaystoneText(area: AtlasCompactArea, runtimeLabel: string): string {
