@@ -1,0 +1,158 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200" viewBox="0 0 1600 1200" role="img" aria-labelledby="title desc">
+  <title id="title">Reliquary Nordic Relic Vector Candidate Sheet</title>
+  <desc id="desc">Deterministic first-pass candidate sheet for Reliquary Nordic relic UI assets.</desc>
+  <defs>
+    <radialGradient id="runeGlow" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#57dfff" stop-opacity="0.95"/>
+      <stop offset="42%" stop-color="#146a82" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#030709" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="iron" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2a2926"/>
+      <stop offset="45%" stop-color="#0b0d0e"/>
+      <stop offset="100%" stop-color="#211914"/>
+    </linearGradient>
+    <linearGradient id="bronze" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#d4af66"/>
+      <stop offset="35%" stop-color="#7a5a31"/>
+      <stop offset="70%" stop-color="#2d2218"/>
+      <stop offset="100%" stop-color="#b58a45"/>
+    </linearGradient>
+    <linearGradient id="warning" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#b7432d"/>
+      <stop offset="55%" stop-color="#3b0e0b"/>
+      <stop offset="100%" stop-color="#ff6d4a"/>
+    </linearGradient>
+    <filter id="softGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.2 0 0 0 0 0.8 0 0 0 0 1 0 0 0 .75 0"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#000" flood-opacity="0.65"/>
+    </filter>
+    <pattern id="etched" width="30" height="30" patternUnits="userSpaceOnUse">
+      <path d="M0 30 L30 0 M-10 10 L10 -10 M20 40 L40 20" stroke="#ffffff" stroke-opacity="0.035" stroke-width="1"/>
+    </pattern>
+    <g id="rivet">
+      <circle r="5" fill="url(#bronze)" stroke="#e4c071" stroke-width="1"/>
+      <circle r="2" fill="#1a120b" opacity="0.6"/>
+    </g>
+    <g id="cornerA">
+      <path d="M0 0 H180 L146 28 H68 L28 68 V146 L0 180 Z" fill="url(#iron)" stroke="url(#bronze)" stroke-width="4"/>
+      <path d="M18 18 H132 M18 18 V132 M46 46 H150 M46 46 V150" fill="none" stroke="#d6ad62" stroke-opacity="0.55" stroke-width="2"/>
+      <path d="M74 28 L112 66 L74 104 L36 66 Z" fill="#071014" stroke="#46dfff" stroke-width="2" filter="url(#softGlow)"/>
+      <path d="M74 47 V86 M56 66 H92" stroke="#d9f7ff" stroke-width="3" stroke-linecap="round"/>
+      <use href="#rivet" x="20" y="20"/>
+      <use href="#rivet" x="152" y="18"/>
+      <use href="#rivet" x="18" y="152"/>
+    </g>
+    <g id="borderStrip">
+      <path d="M0 28 L22 0 H558 L580 28 L558 56 H22 Z" fill="url(#iron)" stroke="url(#bronze)" stroke-width="3"/>
+      <path d="M42 28 H538" stroke="#c59b55" stroke-width="2" stroke-opacity="0.55"/>
+      <path d="M74 16 L94 28 L74 40 M506 16 L486 28 L506 40" fill="none" stroke="#53d7ff" stroke-width="2" stroke-opacity="0.75"/>
+      <path d="M136 15 C190 37 250 37 304 15 C358 37 418 37 472 15" fill="none" stroke="#ffffff" stroke-opacity="0.06"/>
+    </g>
+    <g id="socketPlate">
+      <path d="M0 26 L24 0 H212 L238 26 V78 L212 104 H24 L0 78 Z" fill="url(#iron)" stroke="url(#bronze)" stroke-width="3"/>
+      <rect x="18" y="18" width="202" height="68" fill="url(#etched)" opacity="0.9"/>
+      <circle cx="34" cy="52" r="16" fill="url(#runeGlow)" stroke="#4fdfff" stroke-width="2"/>
+      <path d="M34 39 V65 M24 52 H44" stroke="#e8fbff" stroke-width="3" stroke-linecap="round"/>
+      <use href="#rivet" x="218" y="18"/>
+      <use href="#rivet" x="218" y="86"/>
+    </g>
+    <g id="buttonFrame">
+      <path d="M0 16 L16 0 H184 L200 16 V56 L184 72 H16 L0 56 Z" fill="url(#iron)" stroke="url(#bronze)" stroke-width="3"/>
+      <path d="M16 36 H184" stroke="#ffffff" stroke-opacity="0.08"/>
+      <use href="#rivet" x="18" y="18"/>
+      <use href="#rivet" x="182" y="54"/>
+    </g>
+    <g id="iconBase">
+      <path d="M50 0 L96 28 L96 82 L50 110 L4 82 L4 28 Z" fill="url(#iron)" stroke="url(#bronze)" stroke-width="3"/>
+      <circle cx="50" cy="55" r="32" fill="#061013" stroke="#315f68" stroke-width="2"/>
+      <circle cx="50" cy="55" r="24" fill="url(#runeGlow)" opacity="0.62"/>
+    </g>
+  </defs>
+
+  <rect width="1600" height="1200" fill="#060708"/>
+  <rect x="30" y="30" width="1540" height="1140" fill="none" stroke="#5a4631" stroke-width="2"/>
+  <text x="800" y="96" fill="#d9cfbc" font-family="Georgia, serif" font-size="52" letter-spacing="10" text-anchor="middle">RELIQUARY ASSET CANDIDATES</text>
+  <text x="800" y="132" fill="#5bdfff" font-family="Georgia, serif" font-size="16" letter-spacing="12" text-anchor="middle">FORGED RUNIC UI KIT</text>
+
+  <text x="80" y="190" fill="#a99572" font-family="Georgia, serif" font-size="20" letter-spacing="4">CORNERS</text>
+  <g transform="translate(80 220)" filter="url(#shadow)">
+    <use href="#cornerA"/>
+  </g>
+  <g transform="translate(330 220) scale(-1 1)" filter="url(#shadow)">
+    <use href="#cornerA"/>
+  </g>
+  <g transform="translate(80 470) scale(1 -1)" filter="url(#shadow)">
+    <use href="#cornerA"/>
+  </g>
+  <g transform="translate(330 470) scale(-1 -1)" filter="url(#shadow)">
+    <use href="#cornerA"/>
+  </g>
+
+  <text x="560" y="190" fill="#a99572" font-family="Georgia, serif" font-size="20" letter-spacing="4">BORDER STRIPS</text>
+  <g transform="translate(560 230)" filter="url(#shadow)">
+    <use href="#borderStrip"/>
+  </g>
+  <g transform="translate(560 315)" filter="url(#shadow)">
+    <use href="#borderStrip"/>
+  </g>
+  <g transform="translate(1235 210) rotate(90)" filter="url(#shadow)">
+    <use href="#borderStrip"/>
+  </g>
+  <g transform="translate(1330 210) rotate(90)" filter="url(#shadow)">
+    <use href="#borderStrip"/>
+  </g>
+
+  <text x="560" y="450" fill="#a99572" font-family="Georgia, serif" font-size="20" letter-spacing="4">SPINE SOCKETS</text>
+  <g transform="translate(560 490)" filter="url(#shadow)">
+    <use href="#socketPlate"/>
+  </g>
+  <g transform="translate(835 490)" filter="url(#shadow)">
+    <use href="#socketPlate"/>
+  </g>
+  <g transform="translate(1110 490)" filter="url(#shadow)">
+    <use href="#socketPlate"/>
+  </g>
+
+  <text x="80" y="620" fill="#a99572" font-family="Georgia, serif" font-size="20" letter-spacing="4">BUTTON STATES</text>
+  <g transform="translate(80 655)" filter="url(#shadow)">
+    <use href="#buttonFrame"/>
+    <text x="100" y="44" fill="#d9cfbc" font-family="Georgia, serif" font-size="18" text-anchor="middle">DEFAULT</text>
+  </g>
+  <g transform="translate(320 655)" filter="url(#shadow)">
+    <use href="#buttonFrame"/>
+    <path d="M8 18 L22 8 H178 L192 18 V54 L178 64 H22 L8 54 Z" fill="none" stroke="#5bdfff" stroke-width="2" filter="url(#softGlow)"/>
+    <text x="100" y="44" fill="#e8fbff" font-family="Georgia, serif" font-size="18" text-anchor="middle">HOVER</text>
+  </g>
+  <g transform="translate(560 655)" filter="url(#shadow)">
+    <use href="#buttonFrame"/>
+    <rect x="18" y="14" width="164" height="44" fill="#0a2d38" stroke="#5bdfff" stroke-width="2" filter="url(#softGlow)"/>
+    <text x="100" y="44" fill="#ffffff" font-family="Georgia, serif" font-size="18" text-anchor="middle">ACTIVE</text>
+  </g>
+  <g transform="translate(800 655)" filter="url(#shadow)">
+    <path d="M0 16 L16 0 H184 L200 16 V56 L184 72 H16 L0 56 Z" fill="url(#warning)" stroke="#ff6d4a" stroke-width="3"/>
+    <text x="100" y="44" fill="#ffe3d7" font-family="Georgia, serif" font-size="18" text-anchor="middle">WARNING</text>
+  </g>
+
+  <text x="80" y="800" fill="#a99572" font-family="Georgia, serif" font-size="20" letter-spacing="4">NAVIGATION ICONS</text>
+  <g transform="translate(80 835)">
+    <g transform="translate(0 0)"><use href="#iconBase"/><path d="M50 26 V84 M21 55 H79 M32 37 L68 73 M68 37 L32 73" stroke="#e8fbff" stroke-width="5" stroke-linecap="round"/></g>
+    <g transform="translate(145 0)"><use href="#iconBase"/><path d="M25 40 H70 L58 28 M75 70 H30 L42 82" fill="none" stroke="#e8fbff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g transform="translate(290 0)"><use href="#iconBase"/><circle cx="50" cy="55" r="26" fill="none" stroke="#e8fbff" stroke-width="4"/><path d="M50 23 L61 55 L50 87 L39 55 Z" fill="#5bdfff"/></g>
+    <g transform="translate(435 0)"><use href="#iconBase"/><path d="M50 22 L78 55 L50 88 L22 55 Z" fill="none" stroke="#e8fbff" stroke-width="5"/><path d="M38 55 H62 M50 43 V67" stroke="#5bdfff" stroke-width="4"/></g>
+    <g transform="translate(580 0)"><use href="#iconBase"/><path d="M30 82 C32 54 68 54 70 82 M34 45 C38 24 62 24 66 45 C61 55 39 55 34 45 Z" fill="none" stroke="#e8fbff" stroke-width="5"/></g>
+    <g transform="translate(725 0)"><use href="#iconBase"/><circle cx="50" cy="55" r="20" fill="none" stroke="#e8fbff" stroke-width="5"/><path d="M50 24 V36 M50 74 V86 M19 55 H31 M69 55 H81 M29 34 L37 42 M63 68 L71 76 M71 34 L63 42 M37 68 L29 76" stroke="#5bdfff" stroke-width="4" stroke-linecap="round"/></g>
+    <g transform="translate(870 0)"><use href="#iconBase"/><path d="M30 35 H70 V75 H30 Z M38 43 H62 M38 55 H62 M38 67 H62" fill="none" stroke="#e8fbff" stroke-width="5"/></g>
+    <g transform="translate(1015 0)"><path d="M50 0 L96 28 L96 82 L50 110 L4 82 L4 28 Z" fill="url(#warning)" stroke="#ff6d4a" stroke-width="3"/><path d="M50 26 L78 78 H22 Z" fill="none" stroke="#ffe3d7" stroke-width="6" stroke-linejoin="round"/><path d="M50 43 V62 M50 73 V76" stroke="#ffe3d7" stroke-width="7" stroke-linecap="round"/></g>
+  </g>
+
+  <text x="80" y="1088" fill="#5bdfff" font-family="Georgia, serif" font-size="18" letter-spacing="4">STATUS: VECTOR SHAPE CANDIDATE - NOT FINAL RASTER ART</text>
+  <text x="80" y="1120" fill="#a99572" font-family="Arial, sans-serif" font-size="16">Use this sheet to judge categories, silhouettes, crop boundaries, and style direction before high-detail image generation.</text>
+</svg>

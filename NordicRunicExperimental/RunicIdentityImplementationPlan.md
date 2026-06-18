@@ -42,6 +42,45 @@ The target references are not simply "Nordic." They are a forged relic interface
 - [ ] Avoid fake functional runic text. Runes are ornament and structure, not labels.
 - [ ] Avoid excessive protruding transparent assets until native transparency limitations are solved.
 
+## Asset Candidate Pipeline
+
+Generated art must be treated as candidate material, not production truth. The workflow is:
+
+1. Generate a small test pack first:
+   - ornate corner piece
+   - horizontal border strip
+   - tab/socket plate
+   - active tab state
+   - warning button state
+   - six navigation icons
+2. Save raw outputs under `NordicRunicExperimental/assets/generated-candidates/`.
+3. Review candidates at realistic UI sizes: 32px, 48px, 72px, and full panel scale.
+4. Reject assets that collapse at small size, drift from the forged relic style, have muddy silhouettes, or overuse red.
+5. Promote only cleaned winners into a later production asset folder.
+6. Never reference raw generated candidates from production UI.
+
+Recommended asset categories:
+
+- `frames/`: corner pieces, caps, horizontal strips, vertical strips, dividers.
+- `buttons/`: default, hover, active, warning, disabled.
+- `spine/`: tab plates, socket frames, selected glow overlays.
+- `icons/`: scan, trade, atlas, temple, profile, settings, warning, database.
+- `textures/`: black iron, carved slate, worn bronze, faint rune etching.
+
+Transparency policy:
+
+- Default generation should use a flat removable chroma-key background, then local alpha removal.
+- Native transparent PNG generation should only be used if chroma-key cleanup fails or the asset has complex edges.
+- Every final candidate with transparency must be inspected for fringe, matte halos, and dirty corners.
+
+Review criteria:
+
+- Silhouette works at 32px.
+- Detail survives at 48px without becoming noise.
+- Accent hue can be layered separately or recolored without destroying the material.
+- Red appears only for danger/warning assets.
+- Asset looks like part of Reliquary, not a generic fantasy store pack.
+
 ## Task 1: Static Presentation Shell
 
 **Files:**
