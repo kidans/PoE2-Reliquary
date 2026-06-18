@@ -54,6 +54,38 @@ This version intentionally goes farther into the Nordic/runic surface language:
 
 This is still a mockup, not an implementation contract. The next decision is whether to keep this full runic direction, pull it back, or split it into separate variants.
 
+## Mockup Pass 02: Forged Reliquary UI Kit
+
+Created `mockups/runic-presentation.html` and `mockups/runic-presentation.css` after reviewing the newer reference boards.
+
+This pass replaces the broad "runic overlay" idea with a more precise art direction:
+
+- forged black iron and carved slate are the base materials
+- worn bronze/gold edges define physical panel construction
+- blue rune light is sparse and tied to the user accent hue
+- icons should eventually be physical relic objects, not flat UI symbols
+- the floating spine should become forged socket plates
+- line mode should feel like a compact status instrument, not a rounded web card
+
+This direction is stronger than Pass 01 because it gives Reliquary a production-grade component language rather than a surface theme. It also avoids the biggest risk of a "Nordic" pivot: generic Viking cosplay.
+
+### Production Migration Notes
+
+Safe to migrate first:
+
+- token layer for iron, bronze, bone, danger, and user rune hue
+- panel and button frame treatments
+- tab/spine selected and hover states
+- line-mode information hierarchy
+- market/settings card material treatment
+
+Hold until later:
+
+- high-detail icon pack generation
+- raster corner pieces and protruding ornaments
+- GSAP timelines
+- any scan-card ornament that competes with item/mod readability
+
 ## GSAP Consideration
 
 GSAP is viable as a selective motion layer, but not as a blanket replacement for CSS motion. Use it only where timelines materially improve the feel:

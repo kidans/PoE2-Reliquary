@@ -2,6 +2,27 @@
 
 ## Current Primary Mockup
 
+[runic-presentation.html](./runic-presentation.html)
+
+This is the first inspectable implementation-style mockup. It is dependency-free HTML/CSS and should be used for presentation review before touching production.
+
+It is based on the newer Reliquary UI kit references:
+
+- forged black iron and carved slate panels
+- bronze/gold worn edges as material, not flat accent color
+- controlled blue/frost rune light
+- physical relic-style icons and sockets
+- compact line mode retained
+- scan/readability preserved as a hard constraint
+
+Open it directly in a browser:
+
+```text
+C:\Projects\Kalandra\NordicRunicExperimental\mockups\runic-presentation.html
+```
+
+## Previous SVG Direction
+
 [full-nordic-runic-scan.svg](./full-nordic-runic-scan.svg)
 
 This pass goes deliberately farther into Nordic/runic identity than the previous rough board:

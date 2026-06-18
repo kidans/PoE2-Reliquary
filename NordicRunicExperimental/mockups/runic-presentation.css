@@ -1,0 +1,862 @@
+:root {
+  color-scheme: dark;
+  --accent-hue: 196;
+  --danger-hue: 3;
+  --relic-bg: oklch(6% 0.012 var(--accent-hue));
+  --relic-panel: oklch(9% 0.018 var(--accent-hue) / 0.92);
+  --relic-panel-soft: oklch(12% 0.02 var(--accent-hue) / 0.72);
+  --relic-ink: oklch(4% 0.01 var(--accent-hue));
+  --rune: oklch(72% 0.16 var(--accent-hue));
+  --rune-soft: oklch(58% 0.1 var(--accent-hue));
+  --danger: oklch(65% 0.22 var(--danger-hue));
+  --danger-dim: oklch(36% 0.13 var(--danger-hue));
+  --bronze: oklch(58% 0.07 72);
+  --bronze-dim: oklch(34% 0.045 72);
+  --bone: oklch(84% 0.025 75);
+  --muted: oklch(66% 0.025 75 / 0.72);
+  --stone: oklch(18% 0.018 var(--accent-hue));
+  --rare: oklch(76% 0.13 82);
+  --unique: oklch(60% 0.16 42);
+  --magic: oklch(75% 0.11 265);
+  --shadow: 0 30px 80px oklch(0% 0 0 / 0.72);
+  --engrave: 1px solid color-mix(in oklch, var(--bronze) 42%, black);
+  --rune-border: 1px solid color-mix(in oklch, var(--rune) 72%, black);
+  font-family: "Boska", "Cinzel", "Georgia", serif;
+  background:
+    radial-gradient(circle at 18% 8%, oklch(24% 0.04 var(--accent-hue) / 0.28), transparent 28rem),
+    radial-gradient(circle at 88% 12%, oklch(27% 0.05 72 / 0.16), transparent 30rem),
+    linear-gradient(135deg, oklch(3% 0.005 260), var(--relic-bg) 42%, oklch(2% 0.006 20));
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--bone);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.runic-stage {
+  width: min(1500px, calc(100vw - 48px));
+  margin: 0 auto;
+  padding: 40px 0 56px;
+}
+
+.relic-hero,
+.reliquary-shell,
+.line-mode,
+.relic-panel {
+  position: relative;
+  border: var(--rune-border);
+  background:
+    linear-gradient(135deg, oklch(100% 0 0 / 0.035), transparent 22%),
+    radial-gradient(circle at 50% 0%, oklch(24% 0.04 var(--accent-hue) / 0.22), transparent 32rem),
+    var(--relic-panel);
+  box-shadow:
+    inset 0 0 0 1px oklch(100% 0 0 / 0.04),
+    inset 0 -22px 48px oklch(0% 0 0 / 0.38),
+    var(--shadow);
+}
+
+.relic-hero::before,
+.reliquary-shell::before,
+.line-mode::before,
+.relic-panel::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  pointer-events: none;
+  border: 1px solid color-mix(in oklch, var(--bronze) 32%, transparent);
+  clip-path: polygon(0 16px, 16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px));
+}
+
+.relic-hero::after,
+.reliquary-shell::after,
+.line-mode::after,
+.relic-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(90deg, transparent 0 96%, oklch(100% 0 0 / 0.035) 96% 97%, transparent 97%),
+    linear-gradient(0deg, transparent 0 96%, oklch(100% 0 0 / 0.025) 96% 97%, transparent 97%);
+  background-size: 42px 42px;
+  mix-blend-mode: screen;
+  opacity: 0.35;
+}
+
+.relic-hero {
+  min-height: 260px;
+  padding: 46px 54px;
+  overflow: hidden;
+}
+
+.hero-corners::before,
+.hero-corners::after {
+  content: "";
+  position: absolute;
+  top: 18px;
+  width: 142px;
+  height: 142px;
+  border-top: 3px solid var(--bronze);
+  opacity: 0.74;
+}
+
+.hero-corners::before {
+  left: 18px;
+  border-left: 3px solid var(--bronze);
+  clip-path: polygon(0 0, 100% 0, 70% 24%, 24% 24%, 24% 70%, 0 100%);
+}
+
+.hero-corners::after {
+  right: 18px;
+  border-right: 3px solid var(--bronze);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 76% 70%, 76% 24%, 30% 24%);
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: var(--rune);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  max-width: 980px;
+  margin-bottom: 16px;
+  color: var(--bone);
+  font-size: clamp(3.2rem, 8vw, 7.6rem);
+  font-weight: 500;
+  line-height: 0.88;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-shadow: 0 0 18px oklch(100% 0 0 / 0.12);
+}
+
+h2 {
+  margin-bottom: 0;
+  font-size: 1.55rem;
+  letter-spacing: 0.035em;
+}
+
+.hero-copy {
+  max-width: 780px;
+  color: var(--muted);
+  font-family: "Segoe UI", sans-serif;
+  font-size: 1.05rem;
+  line-height: 1.7;
+}
+
+.hero-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  max-width: 1060px;
+  margin-top: 34px;
+}
+
+.hero-strip span,
+.stat-chip,
+.item-stats span,
+.header-pill,
+.round-button {
+  border: var(--engrave);
+  background: linear-gradient(180deg, oklch(20% 0.02 var(--accent-hue) / 0.72), oklch(5% 0.01 var(--accent-hue) / 0.76));
+}
+
+.hero-strip span {
+  padding: 12px 14px;
+  color: var(--muted);
+  font-family: "Segoe UI", sans-serif;
+  font-size: 0.82rem;
+}
+
+.hero-strip b {
+  display: block;
+  color: var(--bone);
+  font-family: "Boska", "Georgia", serif;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.ui-kit-grid,
+.trade-settings-row {
+  display: grid;
+  grid-template-columns: 1.05fr 1.35fr 1fr;
+  gap: 22px;
+  margin-top: 24px;
+}
+
+.trade-settings-row {
+  grid-template-columns: 1fr 1fr;
+}
+
+.relic-panel {
+  padding: 26px;
+  min-height: 300px;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.rune-mark,
+.icon-frame,
+.spine-rune,
+.object-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  background:
+    radial-gradient(circle, color-mix(in oklch, var(--rune) 36%, transparent), transparent 58%),
+    linear-gradient(145deg, oklch(18% 0.02 var(--accent-hue)), oklch(4% 0.01 var(--accent-hue)));
+  border: var(--rune-border);
+  box-shadow:
+    inset 0 0 0 1px oklch(100% 0 0 / 0.08),
+    0 0 18px color-mix(in oklch, var(--rune) 32%, transparent);
+}
+
+.rune-mark {
+  width: 48px;
+  height: 48px;
+  transform: rotate(45deg);
+  color: var(--rune);
+  font-size: 1.35rem;
+}
+
+.rune-mark::first-letter {
+  transform: rotate(-45deg);
+}
+
+.vertical-menu {
+  display: grid;
+  gap: 10px;
+}
+
+.relic-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: var(--engrave);
+  color: var(--bone);
+  background:
+    linear-gradient(180deg, oklch(17% 0.015 var(--accent-hue) / 0.86), oklch(6% 0.012 var(--accent-hue) / 0.92));
+  box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.04);
+  cursor: default;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.relic-button.is-active,
+.relic-button:hover {
+  border-color: var(--rune);
+  color: white;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklch, var(--rune) 28%, transparent),
+    0 0 24px color-mix(in oklch, var(--rune) 24%, transparent);
+}
+
+.relic-button.warning,
+.relic-button.danger,
+.round-button.danger {
+  border-color: var(--danger);
+  color: oklch(90% 0.05 var(--danger-hue));
+}
+
+.relic-button.small {
+  min-height: 36px;
+  padding-inline: 14px;
+  font-size: 0.72rem;
+}
+
+.icon-frame {
+  width: 28px;
+  height: 28px;
+  font-family: "Segoe UI Symbol", sans-serif;
+  font-size: 0.92rem;
+}
+
+.button-row,
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.stat-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-family: "Segoe UI", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.stat-chip.good {
+  border-color: oklch(68% 0.2 145);
+  color: oklch(78% 0.2 145);
+}
+
+.stat-chip.info {
+  border-color: var(--rune);
+  color: var(--rune);
+}
+
+.stat-chip.gold {
+  border-color: var(--rare);
+  color: var(--rare);
+}
+
+.stat-chip.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.slider-row,
+.toggle-row {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-family: "Segoe UI", sans-serif;
+  font-weight: 700;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--rune);
+}
+
+.toggle-row {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.toggle {
+  width: 54px;
+  height: 28px;
+  border: var(--rune-border);
+  border-radius: 999px;
+  background: oklch(5% 0.01 var(--accent-hue));
+  box-shadow: inset 0 0 16px oklch(0% 0 0 / 0.72);
+}
+
+.toggle::after {
+  content: "";
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: 3px;
+  border-radius: 50%;
+  background: var(--rune);
+  box-shadow: 0 0 18px var(--rune);
+}
+
+.toggle.is-on::after {
+  transform: translateX(26px);
+}
+
+.tooltip-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 18px;
+  padding: 16px;
+  border: var(--engrave);
+  background: oklch(5% 0.01 var(--accent-hue) / 0.82);
+}
+
+.tooltip-card strong,
+.mover-row strong {
+  display: block;
+  color: var(--bone);
+}
+
+.tooltip-card small {
+  color: var(--rune);
+  text-transform: uppercase;
+}
+
+.tooltip-card p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-family: "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
+.object-icon {
+  width: 58px;
+  height: 58px;
+  border-radius: 14px;
+  color: var(--rune);
+}
+
+.object-icon.raven::before {
+  content: "ᚱ";
+  font-size: 2rem;
+}
+
+.object-icon.shard::before {
+  content: "◆";
+  font-size: 1.8rem;
+}
+
+.object-icon.skull::before {
+  content: "☠";
+  color: var(--danger);
+  font-size: 1.6rem;
+}
+
+.overlay-layout {
+  position: relative;
+  margin-top: 30px;
+  padding-left: 74px;
+}
+
+.floating-spine {
+  position: absolute;
+  left: 0;
+  top: 88px;
+  display: grid;
+  gap: 12px;
+}
+
+.floating-spine::before {
+  content: "";
+  position: absolute;
+  left: 27px;
+  top: -44px;
+  bottom: -44px;
+  width: 1px;
+  background: linear-gradient(transparent, var(--rune), transparent);
+  opacity: 0.45;
+}
+
+.spine-rune {
+  width: 56px;
+  height: 56px;
+  color: var(--bone);
+  transform: rotate(45deg);
+  font-family: "Segoe UI Symbol", sans-serif;
+  font-size: 1.25rem;
+}
+
+.spine-rune.is-active,
+.spine-rune:hover {
+  color: white;
+  border-color: var(--rune);
+  box-shadow:
+    0 0 26px color-mix(in oklch, var(--rune) 42%, transparent),
+    inset 0 0 18px color-mix(in oklch, var(--rune) 24%, transparent);
+}
+
+.spine-rune::first-letter {
+  transform: rotate(-45deg);
+}
+
+.reliquary-shell {
+  min-height: 860px;
+  padding: 22px;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid color-mix(in oklch, var(--rune) 32%, transparent);
+}
+
+.app-header h2 {
+  margin: 0;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.app-header span {
+  color: var(--muted);
+  font-family: "Segoe UI", sans-serif;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-pill,
+.round-button {
+  min-height: 34px;
+  border-radius: 999px;
+  color: var(--bone);
+}
+
+.header-pill {
+  min-width: 160px;
+  padding: 0 18px;
+}
+
+.round-button {
+  width: 36px;
+}
+
+.item-banner {
+  display: grid;
+  place-items: center;
+  min-height: 78px;
+  margin: 18px 0;
+  border: 2px solid var(--rare);
+  background:
+    linear-gradient(90deg, oklch(0% 0 0 / 0.32), transparent 12% 88%, oklch(0% 0 0 / 0.32)),
+    repeating-linear-gradient(90deg, oklch(100% 0 0 / 0.035) 0 12px, transparent 12px 32px),
+    linear-gradient(180deg, oklch(22% 0.035 82 / 0.8), oklch(8% 0.018 82 / 0.86));
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.item-banner span {
+  color: color-mix(in oklch, var(--rare) 72%, white);
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+}
+
+.item-banner strong {
+  color: var(--rare);
+  font-size: 2rem;
+  letter-spacing: 0.13em;
+}
+
+.scan-card {
+  min-height: 510px;
+  padding: 24px;
+}
+
+.item-stats {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.item-stats span {
+  padding: 7px 14px;
+  color: var(--bone);
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+}
+
+.mod-list {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.section-label {
+  margin: 12px 0 2px;
+  color: var(--bronze);
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.mod-row {
+  display: grid;
+  grid-template-columns: 74px auto;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  color: oklch(82% 0.08 275);
+  background: transparent;
+}
+
+.mod-row em {
+  color: var(--bone);
+  font-size: 0.78rem;
+  font-style: normal;
+  font-weight: 900;
+  text-align: right;
+}
+
+.mod-row span {
+  padding: 3px 8px;
+  background: transparent;
+  box-shadow: none;
+  font-variant: small-caps;
+  letter-spacing: 0.04em;
+}
+
+.mod-row.is-selected span {
+  background: color-mix(in oklch, var(--rune) 38%, transparent);
+  box-shadow: 0 0 18px color-mix(in oklch, var(--rune) 26%, transparent);
+  color: white;
+}
+
+.mod-row.danger-mod span {
+  color: oklch(90% 0.06 var(--danger-hue));
+  background: color-mix(in oklch, var(--danger) 38%, transparent);
+  box-shadow: 0 0 18px color-mix(in oklch, var(--danger) 24%, transparent);
+}
+
+.mode-row {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 24px;
+  color: var(--bone);
+  font-size: 0.86rem;
+}
+
+.mode-row input {
+  accent-color: var(--rune);
+}
+
+.price-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 116px;
+  margin-top: 16px;
+}
+
+.estimate {
+  text-align: center;
+  flex: 1;
+}
+
+.estimate strong {
+  display: block;
+  font-size: 1.75rem;
+  margin-bottom: 6px;
+}
+
+.estimate span {
+  color: var(--muted);
+  font-family: "Segoe UI", sans-serif;
+}
+
+.estimate b {
+  color: oklch(78% 0.15 140);
+}
+
+.currency-orb {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  vertical-align: -3px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 25%, oklch(90% 0.06 78), transparent 22%),
+    radial-gradient(circle at 66% 68%, oklch(36% 0.045 72), transparent 34%),
+    linear-gradient(135deg, var(--bronze), oklch(18% 0.025 72));
+  border: 1px solid oklch(78% 0.07 72);
+}
+
+.market-card {
+  min-height: 180px;
+  margin-top: 16px;
+  padding: 16px;
+}
+
+.table-head,
+.table-row {
+  display: grid;
+  grid-template-columns: 1.55fr 0.5fr 0.45fr 1fr 0.5fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.table-head {
+  min-height: 44px;
+  padding: 0 14px;
+  color: var(--bone);
+  background: oklch(23% 0.02 80 / 0.75);
+  font-weight: 900;
+}
+
+.table-row {
+  min-height: 52px;
+  padding: 0 14px;
+  border-bottom: 1px solid oklch(100% 0 0 / 0.06);
+  color: var(--bone);
+  font-family: "Segoe UI", sans-serif;
+}
+
+.table-row strong {
+  text-transform: uppercase;
+}
+
+.market-board,
+.settings-board {
+  min-height: 390px;
+}
+
+.mover-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.mover-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 70px;
+  padding: 10px 14px;
+  background: oklch(6% 0.01 var(--accent-hue) / 0.78);
+  border: 1px solid oklch(100% 0 0 / 0.07);
+  font-family: "Segoe UI", sans-serif;
+}
+
+.mover-row .object-icon {
+  width: 42px;
+  height: 42px;
+}
+
+.mover-row.up b {
+  color: oklch(76% 0.2 145);
+}
+
+.mover-row.down b {
+  color: var(--danger);
+}
+
+.line-mode-demo {
+  margin-top: 24px;
+}
+
+.line-mode {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  grid-template-areas:
+    "primary chips open"
+    "risk risk open";
+  gap: 10px 18px;
+  align-items: center;
+  min-height: 104px;
+  padding: 18px 22px;
+  overflow: hidden;
+}
+
+.line-primary {
+  grid-area: primary;
+  display: grid;
+  gap: 3px;
+}
+
+.line-primary strong {
+  font-size: 1.45rem;
+}
+
+.line-primary span {
+  color: var(--rare);
+  font-family: "Segoe UI", sans-serif;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.line-chips {
+  grid-area: chips;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.line-risk {
+  grid-area: risk;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid color-mix(in oklch, var(--bronze) 36%, transparent);
+  background: oklch(5% 0.01 var(--accent-hue) / 0.86);
+  color: var(--bone);
+  font-family: "Segoe UI", sans-serif;
+  text-transform: uppercase;
+}
+
+.line-risk strong,
+.line-risk span:first-child {
+  color: var(--rare);
+}
+
+.open-button {
+  grid-area: open;
+  min-width: 108px;
+  min-height: 64px;
+  border: 2px solid var(--danger);
+  border-radius: 18px;
+  color: white;
+  background:
+    radial-gradient(circle at 80% 20%, oklch(70% 0.19 var(--danger-hue) / 0.42), transparent 48%),
+    linear-gradient(180deg, oklch(32% 0.16 var(--danger-hue)), oklch(11% 0.06 var(--danger-hue)));
+  box-shadow: 0 0 24px color-mix(in oklch, var(--danger) 34%, transparent);
+  font-family: "Segoe UI", sans-serif;
+  font-weight: 1000;
+  text-transform: uppercase;
+}
+
+@media (max-width: 980px) {
+  .hero-strip,
+  .ui-kit-grid,
+  .trade-settings-row {
+    grid-template-columns: 1fr;
+  }
+
+  .overlay-layout {
+    padding-left: 0;
+  }
+
+  .floating-spine {
+    position: static;
+    display: flex;
+    margin-bottom: 14px;
+  }
+
+  .floating-spine::before {
+    display: none;
+  }
+
+  .line-mode {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "primary"
+      "chips"
+      "risk"
+      "open";
+  }
+}
