@@ -6,28 +6,42 @@ This folder is the sandbox for Reliquary's possible Nordic/runic identity shift.
 
 `codex/runic-identity-experiment`
 
-## Current Experimental EXE
+## Current Isolated App
 
-The current build to test against is:
+The active experiment is now a runnable isolated Tauri app:
 
-```text
-C:\Projects\Kalandra\src-tauri\target\release\reliquary.exe
+```powershell
+cd C:\Projects\Kalandra\NordicRunicExperimental\app
+npm run tauri:dev
 ```
 
-Use [launch-current-exe.ps1](./launch-current-exe.ps1) to start that build quickly.
+Use [launch-runic-app-dev.ps1](./launch-runic-app-dev.ps1) to start it from this folder.
 
-## Current Runic Prototype
+The production app at `C:\Projects\Kalandra\src` and `C:\Projects\Kalandra\src-tauri` is not imported by this experiment.
 
-Open the isolated prototype directly:
+## Current Experimental EXE
+
+After running `npm run tauri:build` in the app folder, the experimental executable is:
+
+```text
+C:\Projects\Kalandra\NordicRunicExperimental\app\src-tauri\target\release\reliquary-runic-experiment.exe
+```
+
+Use [launch-runic-app-release.ps1](./launch-runic-app-release.ps1) to launch that build.
+
+## Reference Mockups
+
+The older dependency-free presentation is still available as a visual reference:
 
 ```text
 C:\Projects\Kalandra\NordicRunicExperimental\mockups\runic-presentation.html
 ```
 
-This prototype is dependency-free HTML/CSS/JS. It does not modify the production Tauri app.
+It is no longer the active implementation target.
 
 ## Folder Map
 
+- `app/`: runnable isolated Vite + Tauri application for the runic direction.
 - `assets/`: reusable image/vector/source assets that may become production assets.
 - `mockups/`: visual directions, screenshots, and proposed UI treatments.
 - `references/`: rough references, rejected drafts, and inspiration boards.
