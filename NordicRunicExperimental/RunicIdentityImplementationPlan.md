@@ -4,9 +4,9 @@
 
 **Goal:** Build a presentation-ready Nordic relic UI direction for Reliquary inside `NordicRunicExperimental` without touching production app behavior.
 
-**Architecture:** The experiment is a static, dependency-free HTML/CSS presentation kit. It models the future production design as reusable tokens and components first, then shows those components in realistic Reliquary views: scan, trade board, settings, tooltip, and line mode.
+**Architecture:** The experiment is a static, dependency-free HTML/CSS/JS presentation kit. It models the future production design as reusable tokens and components first, then shows those components in realistic Reliquary views: scan, trade board, atlas, campaign, temple, profile, settings, tooltip, and line mode.
 
-**Tech Stack:** Static HTML, CSS custom properties, inline SVG icons, no external dependencies, no production Tauri code changes.
+**Tech Stack:** Static HTML, CSS custom properties, tiny local JavaScript controller, local candidate PNG crops, no external dependencies, no production Tauri code changes.
 
 ---
 
@@ -67,6 +67,12 @@ Recommended asset categories:
 - `icons/`: scan, trade, atlas, temple, profile, settings, warning, database.
 - `textures/`: black iron, carved slate, worn bronze, faint rune etching.
 
+Current candidate source:
+
+- GPT Image 2 atlas sheets live in `NordicRunicExperimental/gptimage/`.
+- `tools/extract_gptimage_assets.py` extracts section and micro-icon candidates into `assets/generated-candidates/gptimage-crops/`.
+- `assets/generated-candidates/gptimage-crops/contact-sheet.png` is the visual review surface for the extracted candidates.
+
 Transparency policy:
 
 - Default generation should use a flat removable chroma-key background, then local alpha removal.
@@ -87,7 +93,7 @@ Review criteria:
 - Create: `NordicRunicExperimental/mockups/runic-presentation.html`
 - Create: `NordicRunicExperimental/mockups/runic-presentation.css`
 
-- [ ] **Step 1: Create the HTML scaffold**
+- [x] **Step 1: Create the HTML scaffold**
 
 Use a single page with these sections:
 
@@ -100,7 +106,7 @@ Use a single page with these sections:
 </main>
 ```
 
-- [ ] **Step 2: Add CSS tokens**
+- [x] **Step 2: Add CSS tokens**
 
 Define the experiment tokens:
 
@@ -117,7 +123,7 @@ Define the experiment tokens:
 }
 ```
 
-- [ ] **Step 3: Implement the frame vocabulary**
+- [x] **Step 3: Implement the frame vocabulary**
 
 Create reusable classes:
 
@@ -132,7 +138,7 @@ Create reusable classes:
 .forged-corner
 ```
 
-- [ ] **Step 4: Verify the page is self-contained**
+- [x] **Step 4: Verify the page is self-contained**
 
 Run:
 
@@ -148,7 +154,7 @@ Expected: no matches.
 - Modify: `NordicRunicExperimental/mockups/runic-presentation.html`
 - Modify: `NordicRunicExperimental/mockups/runic-presentation.css`
 
-- [ ] **Step 1: Build the floating spine sample**
+- [x] **Step 1: Build the floating spine sample**
 
 Use five forged plates:
 
@@ -162,11 +168,11 @@ Use five forged plates:
 </nav>
 ```
 
-- [ ] **Step 2: Build the scan overlay sample**
+- [x] **Step 2: Build the scan overlay sample**
 
 Include title banner, mod rows, tier labels, selected/unselected state, estimated value, and marketplace results.
 
-- [ ] **Step 3: Build the trade/settings samples**
+- [x] **Step 3: Build the trade/settings samples**
 
 Show how the frame system behaves on dense data and controls. Include:
 
@@ -175,7 +181,7 @@ Show how the frame system behaves on dense data and controls. Include:
 - toggles
 - warning state button
 
-- [ ] **Step 4: Build line mode sample**
+- [x] **Step 4: Build line mode sample**
 
 Use the compact Reliquary line mode information shape:
 
@@ -191,11 +197,11 @@ Use the compact Reliquary line mode information shape:
 - Modify: `NordicRunicExperimental/mockups/README.md`
 - Modify: `NordicRunicExperimental/notes/DesignDirection.md`
 
-- [ ] **Step 1: Mark `runic-presentation.html` as the primary mockup**
+- [x] **Step 1: Mark `runic-presentation.html` as the primary mockup**
 
 Document that the previous SVG remains a rough visual branch, while this HTML page is the first inspectable implementation direction.
 
-- [ ] **Step 2: Record production migration notes**
+- [x] **Step 2: Record production migration notes**
 
 Call out which parts can move safely to production:
 
@@ -218,7 +224,7 @@ Call out which parts should wait:
 - Test: `NordicRunicExperimental/mockups/runic-presentation.html`
 - Test: `NordicRunicExperimental/mockups/runic-presentation.css`
 
-- [ ] **Step 1: File existence check**
+- [x] **Step 1: File existence check**
 
 Run:
 
@@ -229,7 +235,7 @@ Test-Path NordicRunicExperimental\mockups\runic-presentation.css
 
 Expected: both commands return `True`.
 
-- [ ] **Step 2: Static dependency check**
+- [x] **Step 2: Static dependency check**
 
 Run:
 
@@ -239,7 +245,7 @@ Select-String -Path NordicRunicExperimental\mockups\runic-presentation.* -Patter
 
 Expected: no matches.
 
-- [ ] **Step 3: Design requirement check**
+- [x] **Step 3: Design requirement check**
 
 Run:
 
@@ -249,7 +255,7 @@ Select-String -Path NordicRunicExperimental\mockups\runic-presentation.css -Patt
 
 Expected: all token/component names are present.
 
-- [ ] **Step 4: Git checkpoint**
+- [x] **Step 4: Git checkpoint**
 
 Run:
 

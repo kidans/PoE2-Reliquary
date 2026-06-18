@@ -16,6 +16,16 @@ C:\Projects\Kalandra\src-tauri\target\release\reliquary.exe
 
 Use [launch-current-exe.ps1](./launch-current-exe.ps1) to start that build quickly.
 
+## Current Runic Prototype
+
+Open the isolated prototype directly:
+
+```text
+C:\Projects\Kalandra\NordicRunicExperimental\mockups\runic-presentation.html
+```
+
+This prototype is dependency-free HTML/CSS/JS. It does not modify the production Tauri app.
+
 ## Folder Map
 
 - `assets/`: reusable image/vector/source assets that may become production assets.

@@ -96,3 +96,28 @@ GSAP is viable as a selective motion layer, but not as a blanket replacement for
 - ceremonial scan/ready state
 
 Avoid permanent loops, large blur animations, and scroll plugins unless a future feature genuinely needs them.
+
+## Implementation Pass 01: Interactive Runic Prototype
+
+Updated `mockups/runic-presentation.html`, `mockups/runic-presentation.css`, and added `mockups/runic-presentation.js`.
+
+This pass turns the direction into an inspectable prototype instead of a static style board:
+
+- seven real tabs: Scan, Trade, Atlas, Campaign, Temple, Profile, Settings
+- selectable scan modifiers with live active-filter count
+- settings controls for hue, transparency, and saturation
+- candidate GPT Image 2 crops used for spine/status/market imagery
+- line-mode, market board, atlas safety, temple grid, and profile samples represented in one shell
+
+What this proves:
+
+- The forged runic language can support Reliquary's actual information density.
+- The user hue setting still works as the primary rune-light accent.
+- The crop atlas can provide useful direction for icon silhouette, but several micro-crops are not production-clean yet.
+- The strongest production path is still CSS-first material and layout, then carefully promoted image assets.
+
+Risks found:
+
+- Generated atlas micro-icons sometimes include labels or surrounding separators, so they need manual cleanup before production.
+- The style can become too ornate quickly; scan text needs to stay almost plain.
+- Some decorative material should remain prototype-only until the Tauri transparency/protrusion problem is solved.
