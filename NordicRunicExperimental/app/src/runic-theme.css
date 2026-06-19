@@ -456,3 +456,333 @@ img[src*="poe2db.tw"] {
     opacity: 1;
   }
 }
+
+/* -------------------------------------------------------------------------
+   Runic identity v2
+   -------------------------------------------------------------------------
+   Structural chrome must not inherit the user hue. The hue slider is only an
+   accent spark: active glyphs, focus rings, tiny glows. The frame itself uses
+   neutral iron, dark stone, and aged bronze so the transparent window edge does
+   not become a visible blue rectangle over the game.
+*/
+
+:root {
+  --runic-iron: #050607;
+  --runic-iron-2: #0a0d0e;
+  --runic-charcoal: #111315;
+  --runic-stone-grain: rgba(255, 255, 255, 0.025);
+  --runic-bronze-edge: rgba(166, 132, 82, 0.58);
+  --runic-bronze-soft: rgba(166, 132, 82, 0.24);
+  --runic-bronze-faint: rgba(166, 132, 82, 0.12);
+  --runic-iron-edge: rgba(128, 139, 138, 0.22);
+  --runic-ink-edge: rgba(0, 0, 0, 0.72);
+  --runic-accent: hsl(var(--accent-hue) 82% 60%);
+  --runic-accent-soft: hsl(var(--accent-hue) 78% 58% / 0.28);
+  --runic-accent-faint: hsl(var(--accent-hue) 78% 58% / 0.12);
+}
+
+body {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(166, 132, 82, 0.05), transparent 30%),
+    radial-gradient(circle at 100% 100%, rgba(128, 139, 138, 0.04), transparent 30%),
+    transparent;
+}
+
+.hud-card {
+  border-color: rgba(13, 16, 17, 0.62);
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.68), transparent 20%, transparent 80%, rgba(0, 0, 0, 0.5)),
+    radial-gradient(circle at 18% 0%, rgba(166, 132, 82, calc(var(--surface-glow-alpha) * 0.55)), transparent 34%),
+    radial-gradient(circle at 96% 12%, rgba(128, 139, 138, calc(var(--surface-glow-alpha) * 0.36)), transparent 32%),
+    linear-gradient(145deg, rgba(9, 12, 12, var(--surface-alpha)), rgba(2, 3, 4, var(--surface-alpha)) 62%),
+    repeating-linear-gradient(33deg, var(--runic-stone-grain) 0 1px, transparent 1px 7px),
+    repeating-linear-gradient(122deg, rgba(166, 132, 82, 0.018) 0 1px, transparent 1px 11px);
+  box-shadow:
+    0 18px 72px rgba(0, 0, 0, calc(var(--surface-alpha) * 0.8)),
+    inset 0 1px 0 rgba(255, 247, 224, calc(var(--surface-alpha) * 0.04)),
+    inset 0 0 0 1px rgba(0, 0, 0, calc(var(--surface-alpha) * 0.72));
+}
+
+.hud-card:not(.is-compact)::before {
+  border-color: var(--runic-bronze-soft);
+  background:
+    linear-gradient(90deg, transparent, var(--runic-bronze-edge), transparent) top / 100% 1px no-repeat,
+    linear-gradient(90deg, transparent, var(--runic-bronze-edge), transparent) bottom / 100% 1px no-repeat,
+    linear-gradient(180deg, transparent, var(--runic-iron-edge), transparent) left / 1px 100% no-repeat,
+    linear-gradient(180deg, transparent, var(--runic-iron-edge), transparent) right / 1px 100% no-repeat;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.56);
+}
+
+.hud-card:not(.is-compact)::after {
+  filter:
+    saturate(0.82)
+    sepia(0.1)
+    drop-shadow(0 0 12px rgba(166, 132, 82, 0.28))
+    drop-shadow(0 0 24px var(--runic-accent-soft));
+}
+
+.hud-header {
+  background:
+    linear-gradient(90deg, rgba(166, 132, 82, 0.12), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent),
+    rgba(3, 5, 5, 0.58);
+  border-bottom-color: var(--runic-bronze-soft);
+  box-shadow:
+    inset 0 -1px 0 rgba(0, 0, 0, 0.84),
+    0 10px 28px rgba(0, 0, 0, 0.26);
+}
+
+.hud-card:not(.is-compact) .brand-title {
+  color: #e8dfcf;
+  font-family: "OptimusPrinceps", "Boska", serif;
+  font-size: 24px;
+  letter-spacing: 0.18em;
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.92),
+    0 0 12px rgba(166, 132, 82, 0.24);
+}
+
+.hud-card:not(.is-compact) .zone-label {
+  color: rgba(214, 198, 168, 0.76);
+}
+
+.league-select,
+.chrome-button,
+.action-button,
+.filter-button,
+.settings-reset-button,
+.copy-note-button,
+.line-preview-button,
+.market-board-period-button,
+.exchange-icon-button,
+.profile-import-button {
+  border-color: var(--runic-bronze-soft);
+  background:
+    linear-gradient(180deg, rgba(35, 30, 23, 0.84), rgba(4, 6, 6, 0.9)),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.022) 0 1px, transparent 1px 8px);
+  color: #e4d6bd;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 247, 224, 0.035),
+    0 0 0 1px rgba(0, 0, 0, 0.46);
+}
+
+.league-select:focus,
+.chrome-button:hover,
+.action-button:hover,
+.filter-button:hover,
+.market-board-period-button:hover,
+.exchange-icon-button:hover,
+.profile-import-button:hover {
+  border-color: color-mix(in srgb, var(--runic-accent) 52%, #b99a62);
+  color: #f1e8d6;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 247, 224, 0.055),
+    0 0 14px var(--runic-accent-soft),
+    0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.tab-row::before {
+  background:
+    linear-gradient(180deg, transparent, rgba(166, 132, 82, 0.35) 12%, rgba(128, 139, 138, 0.34) 50%, rgba(166, 132, 82, 0.35) 88%, transparent);
+  box-shadow:
+    0 0 8px rgba(166, 132, 82, 0.18),
+    0 0 1px rgba(0, 0, 0, 0.9);
+}
+
+.tab-button {
+  border-color: rgba(166, 132, 82, 0.3);
+  background:
+    linear-gradient(135deg, transparent 0 10px, rgba(0, 0, 0, 0.36) 10px),
+    radial-gradient(circle at 50% 18%, rgba(166, 132, 82, 0.14), transparent 42%),
+    linear-gradient(180deg, rgba(32, 27, 21, 0.96), rgba(5, 7, 7, 0.98));
+  color: #c9c0ac;
+}
+
+.tab-button:hover,
+.tab-button.is-active {
+  border-color: color-mix(in srgb, var(--runic-accent) 42%, #b99a62);
+  background:
+    linear-gradient(135deg, transparent 0 10px, rgba(0, 0, 0, 0.28) 10px),
+    radial-gradient(circle at 50% 18%, var(--runic-accent-soft), transparent 42%),
+    linear-gradient(180deg, rgba(42, 35, 25, 0.98), rgba(7, 10, 10, 0.99));
+  color: #f2eadb;
+}
+
+.reliquary-glyph .glyph-accent,
+.reliquary-glyph .glyph-fill {
+  stroke: var(--runic-accent);
+}
+
+.reliquary-glyph .glyph-fill {
+  fill: var(--runic-accent-faint);
+}
+
+.content-card,
+.scan-panel,
+.market-card,
+.settings-field,
+.settings-hero,
+.profile-card,
+.atlas-card,
+.temple-panel,
+.data-card,
+.campaign-card,
+.listing-preview-shell,
+.profile-hero {
+  position: relative;
+  border-color: rgba(166, 132, 82, 0.32);
+  background:
+    linear-gradient(145deg, rgba(166, 132, 82, 0.08), transparent 36%),
+    radial-gradient(circle at 98% 0%, rgba(128, 139, 138, 0.06), transparent 28%),
+    linear-gradient(180deg, rgba(6, 8, 8, 0.94), rgba(2, 3, 4, 0.95)),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 11px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 247, 224, 0.018),
+    inset 0 0 36px rgba(0, 0, 0, 0.58),
+    0 0 0 1px rgba(0, 0, 0, 0.36);
+}
+
+.profile-hero::before,
+.profile-card::before,
+.settings-field::before,
+.data-card::before,
+.atlas-card::before,
+.temple-panel::before,
+.market-card::before,
+.content-card::before,
+.scan-panel::before {
+  position: absolute;
+  inset: 9px;
+  pointer-events: none;
+  content: "";
+  border-top: 1px solid rgba(166, 132, 82, 0.13);
+  border-bottom: 1px solid rgba(166, 132, 82, 0.08);
+  opacity: 0.72;
+}
+
+.profile-hero::after,
+.profile-card::after,
+.settings-field::after,
+.data-card::after,
+.atlas-card::after,
+.temple-panel::after,
+.market-card::after,
+.content-card::after,
+.scan-panel::after {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 46px;
+  height: 10px;
+  pointer-events: none;
+  content: "";
+  opacity: 0.52;
+  background:
+    linear-gradient(90deg, transparent, rgba(166, 132, 82, 0.52), transparent) center / 100% 1px no-repeat,
+    radial-gradient(circle at 50% 50%, var(--runic-accent-soft) 0 2px, transparent 3px);
+}
+
+.screen-heading,
+.settings-hero h2,
+.trade-market-header h2,
+.profile-name,
+.profile-hero h2,
+.estimated-value-title,
+.item-title {
+  color: #e7ddcb;
+  font-family: "OptimusPrinceps", "Boska", serif;
+  text-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.94),
+    0 0 12px rgba(166, 132, 82, 0.14);
+}
+
+.section-kicker,
+.settings-kicker,
+.market-source-label,
+.estimated-value-title,
+.field-label,
+.profile-league {
+  color: #bba06d;
+}
+
+.profile-card h3,
+.section-kicker,
+.settings-kicker,
+.field-label {
+  color: #bba06d;
+  font-family: "FontinSmallCaps", "Boska", serif;
+  letter-spacing: 0.18em;
+}
+
+.build-fingerprint-card,
+.value-summary,
+.estimated-value-card,
+.market-board-empty,
+.ocr-evidence-box,
+.atlas-next-action {
+  border-color: rgba(166, 132, 82, 0.28);
+  background:
+    linear-gradient(135deg, rgba(166, 132, 82, 0.08), rgba(3, 4, 5, 0.86)),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.015) 0 1px, transparent 1px 9px);
+}
+
+.profile-pills span,
+.profile-pill,
+.item-tags span,
+.compact-indicator,
+.status-pill,
+.hazard-pill {
+  border-color: rgba(166, 132, 82, 0.34);
+  background:
+    linear-gradient(180deg, rgba(32, 27, 20, 0.82), rgba(4, 6, 6, 0.86));
+  color: #e4d8c4;
+}
+
+.profile-pills span:hover,
+.profile-pill:hover,
+.profile-pill.is-active,
+.compact-indicator.is-active,
+.status-pill.is-active,
+.hazard-pill.is-active {
+  border-color: color-mix(in srgb, var(--runic-accent) 48%, #b99a62);
+  box-shadow: 0 0 14px var(--runic-accent-soft);
+}
+
+.trade-category-button,
+.exchange-category-button,
+.settings-reset-button,
+.profile-import-button,
+.market-board-period-button {
+  border-color: rgba(166, 132, 82, 0.34);
+  background:
+    linear-gradient(180deg, rgba(32, 27, 20, 0.9), rgba(5, 7, 7, 0.94));
+}
+
+.trade-category-button.is-active,
+.exchange-category-button.is-active,
+.market-board-period-button.is-active {
+  border-color: color-mix(in srgb, var(--runic-accent) 48%, #b99a62);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 247, 224, 0.05),
+    0 0 16px var(--runic-accent-soft);
+}
+
+.compact-strip {
+  border-color: color-mix(in srgb, var(--compact-alert-color) 46%, rgba(166, 132, 82, 0.52));
+  background:
+    radial-gradient(circle at 100% 50%, color-mix(in srgb, var(--compact-alert-color) 20%, transparent) 0, transparent 52%),
+    linear-gradient(90deg, rgba(3, 5, 6, 0.96), rgba(11, 13, 13, 0.95) 52%, color-mix(in srgb, var(--compact-alert-color) 14%, rgba(4, 6, 8, 0.96))),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 8px);
+}
+
+.compact-indicator {
+  border-color: rgba(166, 132, 82, 0.36);
+}
+
+.market-row:hover,
+.exchange-row:hover,
+.listing-row:hover {
+  background:
+    linear-gradient(90deg, rgba(166, 132, 82, 0.12), transparent 70%),
+    rgba(255, 255, 255, 0.02);
+}
