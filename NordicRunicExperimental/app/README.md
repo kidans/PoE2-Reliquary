@@ -52,3 +52,7 @@ C:\Projects\Kalandra\NordicRunicExperimental\launch-runic-app-release.ps1
 - Rust/Tauri backend modules
 
 The goal is to judge the runic identity on the real application instead of approving a pretty fake.
+
+## Game Asset Safeguard
+
+The runic experiment must not replace, recolor, filter, or mask game-established assets. Currency icons, item icons, class/profile portraits, temple room icons, PoE.ninja/PoE2DB art, and faithful local mirrors stay visually original. The active theme layer in `src/runic-theme.css` protects those selectors and should only style Reliquary UI chrome: panels, tabs, borders, buttons, typography, motion, and decorative surfaces.

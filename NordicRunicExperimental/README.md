@@ -53,5 +53,7 @@ It is not the active implementation target.
 - Keep OLED black and user-controlled hue customization.
 - Keep red reserved for warnings, errors, destructive actions, and critical risk.
 - Preserve item rarity banner colors exactly.
+- Never theme over game-established assets: currency icons, item icons, class/profile portraits, temple room icons, PoE.ninja/PoE2DB item art, or any faithful local mirror of those assets.
+- Only the UI/UX shell is experimental: panels, borders, tabs, typography, motion, surfaces, separators, buttons, and decorative chrome.
 - Avoid Viking cosplay, horned helmets, generic fantasy knots, and unreadable runic text.
 - Use runic details as structure and ornament, not as functional UI copy.
