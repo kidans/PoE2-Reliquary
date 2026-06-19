@@ -1124,3 +1124,172 @@ body {
   filter: none !important;
   mix-blend-mode: normal !important;
 }
+
+/*
+  Generated asset-backed cards
+  ----------------------------
+  The runic asset pack frames are opaque crops, so they live as under-content
+  frame/texture layers. They give the app the generated-card look without
+  covering text or replacing game imagery.
+*/
+:root {
+  --runic-card-frame: url("/runic/card-medium.png");
+  --runic-card-frame-small: url("/runic/card-small.png");
+}
+
+:where(
+  .content-card,
+  .scan-panel,
+  .evaluate-card,
+  .estimate-card,
+  .empty-state,
+  .scan-waiting-state,
+  .listing-preview-shell,
+  .listing-preview-card,
+  .trade-market,
+  .trade-market-main,
+  .trade-sidebar,
+  .trade-table-shell,
+  .market-board-main,
+  .market-board-state,
+  .market-mover-column,
+  .settings-panel,
+  .settings-hero,
+  .settings-field,
+  .profile-hero,
+  .profile-card,
+  .atlas-card,
+  .atlas-stat-card,
+  .atlas-profile-card,
+  .atlas-empty-state,
+  .atlas-ocr-evidence,
+  .campaign-panel,
+  .campaign-main,
+  .campaign-sidebar,
+  .campaign-map-card,
+  .data-source-card,
+  .temple-panel,
+  .temple-sidebar,
+  .temple-board-shell,
+  .temple-inspector-card,
+  .temple-save-card,
+  .temple-destabilization-card,
+  .temple-cell-info,
+  .temple-effect-group
+) {
+  border-color: rgba(117, 98, 70, 0.56) !important;
+  background:
+    linear-gradient(180deg, rgba(6, 7, 7, 0.96), rgba(1, 2, 3, 0.96)),
+    radial-gradient(circle at 12% 6%, rgba(148, 122, 82, 0.12), transparent 32%),
+    radial-gradient(circle at 100% 10%, var(--runic-accent-faint), transparent 34%) !important;
+}
+
+:where(
+  .content-card,
+  .scan-panel,
+  .evaluate-card,
+  .estimate-card,
+  .empty-state,
+  .scan-waiting-state,
+  .listing-preview-shell,
+  .listing-preview-card,
+  .trade-market,
+  .trade-market-main,
+  .trade-sidebar,
+  .trade-table-shell,
+  .market-board-main,
+  .market-board-state,
+  .market-mover-column,
+  .settings-panel,
+  .settings-hero,
+  .settings-field,
+  .profile-hero,
+  .profile-card,
+  .atlas-card,
+  .atlas-stat-card,
+  .atlas-profile-card,
+  .atlas-empty-state,
+  .atlas-ocr-evidence,
+  .campaign-panel,
+  .campaign-main,
+  .campaign-sidebar,
+  .campaign-map-card,
+  .data-source-card,
+  .temple-panel,
+  .temple-sidebar,
+  .temple-board-shell,
+  .temple-inspector-card,
+  .temple-save-card,
+  .temple-destabilization-card,
+  .temple-cell-info,
+  .temple-effect-group
+)::before {
+  inset: -1px;
+  border: 0;
+  border-radius: inherit;
+  background-image:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.24), transparent 28%, rgba(0, 0, 0, 0.2)),
+    var(--runic-card-frame);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  opacity: 0.72;
+}
+
+:where(
+  .settings-field,
+  .atlas-stat-card,
+  .atlas-profile-card,
+  .campaign-map-card,
+  .market-column-empty,
+  .market-board-state,
+  .temple-save-card,
+  .temple-destabilization-card,
+  .temple-effect-group,
+  .temple-cell-info,
+  .listing-preview-card
+)::before {
+  background-image:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.22), transparent 30%, rgba(0, 0, 0, 0.18)),
+    var(--runic-card-frame-small);
+}
+
+:where(
+  .content-card,
+  .scan-panel,
+  .evaluate-card,
+  .estimate-card,
+  .empty-state,
+  .scan-waiting-state,
+  .listing-preview-shell,
+  .listing-preview-card,
+  .trade-market,
+  .trade-market-main,
+  .trade-sidebar,
+  .trade-table-shell,
+  .market-board-main,
+  .market-mover-column,
+  .settings-panel,
+  .settings-hero,
+  .settings-field,
+  .profile-hero,
+  .profile-card,
+  .atlas-card,
+  .atlas-stat-card,
+  .atlas-profile-card,
+  .atlas-empty-state,
+  .campaign-panel,
+  .campaign-main,
+  .campaign-sidebar,
+  .campaign-map-card,
+  .data-source-card,
+  .temple-panel,
+  .temple-sidebar,
+  .temple-board-shell,
+  .temple-inspector-card,
+  .temple-save-card,
+  .temple-destabilization-card,
+  .temple-cell-info
+)::after {
+  opacity: 0.34;
+}
