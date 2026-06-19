@@ -1,6 +1,8 @@
 # Reliquary Runic Experiment App
 
-This is the isolated runnable desktop app for the Nordic/runic identity exploration. It is intentionally separate from the production Reliquary app at the repository root.
+This folder is an isolated copy of the actual Reliquary application with the Nordic/runic theme layered on top.
+
+It is not a presentation mockup. It contains the real Reliquary frontend modules, public assets, Supabase shared market logic, scripts, and Tauri/Rust backend copied from the repository root. The visual experiment enters through `src/runic-theme.css` and the isolated app identity/port changes.
 
 ## Run
 
@@ -9,23 +11,44 @@ cd C:\Projects\Kalandra\NordicRunicExperimental\app
 npm run tauri:dev
 ```
 
-## Build
+## Build The Test EXE
+
+Use the no-bundle build while this is experimental. It produces the desktop executable without spending extra time on installers.
 
 ```powershell
 cd C:\Projects\Kalandra\NordicRunicExperimental\app
-npm run build
-npm run tauri:build
+npm run tauri -- build --no-bundle
 ```
 
-The built executable lands at:
+The executable lands at:
 
 ```text
 C:\Projects\Kalandra\NordicRunicExperimental\app\src-tauri\target\release\reliquary-runic-experiment.exe
 ```
 
-## Scope
+You can also launch the latest built executable from the parent folder:
 
-- The frontend is a standalone Vite app in `src/`.
-- The desktop shell is a standalone Tauri 2 app in `src-tauri/`.
-- Production source files under `C:\Projects\Kalandra\src` and `C:\Projects\Kalandra\src-tauri` are not imported or modified.
-- Current data is intentionally mocked so we can refine identity, motion, and layout before integrating live Reliquary services.
+```powershell
+C:\Projects\Kalandra\NordicRunicExperimental\launch-runic-app-release.ps1
+```
+
+## What Is Isolated
+
+- Tauri identifier: `com.reliquary.runic-experiment`
+- Dev server port: `5177`
+- Package name: `reliquary-runic-experiment`
+- Visual settings storage key: `reliquary.runic.ui.settings`
+- Build output stays under `NordicRunicExperimental\app\src-tauri\target`
+
+## What Is Still Real Reliquary
+
+- Scan/evaluate logic
+- Trade tab and market board logic
+- Atlas/OCR/map tracking logic
+- Campaign guide
+- Profile import path
+- Temple planner
+- Settings/hotkey UI
+- Rust/Tauri backend modules
+
+The goal is to judge the runic identity on the real application instead of approving a pretty fake.

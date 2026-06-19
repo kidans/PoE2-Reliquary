@@ -1,0 +1,298 @@
+/*
+  Nordic Runic Experiment
+  -----------------------
+  This file is intentionally layered after the real Reliquary stylesheet.
+  Keep app behavior in the copied production modules; keep visual experiment
+  decisions here so the theme can be promoted or deleted cleanly.
+*/
+
+:root {
+  --ink: #010304;
+  --coal: #030607;
+  --char: #071011;
+  --vellum: #e7dfd0;
+  --vellum-muted: #a99f91;
+  --vellum-dim: #6f786f;
+  --gold: #7f6a47;
+  --gold-bright: #c5a56e;
+  --gold-deep: #241b12;
+  --accent-hue: 202;
+  --danger: #bd3035;
+  --danger-bright: #ff5d66;
+  --danger-wash: #22070a;
+  --safe: #7ecf8d;
+  --safe-wash: #0b2116;
+  --runic-blue: #43d5ff;
+  --runic-ice: #a8eeff;
+  --runic-bronze: #a17b4c;
+  --runic-bronze-dim: #5b4630;
+  --runic-stone: #111819;
+  --runic-stone-2: #080d0f;
+  --runic-border: hsl(var(--accent-hue) 82% 55% / 0.62);
+  --runic-border-soft: hsl(var(--accent-hue) 62% 42% / 0.28);
+  --line: hsl(var(--accent-hue) 76% 58% / 0.28);
+  --line-strong: hsl(var(--accent-hue) 82% 58% / 0.64);
+  --selection-blue: #5a75c9;
+  --selection-blue-soft: rgba(74, 101, 172, 0.44);
+  --selection-blue-strong: rgba(79, 111, 202, 0.94);
+}
+
+body {
+  background:
+    radial-gradient(circle at 12% 0%, hsl(var(--accent-hue) 84% 40% / 0.1), transparent 28%),
+    radial-gradient(circle at 100% 100%, rgba(155, 112, 58, 0.12), transparent 30%),
+    transparent;
+}
+
+.hud-card {
+  border-color: hsl(var(--accent-hue) 82% 58% / calc(var(--surface-alpha) * 0.7));
+  background:
+    radial-gradient(circle at 18% 0%, hsl(var(--accent-hue) 80% 50% / calc(var(--surface-glow-alpha) * 0.85)), transparent 34%),
+    radial-gradient(circle at 98% 10%, rgba(161, 123, 76, calc(var(--surface-glow-alpha) * 0.9)), transparent 28%),
+    linear-gradient(135deg, rgba(24, 34, 35, var(--surface-alpha)), rgba(3, 5, 6, var(--surface-alpha)) 58%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 9px);
+  box-shadow:
+    0 18px 72px rgba(0, 0, 0, calc(var(--surface-alpha) * 0.78)),
+    0 0 26px hsl(var(--accent-hue) 90% 48% / 0.16),
+    inset 0 1px 0 hsl(var(--accent-hue) 80% 86% / calc(var(--surface-alpha) * 0.12)),
+    inset 0 0 0 1px hsl(var(--accent-hue) 58% 20% / calc(var(--surface-alpha) * 0.86));
+}
+
+.hud-card:not(.is-compact)::before {
+  position: absolute;
+  inset: 7px;
+  z-index: 0;
+  pointer-events: none;
+  content: "";
+  border: 1px solid hsl(var(--accent-hue) 58% 42% / 0.18);
+  background:
+    linear-gradient(90deg, transparent, hsl(var(--accent-hue) 70% 58% / 0.12), transparent) top / 100% 1px no-repeat,
+    linear-gradient(90deg, transparent, rgba(197, 165, 110, 0.28), transparent) bottom / 100% 1px no-repeat;
+}
+
+.hud-card:not(.is-compact)::after {
+  opacity: calc(var(--surface-alpha) * 0.88);
+  filter:
+    saturate(0.76)
+    hue-rotate(calc((var(--accent-hue) - 355) * 1deg))
+    drop-shadow(0 0 12px hsl(var(--accent-hue) 90% 56% / 0.32));
+}
+
+.hud-header {
+  background:
+    linear-gradient(90deg, hsl(var(--accent-hue) 78% 26% / 0.18), transparent 45%),
+    rgba(2, 5, 6, 0.42);
+  border-bottom-color: hsl(var(--accent-hue) 74% 56% / 0.22);
+}
+
+.brand-title {
+  color: var(--vellum);
+  letter-spacing: 0.2em;
+  text-shadow:
+    0 0 14px hsl(var(--accent-hue) 90% 62% / 0.28),
+    0 1px 0 rgba(0, 0, 0, 0.9);
+}
+
+.zone-label {
+  color: #d7c7a8;
+  letter-spacing: 0.12em;
+}
+
+.league-select,
+.chrome-button,
+.action-button,
+.filter-button,
+.settings-reset-button,
+.copy-note-button,
+.line-preview-button,
+.market-board-period-button,
+.exchange-icon-button,
+.profile-import-button {
+  border-color: hsl(var(--accent-hue) 78% 58% / 0.56);
+  background:
+    linear-gradient(180deg, hsl(var(--accent-hue) 64% 18% / 0.56), rgba(4, 6, 7, 0.82));
+  color: var(--runic-ice);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035),
+    0 0 14px hsl(var(--accent-hue) 80% 48% / 0.16);
+}
+
+.chrome-button:hover,
+.action-button:hover,
+.filter-button:hover,
+.market-board-period-button:hover,
+.exchange-icon-button:hover,
+.profile-import-button:hover {
+  border-color: var(--runic-ice);
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--accent-hue) 100% 82% / 0.12),
+    0 0 18px hsl(var(--accent-hue) 90% 58% / 0.3);
+}
+
+.tab-row {
+  border-color: hsl(var(--accent-hue) 78% 58% / 0.42);
+  background:
+    linear-gradient(180deg, rgba(7, 18, 21, 0.84), rgba(3, 5, 6, 0.88)),
+    radial-gradient(circle at 50% 0%, hsl(var(--accent-hue) 80% 54% / 0.16), transparent 62%);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 10px 28px rgba(0, 0, 0, 0.38);
+}
+
+.tab-button {
+  color: #d7d1c4;
+}
+
+.tab-button::before {
+  background:
+    radial-gradient(circle, hsl(var(--accent-hue) 96% 62% / 0.26), transparent 58%);
+}
+
+.tab-button:hover,
+.tab-button.is-active {
+  color: var(--runic-ice);
+}
+
+.tab-button.is-active .tab-icon,
+.tab-button:hover .tab-icon {
+  filter:
+    drop-shadow(0 0 8px hsl(var(--accent-hue) 100% 68% / 0.64))
+    drop-shadow(0 0 18px hsl(var(--accent-hue) 100% 52% / 0.24));
+}
+
+.reliquary-glyph .glyph-line,
+.reliquary-glyph .glyph-frame {
+  stroke: currentColor;
+}
+
+.reliquary-glyph .glyph-accent,
+.reliquary-glyph .glyph-fill {
+  stroke: var(--runic-bronze);
+  fill: hsl(var(--accent-hue) 72% 48% / 0.16);
+}
+
+.content-card,
+.scan-panel,
+.market-card,
+.settings-field,
+.settings-hero,
+.profile-card,
+.atlas-card,
+.temple-panel,
+.data-card,
+.campaign-card,
+.listing-preview-shell {
+  border-color: hsl(var(--accent-hue) 78% 56% / 0.34);
+  background:
+    linear-gradient(145deg, hsl(var(--accent-hue) 72% 20% / 0.08), transparent 42%),
+    linear-gradient(180deg, rgba(5, 9, 10, 0.88), rgba(2, 3, 4, 0.9));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.018),
+    inset 0 0 36px rgba(0, 0, 0, 0.54);
+}
+
+.screen-heading,
+.section-title,
+.settings-hero h2,
+.trade-market-header h2,
+.profile-name,
+.estimated-value-title,
+.item-title {
+  color: var(--vellum);
+  text-shadow: 0 0 14px hsl(var(--accent-hue) 80% 60% / 0.14);
+}
+
+.section-kicker,
+.settings-kicker,
+.market-source-label,
+.estimated-value-title,
+.field-label {
+  color: var(--runic-ice);
+}
+
+.value-summary,
+.estimated-value-card,
+.market-board-empty,
+.ocr-evidence-box,
+.atlas-next-action,
+.build-fingerprint-card {
+  border-color: hsl(var(--accent-hue) 82% 58% / 0.36);
+  background:
+    linear-gradient(135deg, hsl(var(--accent-hue) 60% 12% / 0.24), rgba(2, 3, 4, 0.82));
+}
+
+.market-mover-panel.winners,
+.compact-indicator-r {
+  --compact-alert-color: #48e58f;
+}
+
+.market-mover-panel.losers {
+  border-left-color: var(--danger-bright);
+}
+
+.compact-strip {
+  border-color: color-mix(in srgb, var(--compact-alert-color) 62%, var(--runic-border));
+  background:
+    radial-gradient(circle at 100% 50%, color-mix(in srgb, var(--compact-alert-color) 28%, transparent) 0, transparent 52%),
+    linear-gradient(90deg, rgba(2, 5, 7, 0.94), rgba(7, 13, 15, 0.92) 55%, color-mix(in srgb, var(--compact-alert-color) 18%, rgba(4, 6, 8, 0.94)));
+}
+
+.compact-indicator {
+  border-color: color-mix(in srgb, var(--compact-alert-color) 46%, var(--runic-border));
+  background: rgba(2, 5, 6, 0.84);
+}
+
+.settings-field input[type="range"] {
+  accent-color: var(--runic-blue);
+}
+
+.item-banner-frame,
+.frame-strip {
+  filter: saturate(0.88) contrast(1.08);
+}
+
+.market-row:hover,
+.exchange-row:hover,
+.listing-row:hover {
+  background:
+    linear-gradient(90deg, hsl(var(--accent-hue) 82% 48% / 0.16), transparent 70%),
+    rgba(255, 255, 255, 0.025);
+}
+
+.danger,
+.risk-critical,
+.risk-danger,
+.status-error,
+.warning-text {
+  color: var(--danger-bright);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tab-button.is-active .tab-icon {
+    animation: runic-glyph-breathe 2.8s ease-in-out infinite;
+  }
+
+  .hud-card:not(.is-compact)::before {
+    animation: runic-frame-sheen 6s ease-in-out infinite;
+  }
+}
+
+@keyframes runic-glyph-breathe {
+  0%,
+  100% {
+    transform: translateZ(0) scale(1);
+  }
+  50% {
+    transform: translateZ(0) scale(1.045);
+  }
+}
+
+@keyframes runic-frame-sheen {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+  50% {
+    opacity: 1;
+  }
+}

@@ -8,7 +8,7 @@ This folder is the sandbox for Reliquary's possible Nordic/runic identity shift.
 
 ## Current Isolated App
 
-The active experiment is now a runnable isolated Tauri app:
+The active experiment is now an isolated copy of the real Reliquary Tauri app with the Nordic/runic theme layered on top:
 
 ```powershell
 cd C:\Projects\Kalandra\NordicRunicExperimental\app
@@ -17,11 +17,11 @@ npm run tauri:dev
 
 Use [launch-runic-app-dev.ps1](./launch-runic-app-dev.ps1) to start it from this folder.
 
-The production app at `C:\Projects\Kalandra\src` and `C:\Projects\Kalandra\src-tauri` is not imported by this experiment.
+The production app at `C:\Projects\Kalandra\src` and `C:\Projects\Kalandra\src-tauri` is not modified by this experiment. The isolated app carries its own copied `src`, `public`, `src-tauri`, `scripts`, and `supabase` folders.
 
 ## Current Experimental EXE
 
-After running `npm run tauri:build` in the app folder, the experimental executable is:
+After running `npm run tauri -- build --no-bundle` in the app folder, the experimental executable is:
 
 ```text
 C:\Projects\Kalandra\NordicRunicExperimental\app\src-tauri\target\release\reliquary-runic-experiment.exe
@@ -31,17 +31,17 @@ Use [launch-runic-app-release.ps1](./launch-runic-app-release.ps1) to launch tha
 
 ## Reference Mockups
 
-The older dependency-free presentation is still available as a visual reference:
+The older dependency-free presentation is still available as a visual reference only:
 
 ```text
 C:\Projects\Kalandra\NordicRunicExperimental\mockups\runic-presentation.html
 ```
 
-It is no longer the active implementation target.
+It is not the active implementation target.
 
 ## Folder Map
 
-- `app/`: runnable isolated Vite + Tauri application for the runic direction.
+- `app/`: isolated copy of the real Reliquary Vite + Tauri application for the runic direction.
 - `assets/`: reusable image/vector/source assets that may become production assets.
 - `mockups/`: visual directions, screenshots, and proposed UI treatments.
 - `references/`: rough references, rejected drafts, and inspiration boards.

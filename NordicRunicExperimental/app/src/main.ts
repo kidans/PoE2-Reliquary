@@ -1,425 +1,6855 @@
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import {
+  PRICE_PROFILES,
+  activeFilterSignature,
+  activePriceFiltersForSelection,
+  appliedSpecKeySet,
+  cleanTradeMarkup,
+  filteredListingRanks,
+  hardPriceFiltersForSelection,
+  isItemValueModifier,
+  itemProfile,
+  itemSpecs,
+  listingMatchesSelectedPriceOption,
+  priceProfileLabel,
+  profileSpecKeySet,
+  specTemplate,
+  type CurrencyMeta,
+  type ItemSpec,
+  type ListingRank,
+  type Poe2DbDataSnapshot,
+  type PriceCheck,
+  type PriceFilter,
+  type PriceListing,
+  type PriceProfileId,
+  type ScannedItem,
+  type TradeRateLimit,
+} from "./evaluate";
+import guideData from "./campaign-guide.json";
+import {
+  createTempleLayout,
+  getTempleCellByKey,
+  parseTempleLayout,
+  serializeTempleLayout,
+  setTempleCellLocked,
+  setTempleManualTier,
+  setTempleRoom,
+  simulateDestabilization,
+  TEMPLE_STORAGE_KEY,
+  templeCellKey,
+  templeSummary,
+  validateTemplePlacement,
+  type TempleDestabilizationOptions,
+  type TempleDestabilizationResult,
+  type TempleLayoutState,
+} from "./temple-engine";
+import { renderTemplePanel } from "./temple-view";
+import { TEMPLE_ROOMS, type TempleRoomId, type TempleTier } from "./temple-data";
+import {
+  atlasCompactLineState,
+  type AtlasCompactIndicator,
+  type AtlasCompactLineState,
+  type AtlasCompactSeverity,
+} from "./atlas-line-mode";
+import {
+  exchangeWatchlistFocusCategoryIds,
+  isExchangeWatchlistPinned,
+  normalizeExchangeWatchlistState,
+  pinExchangeWatchlistEntry,
+  unpinExchangeWatchlistEntry,
+  type ExchangeWatchlistEntrySource,
+  type ExchangeWatchlistPin,
+  type ExchangeWatchlistState,
+} from "./exchange-watchlist";
+import {
+  MARKET_INITIAL_ROWS,
+  MARKET_ROW_INCREMENT,
+  marketBaselineMessage,
+  readTradeViewPreference,
+  scrollableMarketMovers,
+  writeTradeViewPreference,
+  type MarketBoardDataset,
+  type MarketConfidence,
+  type MarketDirection,
+  type MarketMover,
+  type TradeSubView,
+} from "./market-board";
+import { loadMarketBoardDataset, type MarketFeedResult } from "./market-feed";
+import {
+  clearAtlasRunHistory as clearAtlasRunHistoryStorage,
+  completeAtlasRun as completeAtlasRunRecord,
+  incrementAtlasRunDeaths as incrementAtlasRunDeathsRecord,
+  loadAtlasRunHistory as loadAtlasRunHistoryStorage,
+  saveAtlasRunHistory as saveAtlasRunHistoryStorage,
+  upsertAtlasRun as upsertAtlasRunRecord,
+  type AtlasRunRecord,
+  type MapRunConfidence,
+} from "./atlas-run-history";
 import "./styles.css";
+import "./runic-theme.css";
+import { DEFAULT_APP_SETTINGS, type AppSettings } from "./app-settings";
+import {
+  shouldAnimateTabTransition,
+  tabMotionDirection,
+  type MotionTabId,
+} from "./ui-motion";
 
-type TabId = "scan" | "trade" | "atlas" | "temple" | "profile" | "settings";
-
-type NavItem = {
-  id: TabId;
-  label: string;
-  icon: string;
-  sub: string;
+type GuideStep = {
+  text: string;
+  loc?: string | null;
+  reward?: string | null;
+  tags: string[];
 };
 
-type MarketRow = {
+type GuideZone = {
   name: string;
-  family: string;
-  price: string;
-  change: string;
-  trend: "up" | "down";
+  level: string;
+  waypoint: boolean;
+  town: boolean;
+  steps: GuideStep[];
 };
 
-type TempleNode = {
-  x: number;
-  y: number;
-  state: "empty" | "path" | "reward" | "danger" | "boss";
-  label?: string;
+type GuideAct = {
+  act: number;
+  name: string;
+  level_range: string;
+  rewards: string[];
+  zones: GuideZone[];
 };
 
-const navItems: NavItem[] = [
-  { id: "scan", label: "Scan", icon: "micro_status_ocr.png", sub: "price check" },
-  { id: "trade", label: "Trade", icon: "micro_market_board.png", sub: "market tape" },
-  { id: "atlas", label: "Atlas", icon: "micro_status_waystone.png", sub: "run context" },
-  { id: "temple", label: "Temple", icon: "micro_status_shrine.png", sub: "incursion" },
-  { id: "profile", label: "Profile", icon: "micro_hazard_shield.png", sub: "build sync" },
-  { id: "settings", label: "Settings", icon: "micro_utility_filter.png", sub: "overlay feel" }
-];
+type TabId = "profile" | "scan" | "trade" | "campaign" | "atlas" | "data" | "settings" | "temple";
+type CampaignSubTab = "timer" | "map-runs";
 
-const marketRows: MarketRow[] = [
-  { name: "Architect's Orb", family: "Currency", price: "1.54 divine", change: "+33.9%", trend: "up" },
-  { name: "Ancient Rune of the Titan", family: "Runes", price: "0.02 divine", change: "+36.2%", trend: "up" },
-  { name: "Atmohua's Soul Core", family: "Soul Cores", price: "0.04 divine", change: "+28.6%", trend: "up" },
-  { name: "Fenumus' Rune of Draining", family: "Runes", price: "0.02 divine", change: "-34.9%", trend: "down" },
-  { name: "Amanamu's Tithe", family: "Lineage Gems", price: "2.30 divine", change: "-24.6%", trend: "down" },
-  { name: "Omen of the Ancients", family: "Omens", price: "0.03 divine", change: "-7.6%", trend: "down" }
-];
+type CurrentAreaInfo = {
+  name: string;
+  area_level: number | null;
+  area_type: string;
+  entered_at_epoch_ms: number;
+  act: number | null;
+  waystone_mod_count: number | null;
+  waystone_quantity: number | null;
+  waystone_rarity: number | null;
+  waystone_pack_size: number | null;
+  waystone_hazard_count: number | null;
+  boss: string | null;
+};
 
-const templeNodes: TempleNode[] = Array.from({ length: 61 }, (_, index): TempleNode => {
-  const row = Math.floor(index / 9);
-  const col = index % 9;
-  const centerOffset = Math.abs(4 - row);
-  return {
-    x: col - 4,
-    y: row - 3,
-    state: col < centerOffset || col > 8 - centerOffset ? "empty" : "path"
+type MapOcrEvidenceState = "none" | "pending" | "partial" | "confirmed" | "locked";
+
+type HazardSummary = {
+  info: number;
+  warning: number;
+  danger: number;
+  build_breaking: number;
+};
+
+type WaystoneHazardWarning = {
+  modifier: string;
+  matched_pattern: string;
+  severity: "info" | "warning" | "danger" | "build_breaking";
+  profile_id: string;
+  profile_label: string;
+  reason: string;
+};
+
+type WaystoneSnapshot = {
+  name: string;
+  base_type: string | null;
+  tier: number | null;
+  item_level: number | null;
+  explicit_mods: string[];
+  quantity: number | null;
+  rarity: number | null;
+  pack_size: number | null;
+  hazard_count: number;
+  profile_hazards: WaystoneHazardWarning[];
+  profile_hazard_summary: HazardSummary;
+  raw_hash: string;
+  captured_at_epoch_ms: number;
+};
+
+type MapOcrEvidence = {
+  state: MapOcrEvidenceState;
+  normalized_mods: string[];
+  raw_lines: string[];
+  summary: MapOcrSummary | null;
+  confidence_score: number | null;
+  reason: string | null;
+  captured_at_epoch_ms: number;
+};
+
+type MapOcrSummary = {
+  modifier_count: number;
+  reward_lines: string[];
+  player_danger_lines: string[];
+  monster_danger_lines: string[];
+  content_flags: string[];
+};
+
+type MapRunContext = {
+  area: CurrentAreaInfo;
+  waystone: WaystoneSnapshot | null;
+  confidence: MapRunConfidence;
+  ocr_evidence?: MapOcrEvidence | null;
+  started_at_epoch_ms: number;
+};
+
+type HazardProfile = {
+  id: string;
+  label: string;
+  rules: { pattern: string; severity: string; reason: string }[];
+};
+
+type BuildSnapshot = {
+  source: "poe_ninja_character_url" | "pob_code" | "manual_profile";
+  source_url: string | null;
+  account: string | null;
+  character: string | null;
+  league: string | null;
+  class_name: string | null;
+  class_icon_url: string | null;
+  ascendancy: string | null;
+  level: number | null;
+  life: number | null;
+  energy_shield: number | null;
+  mana: number | null;
+  spirit: number | null;
+  attributes: {
+    strength: number | null;
+    dexterity: number | null;
+    intelligence: number | null;
   };
-}).filter((node) => node.state !== "empty");
-
-const markedTempleNodes: TempleNode[] = [
-  ...templeNodes,
-  { x: -2, y: 2, state: "reward", label: "T" },
-  { x: -1, y: 1, state: "danger", label: "II" },
-  { x: 1, y: 1, state: "reward", label: "III" },
-  { x: 0, y: -4, state: "boss", label: "Atziri" }
-];
-
-const state = {
-  tab: "scan" as TabId,
-  lineMode: false,
-  hue: 202,
-  opacity: 78
+  charges: {
+    endurance: number | null;
+    frenzy: number | null;
+    power: number | null;
+  };
+  movement_speed: number | null;
+  armour: number | null;
+  evasion_rating: number | null;
+  evade_chance: number | null;
+  deflection_rating: number | null;
+  deflect_chance: number | null;
+  physical_taken_as: number | null;
+  resistances: {
+    fire: number | null;
+    cold: number | null;
+    lightning: number | null;
+    chaos: number | null;
+  };
+  effective_health_pool: string | null;
+  max_hit: {
+    physical: string | null;
+    fire: string | null;
+    cold: string | null;
+    lightning: string | null;
+    chaos: string | null;
+  } | null;
+  keystones: string[];
+  main_skills: string[];
+  skill_dps: { name: string; dps: string | null }[];
+  defensive_layers: string[];
+  equipped_uniques: string[];
+  recovery_systems: string[];
+  fetched_at_epoch_ms: number;
 };
 
-const app = document.querySelector<HTMLDivElement>("#app");
+type BuildFingerprint = {
+  tags: string[];
+  recommended_profile_id: string;
+  confidence: string;
+  notes: string[];
+};
 
-if (!app) {
-  throw new Error("App root missing");
+type BuildProfileImportResult = {
+  snapshot: BuildSnapshot;
+  fingerprint: BuildFingerprint;
+};
+
+type WorldAreaStatus = {
+  state: string;
+  source: string;
+  count: number;
+  cache_path: string;
+  error: string | null;
+};
+
+type AppState = {
+  scanned_item: ScannedItem | null;
+  trade_queue: TradeWhisper[];
+  current_zone: string;
+  current_area: CurrentAreaInfo | null;
+  pending_waystone: WaystoneSnapshot | null;
+  active_map_run: MapRunContext | null;
+  hazard_profile_id: string;
+  build_snapshot: BuildSnapshot | null;
+  build_fingerprint: BuildFingerprint | null;
+  world_area_status: WorldAreaStatus;
+  trade_league: string;
+  league_catalog: LeagueCatalogEntry[];
+  trade_leagues: TradeLeague[];
+  data_leagues: DataLeague[];
+  source_truth_snapshot: Poe2DbDataSnapshot | null;
+  price_check: PriceCheck | null;
+  exchange_tab: ExchangeTabState;
+  price_currency: string;
+  price_option: string;
+  debug_log_path: string | null;
+  deaths: Record<number, number>;
+};
+
+
+type ListingPreviewRequest = {
+  listing: PriceListing;
+  family: string | null;
+};
+
+type ValueLineEntry = {
+  label: string;
+  value: string;
+  spec: ItemSpec | null;
+};
+
+type PriceEstimate = {
+  amount: number | null;
+  low: number | null;
+  high: number | null;
+  reliability: string;
+  reliabilityClass: string;
+  currencyId: string;
+  currencyName: string;
+  iconUrl: string | null;
+};
+
+type TradeWhisper = {
+  buyer_name: string;
+  item: string;
+  price: string;
+  league: string;
+  tab_coordinates: TabCoordinates | null;
+};
+
+type TabCoordinates = {
+  tab_name: string;
+  left: number;
+  top: number;
+};
+
+type WorkerStatus = {
+  worker: string;
+  message: string;
+};
+
+type AtlasFocusId = "expedition" | "breach" | "ritual" | "delirium" | "bossing" | "fortress" | "waystones";
+
+type AtlasFocusState = {
+  selected: AtlasFocusId;
+  notes: string;
+  checklist: Record<string, boolean>;
+};
+
+type DiscordPresenceStatus = {
+  enabled: boolean;
+  configured: boolean;
+  connected: boolean;
+  message: string;
+};
+
+type TradeLeague = {
+  id: string;
+  text: string;
+};
+
+type LeagueCatalogEntry = {
+  id: string;
+  display_name: string;
+  official_trade_id: string | null;
+  poe_ninja_name: string | null;
+  poe_ninja_slug: string | null;
+  hardcore: boolean;
+  indexed: boolean;
+  trade_enabled: boolean;
+  exchange_enabled: boolean;
+  discovered_at: string | null;
+  expansion: string | null;
+  source_tags: string[];
+  note: string | null;
+};
+
+type DataLeague = {
+  id: string;
+  name: string;
+  version: string | null;
+  expansion: string | null;
+  starts_at: string | null;
+  source: string;
+  trade_enabled: boolean;
+  note: string | null;
+};
+
+type NormalizedItemFamily = {
+  family: string;
+  poe2db_section: string;
+  item_classes: string[];
+  notes: string;
+};
+
+type Poe2DbAdapterStatus = {
+  state: string;
+  message: string;
+  fresh: boolean;
+  cache_age_seconds: number | null;
+  pages_cached: number;
+  pages_failed: number;
+  failed_pages: string[];
+  quality?: {
+    total_tiers: number;
+    empty_roll_band_tiers: number;
+    normal_affix_tiers: number;
+    normal_unknown_affix_tiers: number;
+    non_affix_tiers: number;
+    unknown_affix_tiers: number;
+    source_kind_counts: Record<string, number>;
+  };
+};
+
+type ExchangeCategory = {
+  id: string;
+  group: string;
+  label: string;
+  feed: string;
+  poe_ninja_type: string | null;
+  poe_ninja_slug: string | null;
+  icon_url: string | null;
+  available: boolean;
+};
+
+type ExchangeEntry = {
+  id: string;
+  name: string;
+  icon_url: string | null;
+  details_id: string | null;
+  item_category: string | null;
+  price_in_primary: number | null;
+  quantity: number | null;
+  history_change_percent: number | null;
+  sparkline: number[];
+};
+
+type ExchangeOverview = {
+  category_id: string;
+  category_label: string;
+  league: string;
+  source: string;
+  source_url: string;
+  fetched_at_epoch_ms: number;
+  primary_currency: CurrencyMeta | null;
+  secondary_currency: CurrencyMeta | null;
+  quote_currencies: ExchangeQuoteCurrency[];
+  entries: ExchangeEntry[];
+};
+
+type ExchangeQuoteCurrency = {
+  currency: CurrencyMeta;
+  per_primary: number;
+};
+
+type ExchangeTabState = {
+  categories: ExchangeCategory[];
+  selected_category_id: string;
+  selected_item_id: string | null;
+  overview: ExchangeOverview | null;
+  selected_quote_currency_id?: string | null;
+  status: string;
+  error: string | null;
+};
+
+const root = document.querySelector<HTMLDivElement>("#root");
+const previewMode = new URLSearchParams(window.location.search).get("preview");
+const isListingPreviewWindow = previewMode === "listing";
+const WAYSTONE_ARM_TIMEOUT_MS = 15 * 60 * 1000;
+
+if (!root) {
+  throw new Error("Lumen-Scan root element was not found.");
 }
 
-const appRoot = app;
+const state: AppState = {
+  scanned_item: null,
+  trade_queue: [],
+  current_zone: "Unknown",
+  current_area: null,
+  pending_waystone: null,
+  active_map_run: null,
+  hazard_profile_id: "general_safe_mapping",
+  build_snapshot: null,
+  build_fingerprint: null,
+  world_area_status: {
+    state: "warming",
+    source: "unknown",
+    count: 0,
+    cache_path: "",
+    error: null,
+  },
+  trade_league: "Fate of the Vaal",
+  league_catalog: [],
+  trade_leagues: [],
+  data_leagues: [],
+  source_truth_snapshot: null,
+  price_check: null,
+  exchange_tab: fallbackExchangeTab(),
+  price_currency: "exalted",
+  price_option: "equivalent",
+  debug_log_path: null,
+  deaths: {},
+};
 
-function asset(name: string): string {
-  return `/assets/${name}`;
+let activeTab: TabId = "profile";
+let lastRenderedPanelTab: TabId | null = null;
+let panelTransitionTimer: number | null = null;
+let workerMessages: WorkerStatus[] = [];
+let compactMode = false;
+let selectedSpecKeys = new Set<string>();
+let selectedPriceProfile: PriceProfileId = "quick";
+let appliedWindowLayout: "scan" | "trade" | "settings" | "temple" | "campaign" | "atlas" | "idle" | "default" | "compact" | null = null;
+let evaluateLayoutFrame = 0;
+let tradeSearchQuery = "";
+let tradeSidebarScrollTop = 0;
+let loadingMoreMarketplaceResults = false;
+let hoveredListingPreview: ListingPreviewRequest | null = null;
+let pinnedListingPreviewIndex: number | null = null;
+let previewPollHandle = 0;
+let latestRequestedFilterSignature: string | null = null;
+let hazardProfiles: HazardProfile[] = [];
+let selectedAtlasSection: "overview" | "safety" | "profile" | "focus" | "history" = "overview";
+let buildProfileUrlInput = "";
+let buildProfileTextInput = "";
+let activeFilterPushTimer = 0;
+
+const campaignGuideActs = guideData.acts;
+let campaignTimerRunning = false;
+let campaignGuidePage = 0;
+let campaignGuideAct = 0;
+let campaignActTimes: number[] = [0, 0, 0, 0, 0, 0, 0, 0];
+let campaignTotalMs = 0;
+let campaignExpanded = false;
+let campaignTimerHandle = 0;
+let campaignCompletedSteps = new Set<string>();
+let campaignCurrentZone = "";
+const CAMPAIGN_STORAGE_KEY = "reliquary.campaign.progress";
+const CAMPAIGN_ZONES_KEY = "reliquary.campaign.zones";
+const ATLAS_FOCUS_STORAGE_KEY = "reliquary.atlas.focus";
+const EXCHANGE_WATCHLIST_STORAGE_KEY = "reliquary.exchange.watchlist";
+const TRADE_VIEW_STORAGE_KEY = "reliquary.trade.view.v1";
+
+const ATLAS_FOCUS_PRESETS: {
+  id: AtlasFocusId;
+  label: string;
+  summary: string;
+  checklist: string[];
+}[] = [
+  {
+    id: "expedition",
+    label: "Expedition",
+    summary: "Watch remnant density and avoid stacking build-breaking remnants.",
+    checklist: ["Check remnant order before detonation", "Avoid build-breaking remnants", "Open logbook-worthy chests"],
+  },
+  {
+    id: "breach",
+    label: "Breach",
+    summary: "Favor clear speed and watch density spikes before opening hands.",
+    checklist: ["Confirm map is safe for burst density", "Open hands after stabilizing", "Track splinter/reward outcome"],
+  },
+  {
+    id: "ritual",
+    label: "Ritual",
+    summary: "Keep danger profile strict; reroll rewards after checking tribute.",
+    checklist: ["Clear surrounding monsters first", "Check defer candidates", "Record notable reward bases"],
+  },
+  {
+    id: "delirium",
+    label: "Delirium",
+    summary: "Treat monster damage, speed, and recovery denial as higher risk.",
+    checklist: ["Confirm no build-breaking waystone mods", "Route toward dense packs", "Stop before greed kills the run"],
+  },
+  {
+    id: "bossing",
+    label: "Bossing",
+    summary: "Keep the boss name visible and avoid map mods that disable recovery.",
+    checklist: ["Confirm boss before portal commitment", "Check recovery and flask hazards", "Record boss outcome"],
+  },
+  {
+    id: "fortress",
+    label: "Fortress",
+    summary: "Manual reminder lane for citadel/fortress scouting until automation is proven.",
+    checklist: ["Mark fortress direction manually", "Note failed approach paths", "Keep boss-hazard profile strict"],
+  },
+  {
+    id: "waystones",
+    label: "Waystones",
+    summary: "Sustain-focused mapping: prioritize pack size, rarity, and waystone drops.",
+    checklist: ["Check Rarity / Pack / Rare indicators", "Avoid low-value danger stacks", "Note maps that overperform"],
+  },
+];
+
+type MapRun = {
+  name: string;
+  tier: number | null;
+  boss: string | null;
+  elapsed_ms: number;
+  entered_at: number;
+  deaths: number;
+};
+
+let activeCampaignSubTab: CampaignSubTab = "timer";
+let campaignSelectedAct = 1;
+let campaignZoneTimes: Map<string, number> = new Map();
+let campaignCurrentZoneEnteredAt = 0;
+let campaignMapRuns: MapRun[] = [];
+let atlasRunHistory: AtlasRunRecord[] = [];
+let atlasFocusState: AtlasFocusState = readAtlasFocusState();
+let exchangeWatchlistState: ExchangeWatchlistState = readExchangeWatchlistState();
+let tradeViewPreference = readTradeViewPreference(localStorage, TRADE_VIEW_STORAGE_KEY);
+let tradeWatchlistMode = tradeViewPreference.view === "favorites";
+let marketBoardLoadState: {
+  key: string | null;
+  status: "idle" | "loading" | "ready" | "error";
+  dataset: MarketBoardDataset | null;
+  source: MarketFeedResult["source"];
+  error: string | null;
+} = {
+  key: null,
+  status: "idle",
+  dataset: null,
+  source: "none",
+  error: null,
+};
+let marketBoardVisibleRows: Record<MarketDirection, number> = {
+  winner: MARKET_INITIAL_ROWS,
+  loser: MARKET_INITIAL_ROWS,
+};
+let marketBoardScrollTop: Record<MarketDirection, number> = { winner: 0, loser: 0 };
+let campaignResetConfirmHandle = 0;
+let atlasHistoryClearConfirmHandle = 0;
+const FEEDBACK_WINDOW_MS = 1_800;
+let feedbackState = {
+  itemScannedAt: 0,
+  priceCheckUpdatedAt: 0,
+  exchangeUpdatedAt: 0,
+  marketUpdatedAt: 0,
+  profileImportedAt: 0,
+  ocrRequestedAt: 0,
+  ocrUpdatedAt: 0,
+  compactLineUpdatedAt: 0,
+  compactSeverityChangedAt: 0,
+  compactWarningAt: 0,
+  errorAt: 0,
+  rateLimitAt: 0,
+  lastMarketSignature: "",
+  lastCompactSignature: "",
+  lastCompactSeverity: "none" as AtlasCompactSeverity,
+};
+
+type FeedbackTimestampKey =
+  | "itemScannedAt"
+  | "priceCheckUpdatedAt"
+  | "exchangeUpdatedAt"
+  | "marketUpdatedAt"
+  | "profileImportedAt"
+  | "ocrRequestedAt"
+  | "ocrUpdatedAt"
+  | "compactLineUpdatedAt"
+  | "compactSeverityChangedAt"
+  | "compactWarningAt"
+  | "errorAt"
+  | "rateLimitAt";
+
+const INTERLUDE_ZONE_MAP: Record<string, string> = {
+  "scorched farmlands": "Interlude 5.1 — Ogham, The Refuge",
+  "stones of serle": "Interlude 5.1 — Ogham, The Refuge",
+  "the blackwood": "Interlude 5.1 — Ogham, The Refuge",
+  "holten": "Interlude 5.1 — Ogham, The Refuge",
+  "wolvenhold": "Interlude 5.1 — Ogham, The Refuge",
+  "holten estate": "Interlude 5.1 — Ogham, The Refuge",
+  "the refuge": "Interlude 5.1 — Ogham, The Refuge",
+  "the khari crossing": "Interlude 5.2 — Khari Bazaar",
+  "pools of khatal": "Interlude 5.2 — Khari Bazaar",
+  "sel khari sanctuary": "Interlude 5.2 — Khari Bazaar",
+  "river barrens": "Interlude 5.2 — Khari Bazaar",
+  "the galai gates": "Interlude 5.2 — Khari Bazaar",
+  "qimah": "Interlude 5.2 — Khari Bazaar",
+  "qimah reservoir": "Interlude 5.2 — Khari Bazaar",
+  "the khari bazaar": "Interlude 5.2 — Khari Bazaar",
+  "ashen forest": "Interlude 5.3 — Mount Kriar, The Glade",
+  "kriar village": "Interlude 5.3 — Mount Kriar, The Glade",
+  "glacial tarn": "Interlude 5.3 — Mount Kriar, The Glade",
+  "howling caves": "Interlude 5.3 — Mount Kriar, The Glade",
+  "kriar peaks": "Interlude 5.3 — Mount Kriar, The Glade",
+  "etched ravine": "Interlude 5.3 — Mount Kriar, The Glade",
+  "the cuachic vault": "Interlude 5.3 — Mount Kriar, The Glade",
+  "the glade": "Interlude 5.3 — Mount Kriar, The Glade",
+  "interlude": "Maps / Endgame",
+};
+
+function saveCampaignProgress() {
+  try {
+    localStorage.setItem(CAMPAIGN_STORAGE_KEY, JSON.stringify({
+      completedSteps: [...campaignCompletedSteps],
+      currentZone: campaignCurrentZone,
+      guidePage: campaignGuidePage,
+      actTimes: campaignActTimes,
+      totalMs: campaignTotalMs,
+      deaths: state.deaths,
+    }));
+  } catch { /* ignore */ }
 }
 
-function setThemeVars(): void {
-  document.documentElement.style.setProperty("--accent-hue", String(state.hue));
-  document.documentElement.style.setProperty("--shell-alpha", `${state.opacity / 100}`);
+function loadCampaignProgress() {
+  try {
+    const raw = localStorage.getItem(CAMPAIGN_STORAGE_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      campaignCompletedSteps = new Set(data.completedSteps ?? []);
+      campaignCurrentZone = data.currentZone ?? "";
+      campaignGuidePage = data.guidePage ?? 0;
+      if (Array.isArray(data.actTimes) && data.actTimes.length >= 5) {
+        campaignActTimes = data.actTimes;
+      }
+      if (typeof data.totalMs === "number") {
+        campaignTotalMs = data.totalMs;
+      }
+      if (data.deaths && typeof data.deaths === "object") {
+        state.deaths = normalizeDeathRecord(data.deaths);
+      }
+    }
+  } catch { /* ignore */ }
 }
 
-function render(): void {
-  setThemeVars();
-  appRoot.innerHTML = state.lineMode ? renderLineMode() : renderFullShell();
-  bindEvents();
+function saveCampaignZoneData() {
+  try {
+    localStorage.setItem(CAMPAIGN_ZONES_KEY, JSON.stringify({
+      zoneTimes: Object.fromEntries(campaignZoneTimes),
+      mapRuns: campaignMapRuns,
+    }));
+  } catch { /* ignore */ }
 }
 
-function renderFullShell(): string {
+function loadCampaignZoneData() {
+  try {
+    const raw = localStorage.getItem(CAMPAIGN_ZONES_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      campaignZoneTimes = new Map(Object.entries(data.zoneTimes ?? {}));
+      campaignMapRuns = Array.isArray(data.mapRuns)
+        ? data.mapRuns.map((run: Partial<MapRun>) => ({
+            name: String(run.name ?? "Unknown Map"),
+            tier: typeof run.tier === "number" ? run.tier : null,
+            boss: typeof run.boss === "string" ? run.boss : null,
+            elapsed_ms: typeof run.elapsed_ms === "number" ? run.elapsed_ms : 0,
+            entered_at: typeof run.entered_at === "number" ? run.entered_at : 0,
+            deaths: typeof run.deaths === "number" ? run.deaths : 0,
+          }))
+        : [];
+    }
+  } catch { /* ignore */ }
+}
+
+function saveAtlasRunHistory() {
+  try { saveAtlasRunHistoryStorage(localStorage, atlasRunHistory); } catch { /* ignore */ }
+}
+
+function loadAtlasRunHistory() {
+  try { atlasRunHistory = loadAtlasRunHistoryStorage(localStorage); } catch { /* ignore */ }
+}
+
+function upsertAtlasRun(run: MapRunContext) {
+  atlasRunHistory = upsertAtlasRunRecord(atlasRunHistory, run);
+  saveAtlasRunHistory();
+}
+
+function completeAtlasRun(run: MapRunContext | null, completedAtEpochMs: number) {
+  atlasRunHistory = completeAtlasRunRecord(atlasRunHistory, run, completedAtEpochMs);
+  saveAtlasRunHistory();
+}
+
+function incrementAtlasRunDeaths(run: MapRunContext | null) {
+  atlasRunHistory = incrementAtlasRunDeathsRecord(atlasRunHistory, run);
+  saveAtlasRunHistory();
+}
+
+function clearAtlasRunHistory() {
+  atlasRunHistory = clearAtlasRunHistoryStorage(localStorage);
+}
+
+function defaultAtlasFocusState(): AtlasFocusState {
+  return {
+    selected: "expedition",
+    notes: "",
+    checklist: {},
+  };
+}
+
+function isAtlasFocusId(value: unknown): value is AtlasFocusId {
+  return typeof value === "string" && ATLAS_FOCUS_PRESETS.some((focus) => focus.id === value);
+}
+
+function readAtlasFocusState(): AtlasFocusState {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ATLAS_FOCUS_STORAGE_KEY) ?? "{}") as Partial<AtlasFocusState>;
+    return {
+      selected: isAtlasFocusId(parsed.selected) ? parsed.selected : "expedition",
+      notes: typeof parsed.notes === "string" ? parsed.notes : "",
+      checklist: parsed.checklist && typeof parsed.checklist === "object" ? parsed.checklist : {},
+    };
+  } catch {
+    return defaultAtlasFocusState();
+  }
+}
+
+function saveAtlasFocusState() {
+  try {
+    localStorage.setItem(ATLAS_FOCUS_STORAGE_KEY, JSON.stringify(atlasFocusState));
+  } catch {
+    pushStatus("atlas", "Unable to save Atlas focus locally.");
+  }
+}
+
+function atlasFocusPreset(focusId: AtlasFocusId = atlasFocusState.selected) {
+  return ATLAS_FOCUS_PRESETS.find((focus) => focus.id === focusId) ?? ATLAS_FOCUS_PRESETS[0]!;
+}
+
+function readExchangeWatchlistState(): ExchangeWatchlistState {
+  try {
+    return normalizeExchangeWatchlistState(JSON.parse(localStorage.getItem(EXCHANGE_WATCHLIST_STORAGE_KEY) ?? "{}"));
+  } catch {
+    return { pins: [] };
+  }
+}
+
+function saveExchangeWatchlistState() {
+  try {
+    localStorage.setItem(EXCHANGE_WATCHLIST_STORAGE_KEY, JSON.stringify(exchangeWatchlistState));
+  } catch {
+    pushStatus("exchange", "Unable to save exchange watchlist locally.");
+  }
+}
+
+function setTradeSubView(view: TradeSubView) {
+  tradeViewPreference = { ...tradeViewPreference, view };
+  tradeWatchlistMode = view === "favorites";
+  writeTradeViewPreference(localStorage, TRADE_VIEW_STORAGE_KEY, tradeViewPreference);
+}
+
+function setMarketPeriod(period: typeof tradeViewPreference.period) {
+  tradeViewPreference = { view: "market", period };
+  tradeWatchlistMode = false;
+  marketBoardVisibleRows = { winner: MARKET_INITIAL_ROWS, loser: MARKET_INITIAL_ROWS };
+  marketBoardScrollTop = { winner: 0, loser: 0 };
+  writeTradeViewPreference(localStorage, TRADE_VIEW_STORAGE_KEY, tradeViewPreference);
+}
+
+function marketBoardKey() {
+  return `${state.trade_league.toLowerCase()}::${tradeViewPreference.period}`;
+}
+
+function feedbackClass(timestamp: number, className: string, windowMs = FEEDBACK_WINDOW_MS) {
+  return timestamp > 0 && Date.now() - timestamp < windowMs ? className : "";
+}
+
+function markFeedback(key: FeedbackTimestampKey) {
+  feedbackState[key] = Date.now();
+}
+
+function marketDatasetSignature(dataset: MarketBoardDataset | null) {
+  if (!dataset) return "";
+  return [
+    dataset.status,
+    dataset.generated_at_epoch_ms,
+    dataset.snapshots_collected,
+    dataset.winners.length,
+    dataset.losers.length,
+    dataset.winners[0]?.id ?? "",
+    dataset.winners[0]?.change_percent ?? "",
+    dataset.losers[0]?.id ?? "",
+    dataset.losers[0]?.change_percent ?? "",
+  ].join("|");
+}
+
+function compactLineSignature(area: CurrentAreaInfo, line: AtlasCompactLineState) {
+  return [
+    area.name,
+    area.area_type,
+    area.area_level ?? "",
+    line.severity,
+    line.riskReason,
+    line.riskDetail,
+    line.indicators.map((indicator) => `${indicator.label}:${indicator.value}:${indicator.tone}`).join(","),
+    line.text.replace(/\s*\|\s*\d+:\d{2}$/, ""),
+  ].join("|");
+}
+
+function markCompactLineFeedback(area: CurrentAreaInfo, line: AtlasCompactLineState) {
+  const signature = compactLineSignature(area, line);
+  if (signature && signature !== feedbackState.lastCompactSignature) {
+    feedbackState.lastCompactSignature = signature;
+    markFeedback("compactLineUpdatedAt");
+  }
+  if (line.severity !== feedbackState.lastCompactSeverity) {
+    feedbackState.lastCompactSeverity = line.severity;
+    markFeedback("compactSeverityChangedAt");
+    if (line.severity === "warning" || line.severity === "danger" || line.severity === "critical") {
+      markFeedback("compactWarningAt");
+    }
+  }
+}
+
+function ensureMarketBoardLoaded(force = false) {
+  if (tradeViewPreference.view !== "market") return;
+  const key = marketBoardKey();
+  if (!force && marketBoardLoadState.key === key && marketBoardLoadState.status !== "idle") return;
+
+  marketBoardLoadState = {
+    key,
+    status: "loading",
+    dataset: force || marketBoardLoadState.key !== key ? null : marketBoardLoadState.dataset,
+    source: "none",
+    error: null,
+  };
+
+  void loadMarketBoardDataset(state.trade_league, tradeViewPreference.period).then((result) => {
+    if (marketBoardLoadState.key !== key) return;
+    const signature = marketDatasetSignature(result.dataset);
+    if (signature && signature !== feedbackState.lastMarketSignature) {
+      feedbackState.lastMarketSignature = signature;
+      markFeedback("marketUpdatedAt");
+    }
+    marketBoardLoadState = {
+      key,
+      status: result.dataset ? "ready" : "error",
+      dataset: result.dataset,
+      source: result.source,
+      error: result.error,
+    };
+    render();
+  });
+}
+
+function exchangeWatchlistPinCount(categoryId?: string) {
+  if (!categoryId) {
+    return exchangeWatchlistState.pins.length;
+  }
+  return exchangeWatchlistState.pins.filter((pin) => pin.category_id === categoryId).length;
+}
+
+function normalizeDeathRecord(record: unknown): Record<number, number> {
+  if (!record || typeof record !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(record as Record<string, unknown>)
+      .map(([key, value]) => [Number(key), Number(value)])
+      .filter(([key, value]) => Number.isFinite(key) && key > 0 && Number.isFinite(value) && value > 0),
+  ) as Record<number, number>;
+}
+
+function totalCampaignDeaths() {
+  return Object.values(state.deaths).reduce((sum, count) => sum + count, 0);
+}
+
+function normalizeZoneName(name: string) {
+  return name
+    .toLowerCase()
+    .replace(/^the\s+/i, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function readTempleLayout() {
+  try {
+    const raw = localStorage.getItem(TEMPLE_STORAGE_KEY);
+    if (!raw) return createTempleLayout();
+    return parseTempleLayout(raw) ?? createTempleLayout();
+  } catch {
+    return createTempleLayout();
+  }
+}
+
+function saveTempleLayout() {
+  try {
+    localStorage.setItem(TEMPLE_STORAGE_KEY, serializeTempleLayout(templeLayout));
+  } catch {
+    pushStatus("temple", "Unable to save temple layout locally.");
+  }
+}
+
+async function runTempleDestabilization() {
+  const result = simulateDestabilization(templeLayout, templeDestabilizationOptions);
+  const meaningfulAttempts = result.attempts.some((attempt) => attempt.result !== "skipped");
+  templeDestabilizationAnimation = {
+    busy: true,
+    activeKey: null,
+    lockedKey: null,
+    removedKeys: [],
+    lastSeed: result.seed,
+  };
+  render();
+
+  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  if (meaningfulAttempts) {
+    templeDestabilizationHistory = [...templeDestabilizationHistory, result].slice(-25);
+  }
+
+  for (const attempt of result.attempts) {
+    if (!attempt.targetKey) continue;
+    templeDestabilizationAnimation = {
+      ...templeDestabilizationAnimation,
+      activeKey: attempt.targetKey,
+      lockedKey: attempt.result === "locked" ? attempt.targetKey : null,
+    };
+    render();
+    if (!reducedMotion) await delay(180);
+
+    if (attempt.result === "removed") {
+      templeDestabilizationAnimation = {
+        ...templeDestabilizationAnimation,
+        removedKeys: [...templeDestabilizationAnimation.removedKeys, attempt.targetKey],
+      };
+      render();
+      if (!reducedMotion) await delay(160);
+    }
+  }
+
+  templeLayout = result.after;
+  saveTempleLayout();
+  templeDestabilizationAnimation = {
+    busy: false,
+    activeKey: null,
+    lockedKey: null,
+    removedKeys: [],
+    lastSeed: result.seed,
+  };
+  pushStatus("temple", meaningfulAttempts ? "Destabilization simulated." : "No valid destabilization targets.");
+  render();
+}
+
+function undoTempleDestabilization() {
+  const previous = templeDestabilizationHistory[templeDestabilizationHistory.length - 1];
+  if (!previous) return;
+  templeDestabilizationHistory = templeDestabilizationHistory.slice(0, -1);
+  templeLayout = previous.before;
+  saveTempleLayout();
+  templeDestabilizationAnimation = {
+    busy: false,
+    activeKey: null,
+    lockedKey: null,
+    removedKeys: [],
+    lastSeed: previous.seed,
+  };
+  pushStatus("temple", "Destabilization undone.");
+  render();
+}
+
+function removeTempleCellFromContextMenu(cellKey: string) {
+  if (templeDestabilizationAnimation.busy) return;
+  const [rawX, rawY] = cellKey.split(",");
+  const x = Number(rawX);
+  const y = Number(rawY);
+  if (!Number.isInteger(x) || !Number.isInteger(y)) return;
+
+  const cell = getTempleCellByKey(templeLayout, templeCellKey(x, y));
+  if (!cell || cell.roomId === "empty") return;
+
+  const result = validateTemplePlacement(templeLayout, x, y, "empty");
+  if (!result.valid) {
+    pushStatus("temple", result.reason ?? "This temple tile cannot be removed.");
+    render();
+    return;
+  }
+
+  const roomName = TEMPLE_ROOMS[cell.roomId].name;
+  templeLayout = setTempleRoom(templeLayout, x, y, "empty");
+  saveTempleLayout();
+  pushStatus("temple", `Removed ${roomName}.`);
+  render();
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+}
+
+function stepKey(act: number, zoneName: string, stepIndex: number) {
+  return `${act}:${zoneName}:${stepIndex}`;
+}
+
+function findCurrentZoneInGuide() {
+  const areaName = state.current_area?.name ?? "";
+  if (!areaName) return null;
+  const act = campaignGuideActs.find(a => a.act === campaignGuideAct);
+  if (!act) return null;
+  const name = areaName.toLowerCase().trim();
+
+  if (campaignGuideAct === 5) {
+    const mapped = INTERLUDE_ZONE_MAP[name];
+    if (mapped) return act.zones.find(z => z.name === mapped) ?? null;
+  }
+
+  return act.zones.find(z => z.name.toLowerCase().trim() === name)
+    ?? act.zones.find(z => name.includes(z.name.toLowerCase().trim()))
+    ?? act.zones.find(z => z.name.toLowerCase().trim().includes(name))
+    ?? null;
+}
+
+function findNextIncompleteStep() {
+  const zone = findCurrentZoneInGuide();
+  if (!zone || !zone.steps.length) return null;
+  for (let i = 0; i < zone.steps.length; i++) {
+    const key = stepKey(campaignGuideAct, zone.name, i);
+    if (!campaignCompletedSteps.has(key)) {
+      return { step: zone.steps[i], index: i, zone };
+    }
+  }
+  return null;
+}
+
+function toggleCampaignStep() {
+  const next = findNextIncompleteStep();
+  if (!next) return;
+  const key = stepKey(campaignGuideAct, next.zone.name, next.index);
+  if (campaignCompletedSteps.has(key)) {
+    campaignCompletedSteps.delete(key);
+  } else {
+    campaignCompletedSteps.add(key);
+  }
+  saveCampaignProgress();
+}
+
+function startCampaignTimer() {
+  if (campaignTimerHandle) return;
+  campaignTimerRunning = true;
+  let tick = 0;
+  campaignTimerHandle = window.setInterval(() => {
+    if (!campaignTimerRunning) return;
+    const actIdx = Math.max(0, campaignGuideAct - 1);
+    campaignActTimes[actIdx] += 1000;
+    campaignTotalMs += 1000;
+    tick++;
+    const compact = root?.querySelector<HTMLElement>("[data-compact-meta]");
+    if (compact && campaignGuideAct > 0) {
+      compact.textContent = compactMetaText("");
+    }
+    if (tick % 30 === 0) saveCampaignProgress();
+  }, 1000);
+}
+
+function stopCampaignTimer() {
+  campaignTimerRunning = false;
+  window.clearInterval(campaignTimerHandle);
+  campaignTimerHandle = 0;
+}
+let requestedScanWindowHeight = 0;
+const PRICE_REQUEST_COOLDOWN_MS = 10_000;
+const recentPriceRequestSignatures = new Map<string, number>();
+
+const SETTINGS_STORAGE_KEY = "reliquary.runic.ui.settings";
+let discordPresenceStatus: DiscordPresenceStatus | null = null;
+let lastSyncedDiscordPresenceEnabled: boolean | null = null;
+let appSettings = readAppSettings();
+applyAppSettings(appSettings);
+loadCampaignProgress();
+loadCampaignZoneData();
+loadAtlasRunHistory();
+
+let templeLayout: TempleLayoutState = readTempleLayout();
+let selectedTempleRoomId: TempleRoomId = "path";
+let templeSaveName = "";
+let templeDestabilizationOptions: TempleDestabilizationOptions = {
+  architectDefeated: false,
+  atziriDefeated: false,
+};
+let templeDestabilizationHistory: TempleDestabilizationResult[] = [];
+let templeDestabilizationAnimation = {
+  busy: false,
+  activeKey: null as string | null,
+  lockedKey: null as string | null,
+  removedKeys: [] as string[],
+  lastSeed: null as string | null,
+};
+
+const LOCAL_CURRENCY_ICONS: Record<string, string> = {
+  exalted: "/currency/exalted.webp",
+  divine: "/currency/divine.webp",
+  regal: "/currency/regal.webp",
+  transmute: "/currency/transmute.webp",
+  chaos: "/currency/chaos.webp",
+  vaal: "/currency/vaal.webp",
+  alch: "/currency/alchemy.webp",
+  annul: "/currency/annul.webp",
+  chance: "/currency/chance.webp",
+  aug: "/currency/augment.webp",
+  mirror: "/currency/mirror.png",
+};
+
+const CURRENCY_ICON_ALIASES: Record<string, string> = {
+  alchemy: "alch",
+  augment: "aug",
+};
+
+function renderTabGlyph(tab: TabId) {
+  const glyphs: Record<TabId, string> = {
+    profile: `
+      <path class="glyph-frame" d="M12 2.5 20.5 8v8L12 21.5 3.5 16V8Z" />
+      <path class="glyph-line" d="M12 7.1a2.7 2.7 0 1 0 0 5.4 2.7 2.7 0 0 0 0-5.4Z" />
+      <path class="glyph-line" d="M7.2 17.2c1-2.1 2.6-3.2 4.8-3.2s3.8 1.1 4.8 3.2" />
+      <path class="glyph-accent" d="M6.7 8.5 4.9 10m12.4-1.5 1.8 1.5" />
+    `,
+    scan: `
+      <path class="glyph-frame" d="M5.1 8V5.1H8M16 5.1h2.9V8M18.9 16v2.9H16M8 18.9H5.1V16" />
+      <path class="glyph-line" d="M12 6.3v11.4M6.3 12h11.4" />
+      <path class="glyph-fill" d="M12 9.2 14.8 12 12 14.8 9.2 12Z" />
+    `,
+    trade: `
+      <path class="glyph-frame" d="M4.7 7.2h11.6l2.9 2.8-2.9 2.8H4.7" />
+      <path class="glyph-frame" d="M19.3 16.8H7.7l-2.9-2.8 2.9-2.8h11.6" />
+      <path class="glyph-accent" d="M8.2 7.2 5.4 10l2.8 2.8M15.8 11.2l2.8 2.8-2.8 2.8" />
+    `,
+    campaign: `
+      <path class="glyph-frame" d="M12 3.4a8.6 8.6 0 1 0 0 17.2 8.6 8.6 0 0 0 0-17.2Z" />
+      <path class="glyph-line" d="M12 7.1v5.1l3.4 2" />
+      <path class="glyph-accent" d="M7.3 5.3 5.6 3.6M16.7 5.3l1.7-1.7M12 20.6v-2.1" />
+    `,
+    atlas: `
+      <path class="glyph-frame" d="M12 2.8 19.6 7v10L12 21.2 4.4 17V7Z" />
+      <path class="glyph-line" d="M12 2.8v18.4M4.4 7l7.6 4.2L19.6 7" />
+      <path class="glyph-accent" d="M6.1 16.1 12 12.8l5.9 3.3" />
+    `,
+    data: `
+      <path class="glyph-frame" d="M6 6.6c0-1.8 2.7-3.1 6-3.1s6 1.3 6 3.1-2.7 3.1-6 3.1-6-1.3-6-3.1Z" />
+      <path class="glyph-line" d="M6 6.6v5.2c0 1.8 2.7 3.1 6 3.1s6-1.3 6-3.1V6.6" />
+      <path class="glyph-line" d="M6 11.8V17c0 1.8 2.7 3.1 6 3.1s6-1.3 6-3.1v-5.2" />
+      <path class="glyph-accent" d="M8.4 15.7c.9.6 2.1.9 3.6.9s2.7-.3 3.6-.9" />
+    `,
+    temple: `
+      <path class="glyph-frame" d="M12 2.5 21.5 12 12 21.5 2.5 12Z" />
+      <path class="glyph-line" d="M12 6.2 17.8 12 12 17.8 6.2 12Z" />
+      <path class="glyph-accent" d="M12 2.5v3.7M12 17.8v3.7M2.5 12h3.7M17.8 12h3.7" />
+    `,
+    settings: `
+      <path class="glyph-frame" d="M12 3.3 14.2 5l2.7-.5 1.2 2.5-1.5 2.3.6 2.7 2.1 1.7-1.2 2.5-2.8-.1-2.1 1.8-.7 2.7h-3l-.7-2.7-2.1-1.8-2.8.1-1.2-2.5L4.8 12l.6-2.7L3.9 7l1.2-2.5 2.7.5Z" />
+      <path class="glyph-line" d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" />
+      <path class="glyph-fill" d="M12 10.6 13.4 12 12 13.4 10.6 12Z" />
+    `,
+  };
+
   return `
-    <main class="runic-shell">
-      <div class="runic-glow runic-glow-a"></div>
-      <div class="runic-glow runic-glow-b"></div>
-      <header class="topbar">
-        <section class="brand-block">
-          <p class="eyebrow">Runic experiment</p>
-          <h1>Reliquary</h1>
-          <span>Heart of the Tribe</span>
-        </section>
-        <section class="microbar" aria-label="Prototype status">
-          ${renderMicroChip("micro_status_zone.png", "Fate of the Vaal")}
-          ${renderMicroChip("micro_status_timer.png", "01:24")}
-          ${renderMicroChip("micro_status_rarity.png", "R 54%")}
-          <button class="icon-button" data-action="line">_</button>
-          <button class="icon-button danger">x</button>
-        </section>
-      </header>
-
-      <div class="app-grid">
-        <nav class="runic-spine" aria-label="Runic navigation">
-          ${navItems.map(renderNavButton).join("")}
-        </nav>
-        <section class="content-frame">
-          ${renderContent()}
-        </section>
-      </div>
-    </main>
-  `;
-}
-
-function renderNavButton(item: NavItem): string {
-  const selected = item.id === state.tab ? "is-active" : "";
-  return `
-    <button class="spine-button ${selected}" data-tab="${item.id}">
-      <img src="${asset(item.icon)}" alt="" />
-      <span>
-        <strong>${item.label}</strong>
-        <small>${item.sub}</small>
-      </span>
-    </button>
-  `;
-}
-
-function renderMicroChip(icon: string, text: string): string {
-  return `
-    <span class="micro-chip">
-      <img src="${asset(icon)}" alt="" />
-      ${text}
+    <span class="tab-icon tab-icon-${tab}" aria-hidden="true">
+      <svg class="reliquary-glyph" viewBox="0 0 24 24" focusable="false">
+        ${glyphs[tab]}
+      </svg>
     </span>
   `;
 }
 
-function renderContent(): string {
-  switch (state.tab) {
-    case "scan":
-      return renderScan();
-    case "trade":
-      return renderTrade();
-    case "atlas":
-      return renderAtlas();
-    case "temple":
-      return renderTemple();
-    case "profile":
-      return renderProfile();
-    case "settings":
-      return renderSettings();
+root.innerHTML = isListingPreviewWindow
+  ? `
+    <main class="preview-overlay-root">
+      <section class="listing-preview-shell" data-preview-panel></section>
+    </main>
+  `
+  : `
+    <main class="overlay-root">
+      <section class="hud-card interactive" data-interactive>
+        <header class="hud-header" data-drag-handle>
+          <div class="brand-lockup">
+            <h1 class="brand-title">reliquary</h1>
+          </div>
+          <div class="zone-label" data-zone>Unknown</div>
+          <div class="window-controls">
+            <select class="league-select" data-league aria-label="Trade league">
+              <option>Fate of the Vaal</option>
+              <option>HC Fate of the Vaal</option>
+              <option>Standard</option>
+              <option>Hardcore</option>
+            </select>
+            <button class="chrome-button chrome-button-line" data-toggle-compact type="button" title="Line mode" aria-label="Line mode">_</button>
+            <button class="chrome-button chrome-button-close" data-close-app type="button" title="Exit" aria-label="Exit">x</button>
+          </div>
+        </header>
+
+        <div class="compact-strip" data-drag-handle>
+          <div class="compact-primary">
+            <span data-compact-title>Reliquary ready</span>
+            <strong data-compact-meta>Ctrl+C scan | Alt+D trade</strong>
+          </div>
+          <div class="compact-map-indicators" data-compact-indicators></div>
+          <div class="compact-risk-reason" data-compact-risk></div>
+          <div class="compact-checklist" data-compat-checklist></div>
+          <div class="compact-difficulty-bar" aria-hidden="true"></div>
+          <button class="chrome-button" data-toggle-compact type="button">Open</button>
+        </div>
+
+        <nav class="tab-row" aria-label="Overlay panels">
+          <button class="tab-button" data-tab="profile" type="button" title="Profile">
+            ${renderTabGlyph("profile")}
+            <span class="tab-label">Profile</span>
+          </button>
+          <button class="tab-button" data-tab="scan" type="button" title="Scan">
+            ${renderTabGlyph("scan")}
+            <span class="tab-label">Scan</span>
+          </button>
+          <button class="tab-button" data-tab="trade" type="button" title="Trade">
+            ${renderTabGlyph("trade")}
+            <span class="tab-label">Trade</span>
+          </button>
+          <button class="tab-button" data-tab="campaign" type="button" title="Campaign">
+            ${renderTabGlyph("campaign")}
+            <span class="tab-label">Campaign</span>
+          </button>
+          <button class="tab-button" data-tab="atlas" type="button" title="Atlas">
+            ${renderTabGlyph("atlas")}
+            <span class="tab-label">Atlas</span>
+          </button>
+          <button class="tab-button" data-tab="data" type="button" title="Data">
+            ${renderTabGlyph("data")}
+            <span class="tab-label">Data</span>
+          </button>
+          <button class="tab-button" data-tab="temple" type="button" title="Temple">
+            ${renderTabGlyph("temple")}
+            <span class="tab-label">Temple</span>
+          </button>
+          <button class="tab-button tab-button-icon" data-tab="settings" type="button" title="Settings" aria-label="Settings">
+            ${renderTabGlyph("settings")}
+            <span class="tab-label">Settings</span>
+          </button>
+        </nav>
+
+        <div class="panel" data-panel></div>
+      </section>
+    </main>
+  `;
+
+const panelElement = root.querySelector<HTMLElement>(isListingPreviewWindow ? "[data-preview-panel]" : "[data-panel]");
+const zoneElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-zone]");
+const leagueElement = isListingPreviewWindow ? null : root.querySelector<HTMLSelectElement>("[data-league]");
+const hudElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>(".hud-card");
+const compactTitleElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-title]");
+const compactMetaElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-meta]");
+const compactIndicatorsElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-indicators]");
+const compactRiskElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-risk]");
+const checklistElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compat-checklist]");
+const tabButtons = isListingPreviewWindow
+  ? []
+  : Array.from(root.querySelectorAll<HTMLButtonElement>("[data-tab]"));
+
+if (
+  !panelElement
+  || (
+    !isListingPreviewWindow
+    && (
+      !zoneElement
+      || !leagueElement
+      || !hudElement
+      || !compactTitleElement
+      || !compactMetaElement
+      || !compactIndicatorsElement
+      || !compactRiskElement
+    )
+  )
+) {
+  throw new Error("Reliquary UI shell failed to initialize.");
+}
+
+if (!isListingPreviewWindow) {
+  root.addEventListener(
+    "scroll",
+    (event) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.classList.contains("trade-sidebar-scroll")) {
+        tradeSidebarScrollTop = target.scrollTop;
+      }
+    },
+    true,
+  );
+}
+
+function render() {
+  if (isListingPreviewWindow) {
+    panelElement!.innerHTML = renderListingPreviewWindow(hoveredListingPreview);
+    return;
+  }
+
+  zoneElement!.textContent = state.current_zone || "Unknown";
+  renderLeagueOptions();
+  hudElement!.classList.toggle("is-compact", compactMode);
+  hudElement!.dataset.tab = activeTab;
+  panelElement!.dataset.tab = activeTab;
+  const previousPanelTab = lastRenderedPanelTab as MotionTabId | null;
+  const nextPanelTab = activeTab as MotionTabId;
+  const animatePanelTransition = shouldAnimateTabTransition(previousPanelTab, nextPanelTab, compactMode);
+  panelElement!.dataset.motionDirection = tabMotionDirection(previousPanelTab, nextPanelTab);
+
+  tabButtons.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.tab === activeTab);
+  });
+
+  const lastStatus =
+    workerMessages.slice(-1)[0]?.message ??
+    "Ctrl+C scans items. Alt+D opens the latest trade search.";
+
+  compactTitleElement!.textContent = compactTitleText(state.scanned_item);
+  compactMetaElement!.textContent = compactMetaText(lastStatus);
+  compactIndicatorsElement!.innerHTML = "";
+  compactRiskElement!.textContent = "";
+  compactRiskElement!.removeAttribute("title");
+  compactMetaElement!.classList.toggle("timer-running", campaignTimerRunning && campaignGuideAct > 0);
+  renderCampaignChecklist();
+
+  if (campaignGuideAct > 0 && compactTitleElement) {
+    const text = compactTitleElement.textContent ?? "";
+    if (text.length > 68) {
+      const overflow = text.length - 68;
+      compactTitleElement.style.setProperty("--scroll-distance", `${-overflow * 7}px`);
+      compactTitleElement.style.setProperty("--scroll-duration", `${Math.max(10, overflow / 4)}s`);
+      compactTitleElement.classList.add("scroll-text");
+    } else {
+      compactTitleElement.classList.remove("scroll-text");
+    }
+  }
+
+  const compactStrip = root?.querySelector<HTMLElement>(".compact-strip");
+  const mapCompactState = state.current_area?.area_type === "map"
+    ? atlasCompactLineState(
+      state.current_area,
+      state.active_map_run ?? null,
+      formatCompactRuntime(state.current_area.entered_at_epoch_ms),
+    )
+    : null;
+  if (mapCompactState && state.current_area?.area_type === "map") {
+    markCompactLineFeedback(state.current_area, mapCompactState);
+    applyCompactMapLine(mapCompactState, state.current_area);
+  } else {
+    feedbackState.lastCompactSignature = "";
+    feedbackState.lastCompactSeverity = "none";
+  }
+  if (compactStrip) {
+    const hasMapDetail = mapCompactState ? compactLineHasMapDetail(mapCompactState) : false;
+    compactStrip.classList.toggle("is-mapping", state.current_area?.area_type === "map");
+    compactStrip.classList.toggle("has-map-detail", hasMapDetail);
+    compactStrip.classList.toggle("needs-map-ocr", Boolean(mapCompactState && !hasMapDetail));
+    compactStrip.classList.toggle("is-hideout", state.current_area?.area_type === "hideout");
+    compactStrip.classList.toggle("is-campaign", campaignGuideAct > 0);
+    compactStrip.classList.toggle("is-pulsing", Boolean(mapCompactState?.shouldPulse));
+    compactStrip.classList.toggle("is-compact-updated", Boolean(feedbackClass(feedbackState.compactLineUpdatedAt, "is-compact-updated")));
+    compactStrip.classList.toggle("is-severity-changing", Boolean(feedbackClass(feedbackState.compactSeverityChangedAt, "is-severity-changing")));
+    compactStrip.classList.toggle("is-warning-flash", Boolean(feedbackClass(feedbackState.compactWarningAt, "is-warning-flash", 1_100)));
+    setCompactSeverityClass(compactStrip, mapCompactState?.severity ?? "none");
+    hudElement!.classList.toggle("compact-checklist-expanded", campaignExpanded && campaignGuideAct > 0);
+  }
+
+  const difficultyBar = root?.querySelector<HTMLElement>(".compact-difficulty-bar");
+  if (difficultyBar) {
+    const hazardCount = state.current_area?.waystone_hazard_count ?? 0;
+    const modCount = state.current_area?.waystone_mod_count ?? 0;
+    const severity = mapCompactState?.severity ?? "none";
+    const pct = modCount > 0 ? Math.round((hazardCount / modCount) * 100) : compactSeverityPct(severity);
+    difficultyBar.style.setProperty("--difficulty-pct", `${pct}%`);
+    difficultyBar.classList.toggle("has-hazards", hazardCount > 0 || severity === "warning" || severity === "danger" || severity === "critical");
+    setCompactSeverityClass(difficultyBar, severity);
+  }
+
+  if (!compactMode) {
+    if (activeTab === "profile") {
+      panelElement!.innerHTML = renderProfilePanel();
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
+
+    if (activeTab === "scan") {
+      panelElement!.innerHTML = renderScanPanel(state.scanned_item, state.price_check);
+      queueEvaluateLayoutSync();
+    }
+
+    if (activeTab === "trade") {
+      const previousSidebarScrollTop =
+        panelElement!.querySelector<HTMLElement>(".trade-sidebar-scroll")?.scrollTop ?? tradeSidebarScrollTop;
+      if (tradeViewPreference.view === "market") {
+        ensureMarketBoardLoaded();
+      }
+      panelElement!.innerHTML = renderTradePanel(state.exchange_tab);
+      const nextSidebar = panelElement!.querySelector<HTMLElement>(".trade-sidebar-scroll");
+      if (nextSidebar) {
+        nextSidebar.scrollTop = previousSidebarScrollTop;
+      }
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+
+      if (tradeViewPreference.view !== "market" && !state.exchange_tab.overview && !state.exchange_tab.status.includes("Loading")) {
+        const cat = state.exchange_tab.selected_category_id || "currency";
+        state.exchange_tab.status = `Loading ${exchangeCategoryLabel(cat)} overview...`;
+        void invoke("set_exchange_category", { categoryId: cat }).catch((err) =>
+          pushStatus("exchange", String(err)),
+        );
+      }
+    }
+
+    if (activeTab === "data") {
+      panelElement!.innerHTML = renderDataPanel();
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
+
+    if (activeTab === "temple") {
+      panelElement!.innerHTML = renderTemplePanel({
+        layout: templeLayout,
+        selectedRoomId: selectedTempleRoomId,
+        selectedCellKey: templeLayout.selectedCellKey,
+        saveName: templeSaveName,
+        destabilization: {
+          options: templeDestabilizationOptions,
+          undoCount: templeDestabilizationHistory.length,
+          busy: templeDestabilizationAnimation.busy,
+          activeKey: templeDestabilizationAnimation.activeKey,
+          lockedKey: templeDestabilizationAnimation.lockedKey,
+          removedKeys: templeDestabilizationAnimation.removedKeys,
+          lastSeed: templeDestabilizationAnimation.lastSeed,
+        },
+      });
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
+
+    if (activeTab === "campaign") {
+      panelElement!.innerHTML = renderCampaignTabPanel();
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
+
+    if (activeTab === "atlas") {
+      panelElement!.innerHTML = renderAtlasPanel();
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
+
+    if (activeTab === "settings") {
+      panelElement!.innerHTML = renderSettingsPanel();
+      hoveredListingPreview = null;
+      void invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+    }
+
+    commitPanelTransition(animatePanelTransition);
+  } else {
+    clearPanelTransition();
+  }
+
+  const errorPulseActive = Boolean(feedbackClass(feedbackState.errorAt, "is-feedback-error"));
+  panelElement?.classList.toggle("is-feedback-error", errorPulseActive);
+  hudElement?.classList.toggle("is-feedback-error", errorPulseActive);
+
+  syncWindowLayout();
+  if (compactMode) {
+    queueCompactWindowHeightSync();
   }
 }
 
-function renderScan(): string {
-  return `
-    <article class="screen scan-screen">
-      <section class="item-card rarity-rare">
-        <div class="item-banner">
-          <span>Rare Talisman</span>
-          <h2>Maji Talisman</h2>
-        </div>
-        <div class="item-body">
-          <div class="stat-pills">
-            <span>Item Level: 81</span>
-            <span>Requires Level: 79</span>
-            <span>Sockets: 2</span>
-          </div>
-          <p class="muted center">Quality <b>21%</b> / Physical Damage <b>304-514</b> / Crit <b>8.00%</b></p>
-          <div class="modifier-stack">
-            ${renderModifier("T3 R", "18% increased Physical Damage (Rune)", true)}
-            ${renderModifier("T1 R", "Gain 5% of Damage as Extra Damage of all Elements (Rune)", false)}
-            ${renderModifier("T2 P1", "158(155-169)% increased Physical Damage", true)}
-            ${renderModifier("T3 P2", "Adds 30(23-35) to 40(39-59) Physical Damage", false)}
-            ${renderModifier("T1 E", "+5 to Level of all Attack Skills", true)}
-            ${renderModifier("T1 S1", "15(12-18)% increased Attack Speed", false)}
-          </div>
-          <div class="mode-row">
-            <label><input checked type="radio" name="mode" /> Quick Price</label>
-            <label><input type="radio" name="mode" /> Exact Match</label>
-            <label><input type="radio" name="mode" /> Broad (-10%)</label>
-            <label><input type="radio" name="mode" /> Crafting Base</label>
-          </div>
-        </div>
-      </section>
+function commitPanelTransition(shouldAnimate: boolean) {
+  lastRenderedPanelTab = activeTab;
+  if (!shouldAnimate || !panelElement) {
+    clearPanelTransition();
+    return;
+  }
 
-      <section class="market-card">
-        <div class="value-panel">
-          <p class="eyebrow">Estimated Value</p>
-          <h3>~ 20 <img src="${asset("micro_market_orb.png")}" alt="" /></h3>
-          <span>Range: 10-25 exalted</span>
-          <b>Reliability: High</b>
-        </div>
-        <table>
-          <thead>
-            <tr><th>Price</th><th>iLvl</th><th>Q%</th><th>Account</th><th>Listed</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>5 exalted</td><td>82</td><td>21%</td><td>angusccn#7747</td><td>2d</td></tr>
-            <tr><td>10 exalted</td><td>81</td><td>20%</td><td>Dappton#8895</td><td>7d</td></tr>
-            <tr><td>15 exalted</td><td>80</td><td>21%</td><td>Refas#0425</td><td>4d</td></tr>
-          </tbody>
-        </table>
-      </section>
-    </article>
-  `;
+  if (panelTransitionTimer) {
+    window.clearTimeout(panelTransitionTimer);
+    panelTransitionTimer = null;
+  }
+
+  panelElement.classList.remove("is-tab-entering");
+  void panelElement.offsetWidth;
+  panelElement.classList.add("is-tab-entering");
+  panelTransitionTimer = window.setTimeout(() => {
+    panelElement?.classList.remove("is-tab-entering");
+    panelTransitionTimer = null;
+  }, 280);
 }
 
-function renderModifier(tag: string, text: string, selected: boolean): string {
-  return `
-    <button class="modifier ${selected ? "is-selected" : ""}">
-      <span>${tag}</span>
-      <b>${text}</b>
-    </button>
-  `;
+function clearPanelTransition() {
+  if (!panelElement) return;
+  if (panelTransitionTimer) {
+    window.clearTimeout(panelTransitionTimer);
+    panelTransitionTimer = null;
+  }
+  panelElement.classList.remove("is-tab-entering");
 }
 
-function renderTrade(): string {
-  return `
-    <article class="screen trade-screen">
-      <header class="screen-header">
-        <div>
-          <p class="eyebrow">Shared economy tape</p>
-          <h2>Market Board</h2>
-          <span>Runes of Aldur - one day baseline</span>
-        </div>
-        <div class="segmented"><button class="is-active">30m</button><button>1d</button><button>7d</button></div>
-      </header>
-      <section class="two-column">
-        ${renderMoverPanel("Biggest Winners", "Strongest risk-adjusted gains", "up")}
-        ${renderMoverPanel("Biggest Losers", "Sharpest risk-adjusted declines", "down")}
+function renderLeagueOptions() {
+  if (isListingPreviewWindow || !leagueElement) {
+    return;
+  }
+
+  const leagues = state.league_catalog.length
+    ? state.league_catalog
+        .filter((league) => league.trade_enabled || league.exchange_enabled)
+        .map((league) => ({
+          id: league.official_trade_id ?? league.display_name,
+          text:
+            league.trade_enabled && league.exchange_enabled
+              ? league.display_name
+              : `${league.display_name} (${league.trade_enabled ? "trade only" : "exchange/data"})`,
+        }))
+    : state.trade_leagues.length
+      ? state.trade_leagues
+    : [
+        { id: "Standard", text: "Standard" },
+        { id: "Hardcore", text: "Hardcore" },
+      ];
+
+  const leagueSignature = leagues.map((league) => league.id).join("|");
+  if (leagueElement.dataset.signature !== leagueSignature) {
+    leagueElement.innerHTML = leagues
+      .map(
+        (league) =>
+          `<option value="${escapeAttribute(league.id)}">${escapeHtml(league.text)}</option>`,
+      )
+      .join("");
+    leagueElement.dataset.signature = leagueSignature;
+  }
+
+  leagueElement.value = state.trade_league;
+}
+
+function renderListingPreviewWindow(preview: ListingPreviewRequest | null) {
+  if (!preview) {
+    return `
+      <section class="listing-preview-card empty-preview">
+        <p class="section-label">Listing Preview</p>
+        <p>Click the <strong>View</strong> button on a marketplace row to inspect that fetched listing.</p>
       </section>
-    </article>
-  `;
-}
+    `;
+  }
 
-function renderMoverPanel(title: string, sub: string, trend: "up" | "down"): string {
-  const rows = marketRows.filter((row) => row.trend === trend);
+  const { listing, family } = preview;
+  const rarity = listing.preview_rarity ?? "Rare";
+  const rarityClass = rarityClassName(rarity);
+  const itemClass = listing.preview_item_class ?? family ?? "Listing";
+  const baseType = listing.preview_base_type ?? listing.preview_name ?? "Unknown item";
+  const bannerTitle = rarity.toLowerCase() === "unique" ? listing.preview_name ?? baseType : baseType;
+  const valueEntries = previewValueEntries(listing, family);
+  const modifierGroups = previewModifierGroups(listing.explicit_mods);
+  const previewDescription = listing.preview_description
+    ? `<p class="preview-description">${escapeHtml(listing.preview_description)}</p>`
+    : "";
+  const iconMarkup = listing.preview_icon_url
+    ? `<div class="preview-icon-wrap"><img class="preview-item-icon" src="${escapeAttribute(listing.preview_icon_url)}" alt="" /></div>`
+    : "";
+
   return `
-    <section class="panel mover-panel ${trend}">
-      <header><div><h3>${title}</h3><span>${sub}</span></div><b>${rows.length}</b></header>
-      ${rows.map((row, index) => `
-        <article class="market-row">
-          <span class="rank">${index + 1}</span>
-          <img src="${asset(row.trend === "up" ? "micro_market_trend_up.png" : "micro_market_trend_down.png")}" alt="" />
-          <div><strong>${row.name}</strong><small>${row.family}</small></div>
-          <b>${row.price}</b>
-          <em>${row.change}</em>
-        </article>
-      `).join("")}
+    <section class="listing-preview-card ${rarityClass}">
+      <div class="poe-item-banner">
+        <div class="banner-corner banner-corner-left" aria-hidden="true"></div>
+        <div class="banner-center">
+          <p class="banner-subtitle">${escapeHtml(rarity)} ${escapeHtml(itemClass)}</p>
+          <h2 class="banner-title">${escapeHtml(bannerTitle)}</h2>
+        </div>
+        <div class="banner-corner banner-corner-right" aria-hidden="true"></div>
+      </div>
+      <div class="listing-preview-body">
+        ${iconMarkup}
+        <div class="profile-pills">
+          ${renderPreviewPills(listing)}
+        </div>
+        ${renderPreviewValueLines(valueEntries)}
+        <div class="mod-chip-stack">
+          ${renderPreviewModifierSections(modifierGroups)}
+        </div>
+        ${previewDescription}
+        <div class="preview-listing-meta">
+          <span><strong>Seller</strong>${escapeHtml(listing.seller ?? "Unknown")}</span>
+          <span><strong>Price</strong>${escapeHtml(listing.price)}</span>
+          <span><strong>Listed</strong>${escapeHtml(formatListed(listing.listed))}</span>
+        </div>
+      </div>
     </section>
   `;
 }
 
-function renderAtlas(): string {
+let compactRuntimeHandle = 0;
+let compactHeightFrame = 0;
+
+function rewardColor(tags: string[], reward: string | null): string {
+  if (tags.includes("choice")) return "#6ee07a";
+  if (tags.includes("skill") || tags.includes("spirit")) return "var(--gold-bright)";
+  if (tags.includes("life")) return "#e0705a";
+  if (tags.includes("mana")) return "#6cb4ee";
+  if (tags.includes("res")) {
+    if (reward?.includes("Cold")) return "#6cb4ee";
+    if (reward?.includes("Fire")) return "#e0705a";
+    return "var(--gold-bright)";
+  }
+  return "var(--vellum-dim)";
+}
+
+function actDisplayName(act: number) {
+  const numerals = ["", "I", "II", "III", "IV", "V"];
+  return act > 0 ? `ACT ${numerals[act] ?? act}` : "INTERLUDE";
+}
+
+function remapCampaignAct(raw: number): number {
+  if (raw >= 1 && raw <= 4) return raw;
+  if (raw === 6) return 5;
+  return 0;
+}
+
+function compactTitleText(item: ScannedItem | null) {
+  if (activeTab === "temple") {
+    const summary = templeSummary(templeLayout);
+    return `Temple planner | ${summary.placed} rooms | ${summary.tier3} tier III`;
+  }
+
+  if (campaignGuideAct > 0) {
+    const next = findNextIncompleteStep();
+    if (next) {
+      const zone = next.zone;
+      const reward = next.step.reward ? ` \u00B7 ${next.step.reward}` : "";
+      const done = zone.steps.filter((_, i) =>
+        campaignCompletedSteps.has(stepKey(campaignGuideAct, zone.name, i))
+      ).length;
+      return `${next.step.text}${reward} \u00B7 ${done}/${zone.steps.length} \u25B8`;
+    }
+    return "All tasks complete \u00B7 enter next zone";
+  }
+
+  if (state.current_area?.area_type === "map") {
+    const area = state.current_area;
+    const tier = area.area_level ? `L${area.area_level}` : "";
+    const boss = area.boss ? ` \u00B7 ${area.boss}` : "";
+    return `${tier} ${area.name}${boss}`.trim();
+  }
+
+  if (state.current_area?.area_type === "hideout") {
+    return "Trade Mode";
+  }
+
+  if (state.current_area?.area_type === "town") {
+    return state.current_area.name;
+  }
+
+  if (!item) {
+    return "Reliquary | waiting for item";
+  }
+
+  const hazardPrefix = item.hazards.length ? "WARNING | " : "";
+  return `${hazardPrefix}${item.name}`;
+}
+
+function compactMetaText(status: string) {
+  if (activeTab === "temple") {
+    const selected = getTempleCellByKey(templeLayout, templeLayout.selectedCellKey);
+    if (selected && selected.roomId !== "empty") {
+      return `${TEMPLE_ROOMS[selected.roomId].name} | T${selected.tier} | ${selected.reachable ? "reachable" : "unlinked"}`;
+    }
+    return "Pick a room, then click a tile";
+  }
+
+  if (campaignGuideAct > 0) {
+    const actTime = formatCampaignTime(campaignActTimes[Math.max(0, campaignGuideAct - 1)] ?? 0);
+    const total = formatCampaignTime(campaignTotalMs);
+    const area = state.current_area;
+    const zoneName = area?.name ?? "";
+    const glow = campaignTimerRunning ? " \u25CF" : " \u25CB";
+    return `${actDisplayName(campaignGuideAct)} \u00B7 ${zoneName} \u00B7 ${actTime} / ${total}${glow}`;
+  }
+
+  if (state.current_area?.area_type === "map") {
+    window.clearInterval(compactRuntimeHandle);
+    compactRuntimeHandle = window.setInterval(() => {
+      if (state.current_area?.area_type === "map") {
+        const line = atlasCompactLineState(
+          state.current_area,
+          state.active_map_run ?? null,
+          formatCompactRuntime(state.current_area.entered_at_epoch_ms),
+        );
+        applyCompactMapLine(line, state.current_area);
+      }
+    }, 1000);
+
+    return compactMapMetaText(state.current_area);
+  }
+
+  if (state.current_area?.area_type === "hideout") {
+    return "Ctrl+C scan \u00B7 Alt+D trade";
+  }
+
+  if (state.current_area?.area_type === "town") {
+    return "Ctrl+C scan items";
+  }
+
+  if (state.scanned_item?.base_type) {
+    return `${state.scanned_item.base_type} | Alt+D trade`;
+  }
+
+  return status;
+}
+
+function renderCampaignChecklist(): void {
+  const zone = findCurrentZoneInGuide();
+  if (!checklistElement) return;
+
+  if (campaignGuideAct <= 0) {
+    checklistElement.innerHTML = "";
+    checklistElement.classList.remove("is-expanded");
+    return;
+  }
+
+  if (!zone) {
+    checklistElement.classList.toggle("is-expanded", campaignExpanded);
+    return;
+  }
+
+  const stepsHtml = zone.steps.map((step, i) => {
+    const key = stepKey(campaignGuideAct, zone.name, i);
+    const done = campaignCompletedSteps.has(key);
+    const tagLabels = step.tags.join(" · ");
+    const loc = step.loc ? ` (${escapeHtml(step.loc)})` : "";
+    const rewardHtml = step.reward
+      ? ` <span class="reward-chip" style="color:${rewardColor(step.tags, step.reward)};border-color:${rewardColor(step.tags, step.reward)}">${escapeHtml(step.reward)}</span>`
+      : "";
+    return `<div class="checklist-step${done ? " completed" : ""}" data-campaign-step-key="${key}">${done ? "☑" : "☐"} ${escapeHtml(step.text)}${loc}${rewardHtml}</div>`;
+  }).join("");
+
+  checklistElement.innerHTML = stepsHtml;
+  checklistElement.classList.toggle("is-expanded", campaignExpanded);
+}
+
+function compactMapMetaText(area: CurrentAreaInfo) {
+  const runtimeLabel = formatCompactRuntime(area.entered_at_epoch_ms);
+  return atlasCompactLineState(area, state.active_map_run ?? null, runtimeLabel).text;
+}
+
+function applyCompactMapLine(line: AtlasCompactLineState, area: CurrentAreaInfo) {
+  if (!compactTitleElement || !compactMetaElement || !compactIndicatorsElement || !compactRiskElement) return;
+  compactTitleElement.textContent = area.name || "Map";
+  compactMetaElement.textContent = line.text;
+  compactIndicatorsElement.innerHTML = line.indicators.map(renderCompactIndicator).join("");
+  compactRiskElement.textContent = line.riskReason ? `Risk: ${line.riskReason}` : "";
+  if (line.riskDetail) {
+    compactRiskElement.title = line.riskDetail;
+  } else {
+    compactRiskElement.removeAttribute("title");
+  }
+}
+
+function compactLineHasMapDetail(line: AtlasCompactLineState) {
+  return line.indicators.length > 0
+    || Boolean(line.riskReason)
+    || /^(\d+\s+mods|OCR\s+\d+\s+mods)/i.test(line.text);
+}
+
+function renderCompactIndicator(indicator: AtlasCompactIndicator, index = 0) {
+  return `<span class="compact-indicator compact-indicator-${escapeAttribute(indicator.tone)} compact-indicator-${escapeAttribute(indicator.label.toLowerCase())}" style="--chip-index:${index}"><b>${escapeHtml(indicator.label)}</b><span>${escapeHtml(indicator.value)}</span></span>`;
+}
+
+function setCompactSeverityClass(element: HTMLElement, severity: AtlasCompactSeverity) {
+  for (const value of ["none", "info", "warning", "danger", "critical"] as const) {
+    element.classList.toggle(`compact-severity-${value}`, value === severity);
+  }
+}
+
+function compactSeverityPct(severity: AtlasCompactSeverity) {
+  if (severity === "critical") return 100;
+  if (severity === "danger") return 76;
+  if (severity === "warning") return 48;
+  if (severity === "info") return 24;
+  return 0;
+}
+
+function formatCompactRuntime(enteredAtEpochMs: number) {
+  const elapsed = Math.max(0, Math.floor((Date.now() - enteredAtEpochMs) / 1000));
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function clearListingPreviewHideTimer() {
+  return;
+}
+
+function startListingPreviewPolling() {
+  if (!isListingPreviewWindow || previewPollHandle) {
+    return;
+  }
+
+  const poll = () => {
+    void invoke<ListingPreviewRequest | null>("get_listing_preview")
+      .then((preview) => {
+        const nextSerialized = JSON.stringify(preview);
+        const currentSerialized = JSON.stringify(hoveredListingPreview);
+        if (nextSerialized !== currentSerialized) {
+          hoveredListingPreview = preview;
+          render();
+        }
+      })
+      .catch((error) => {
+        console.error("failed to poll listing preview", error);
+      });
+  };
+
+  poll();
+  previewPollHandle = window.setInterval(poll, 250);
+}
+
+function stopListingPreviewPolling() {
+  if (!previewPollHandle) {
+    return;
+  }
+
+  window.clearInterval(previewPollHandle);
+  previewPollHandle = 0;
+}
+
+async function hideListingPreview() {
+  hoveredListingPreview = null;
+  pinnedListingPreviewIndex = null;
+  if (!isListingPreviewWindow) {
+    await invoke("hide_listing_preview").catch((error) => pushStatus("preview", String(error)));
+  }
+  render();
+}
+
+async function showListingPreviewForIndex(index: number, anchorTop: number) {
+  const listing = state.price_check?.listings[index];
+  if (!listing) {
+    return;
+  }
+
+  pinnedListingPreviewIndex = index;
+  hoveredListingPreview = {
+    listing,
+    family: state.scanned_item?.family ?? null,
+  };
+
+  await invoke("show_listing_preview", {
+    preview: hoveredListingPreview,
+    anchorTop,
+  }).catch((error) => pushStatus("preview", String(error)));
+}
+
+function renderScanShortcut() {
+  const mod = appSettings.scanMod || DEFAULT_APP_SETTINGS.scanMod;
+  const key = normalizeShortcutKey(appSettings.scanKey, DEFAULT_APP_SETTINGS.scanKey);
+  return `<kbd>${escapeHtml(mod)}</kbd> + <kbd>${escapeHtml(key)}</kbd>`;
+}
+
+function renderProfilePanel() {
+  const snapshot = state.build_snapshot;
+  const fingerprint = state.build_fingerprint;
+  const hasSnapshot = Boolean(snapshot);
+  const characterName = snapshot?.character ?? "No character linked";
+  const league = snapshot?.league ?? state.trade_league ?? "Unknown league";
+  const classLine = [
+    snapshot?.level ? `Level ${snapshot.level}` : null,
+    snapshot?.ascendancy ?? snapshot?.class_name ?? null,
+  ].filter(Boolean).join(" ") || profileSourceFallback(snapshot);
+  const tags = fingerprint?.tags.length
+    ? fingerprint.tags.map((tag) => `<span class="atlas-build-tag">${escapeHtml(tag.replace(/_/g, " "))}</span>`).join("")
+    : `<span class="atlas-build-tag muted">No build fingerprint yet</span>`;
+  const notes = fingerprint?.notes.length
+    ? `<div class="profile-import-notes">${fingerprint.notes.map((note) => `<p>${escapeHtml(note)}</p>`).join("")}</div>`
+    : "";
+
   return `
-    <article class="screen atlas-screen">
-      <header class="screen-header">
-        <div><p class="eyebrow">Atlas tracking</p><h2>Run Context</h2><span>OCR-assisted waystone safety</span></div>
-        <button class="primary">Read Tab Overlay</button>
+    <div class="profile-panel-shell">
+      <section class="profile-hero ${feedbackClass(feedbackState.profileImportedAt, "is-import-fresh")}">
+        ${renderProfileAvatar(snapshot, characterName)}
+        <div>
+          <p class="profile-league">${escapeHtml(leagueLabel(league))}</p>
+          <h2>${escapeHtml(characterName)}</h2>
+          <strong>${escapeHtml(classLine)}</strong>
+        </div>
+      </section>
+
+      ${!hasSnapshot ? `
+        <section class="profile-card profile-card-import">
+          <p class="section-label">First Run Setup</p>
+          <h3>Connect your build</h3>
+          <p>Paste a public PoE.ninja character link or a PoB export/readable build text. Reliquary uses it locally to pick safer map warnings.</p>
+          ${renderBuildProfileImportControls()}
+        </section>
+      ` : `
+        <section class="profile-card">
+          <div class="profile-card-header">
+            <div>
+              <p class="section-label">Build fingerprint</p>
+              <h3>${escapeHtml(profileLabel(fingerprint?.recommended_profile_id ?? state.hazard_profile_id))}</h3>
+            </div>
+            <button class="atlas-secondary-action" type="button" data-profile-reimport>Change</button>
+          </div>
+          <div class="atlas-build-tags">${tags}</div>
+          ${notes}
+        </section>
+
+        <section class="profile-card profile-card-collapsible" data-profile-import-card hidden>
+          <p class="section-label">Update Build Source</p>
+          ${renderBuildProfileImportControls()}
+        </section>
+      `}
+
+      <section class="profile-card profile-stats-card">
+        <p class="section-label">Character</p>
+        ${renderProfileStatRow("Attributes", renderAttributeValues(snapshot))}
+        ${renderProfileStatRow("Movement Speed", formatPercent(snapshot?.movement_speed))}
+        ${renderProfileStatRow("Charges", renderChargeValues(snapshot))}
+      </section>
+
+      <section class="profile-card profile-stats-card">
+        <p class="section-label">Defensive</p>
+        ${renderProfileStatRow("Life", formatNumber(snapshot?.life))}
+        ${renderProfileStatRow("Energy Shield", formatNumber(snapshot?.energy_shield))}
+        ${renderProfileStatRow("Mana", formatNumber(snapshot?.mana))}
+        ${renderProfileStatRow("Spirit", formatNumber(snapshot?.spirit))}
+        ${renderProfileStatRow("Armour", formatNumber(snapshot?.armour))}
+        ${renderProfileStatRow("Evasion Rating", formatNumber(snapshot?.evasion_rating))}
+        ${renderProfileStatRow("Evade Chance", formatPercent(snapshot?.evade_chance))}
+        ${renderProfileStatRow("Deflection Rating", formatNumber(snapshot?.deflection_rating))}
+        ${renderProfileStatRow("Deflect Chance", formatPercent(snapshot?.deflect_chance))}
+        ${renderProfileStatRow("Physical Taken As", formatPercent(snapshot?.physical_taken_as))}
+        ${renderProfileStatRow("Resistances", renderResistanceValues(snapshot))}
+      </section>
+
+      <section class="profile-card profile-stats-card">
+        <p class="section-label">Simulated</p>
+        ${renderProfileStatRow("Effective Health Pool", snapshot?.effective_health_pool ? escapeHtml(snapshot.effective_health_pool) : "—")}
+        ${renderProfileStatRow("Max Hit", renderMaxHit(snapshot))}
+      </section>
+
+      <section class="profile-card profile-skill-card">
+        <p class="section-label">Skill DPS Estimation</p>
+        ${renderSkillDpsRows(snapshot)}
+      </div>
+    </div>
+  `;
+}
+
+function profileSourceFallback(snapshot: BuildSnapshot | null) {
+  if (!snapshot) return "Import a PoE.ninja URL or PoB code";
+  if (snapshot.source === "poe_ninja_character_url") return "PoE.ninja identity imported";
+  if (snapshot.source === "pob_code") return "PoB imported; calculated stats unavailable";
+  return "Manual profile";
+}
+
+function renderProfileAvatar(snapshot: BuildSnapshot | null, characterName: string) {
+  const classIconUrl = snapshot?.class_icon_url?.trim();
+  if (!classIconUrl) {
+    return `<div class="profile-avatar" aria-hidden="true">${escapeHtml(profileInitials(characterName))}</div>`;
+  }
+
+  const className = snapshot?.ascendancy ?? snapshot?.class_name ?? "character class";
+  return `
+    <div class="profile-avatar has-class-icon" aria-hidden="true">
+      <img src="${escapeAttribute(classIconUrl)}" alt="${escapeAttribute(className)} icon" loading="lazy" />
+    </div>
+  `;
+}
+
+function renderBuildProfileImportControls() {
+  return `
+    <div class="atlas-build-import">
+      <input
+        type="url"
+        data-build-profile-url
+        value="${escapeAttribute(buildProfileUrlInput || state.build_snapshot?.source_url || "")}"
+        placeholder="https://poe.ninja/poe2/profile/account/league/character/name"
+        aria-label="PoE.ninja character URL"
+      />
+      <button class="atlas-secondary-action" type="button" data-import-build-profile>Import</button>
+    </div>
+    <div class="atlas-build-paste">
+      <textarea
+        data-build-profile-text
+        placeholder="Paste a PoB export code or readable build text."
+        aria-label="PoB export code or readable build text"
+      >${escapeHtml(buildProfileTextInput)}</textarea>
+      <button class="atlas-secondary-action" type="button" data-import-pob-profile>Import PoB/Text</button>
+    </div>
+  `;
+}
+
+function renderProfileStatRow(label: string, value: string) {
+  return `
+    <div class="profile-stat-row">
+      <span>${escapeHtml(label)}</span>
+      <strong>${value}</strong>
+    </div>
+  `;
+}
+
+function renderAttributeValues(snapshot: BuildSnapshot | null) {
+  const attributes = snapshot?.attributes;
+  return [
+    statValue(attributes?.strength),
+    statValue(attributes?.dexterity),
+    statValue(attributes?.intelligence),
+  ].map((value, index) => `<span class="profile-attr-${index}">${escapeHtml(value)}</span>`).join(" / ");
+}
+
+function renderChargeValues(snapshot: BuildSnapshot | null) {
+  const charges = snapshot?.charges;
+  return [
+    statValue(charges?.endurance),
+    statValue(charges?.frenzy),
+    statValue(charges?.power),
+  ].map((value, index) => `<span class="profile-charge-${index}">${escapeHtml(value)}</span>`).join(" / ");
+}
+
+function renderResistanceValues(snapshot: BuildSnapshot | null) {
+  const resistances = snapshot?.resistances;
+  return [
+    resistanceValue(resistances?.fire, "fire"),
+    resistanceValue(resistances?.cold, "cold"),
+    resistanceValue(resistances?.lightning, "lightning"),
+    resistanceValue(resistances?.chaos, "chaos"),
+  ].join(" / ");
+}
+
+function renderMaxHit(snapshot: BuildSnapshot | null) {
+  const maxHit = snapshot?.max_hit;
+  if (!maxHit) return "—";
+  return [
+    maxHit.physical ?? "—",
+    maxHit.fire ?? "—",
+    maxHit.cold ?? "—",
+    maxHit.lightning ?? "—",
+    maxHit.chaos ?? "—",
+  ].map((value, index) => `<span class="profile-maxhit-${index}">${escapeHtml(value)}</span>`).join(" / ");
+}
+
+function renderSkillDpsRows(snapshot: BuildSnapshot | null) {
+  const rows = snapshot?.skill_dps?.length
+    ? snapshot.skill_dps
+    : (snapshot?.main_skills ?? []).map((name) => ({ name, dps: null }));
+  if (!rows.length) return `<div class="empty-listing">Import a build to show detected skills.</div>`;
+  return rows.slice(0, 6).map((row) => {
+    const pct = skillDpsPercent(row.dps);
+    return `
+      <div class="profile-skill-row">
+        <span>${escapeHtml(row.name)}</span>
+        <div class="profile-skill-meter"><i style="width:${pct}%"></i></div>
+        <strong>${escapeHtml(row.dps ?? "—")}</strong>
+      </div>
+    `;
+  }).join("");
+}
+
+function skillDpsPercent(value: string | null) {
+  if (!value) return 4;
+  const number = parseFloat(value.replace(/,/g, ""));
+  if (!Number.isFinite(number)) return 4;
+  const multiplier = /m/i.test(value) ? 1000 : /k/i.test(value) ? 1 : 0.001;
+  return Math.max(4, Math.min(100, number * multiplier / 10));
+}
+
+function profileInitials(value: string) {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "R";
+}
+
+function leagueLabel(value: string) {
+  return value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toUpperCase();
+}
+
+function statValue(value: number | null | undefined) {
+  return value == null ? "—" : formatNumber(value);
+}
+
+function formatNumber(value: number | null | undefined) {
+  return value == null ? "—" : Intl.NumberFormat().format(value);
+}
+
+function formatPercent(value: number | null | undefined) {
+  return value == null ? "—" : `${Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}%`;
+}
+
+function resistanceValue(value: number | null | undefined, type: string) {
+  return `<span class="profile-res-${escapeAttribute(type)}">${escapeHtml(formatPercent(value))}</span>`;
+}
+
+function renderScanPanel(item: ScannedItem | null, priceCheck: PriceCheck | null) {
+  if (!item) {
+    return `
+      <div class="empty-state scan-waiting-state">
+        <p class="section-label">Waiting for clipboard scan</p>
+        <p>Hover an item in PoE2 and press ${renderScanShortcut()}. The parsed item and hazard profile will land here.</p>
+      </div>
+    `;
+  }
+
+  const profile = itemProfile(item);
+  const specs = itemSpecs(item, profile, state.source_truth_snapshot);
+  const activeSpecCount = specs.filter((spec) => selectedSpecKeys.has(spec.key)).length;
+  const hazardMarkup = item.hazards.length
+    ? `
+      <div class="hazard-box">
+        <p class="section-label">Important Notice</p>
+        ${item.hazards.map((hazard) => `<div class="hazard-line">${escapeHtml(hazard)}</div>`).join("")}
+      </div>
+    `
+    : "";
+  const itemClass = item.item_class ?? "Item";
+  const baseType = item.base_type ?? "Unknown base";
+  const rarityClass = rarityClassName(item.rarity);
+  const bannerTitle = item.rarity.toLowerCase() === "unique" ? item.name : baseType;
+  const valueEntries = itemValueEntries(item, specs);
+  const modifierGroups = splitModifierSpecs(specs);
+  const modifierCount =
+    modifierGroups.rune.length +
+    modifierGroups.explicit.length +
+    modifierGroups.implicit.length +
+    modifierGroups.special.length;
+  const densityClass =
+    modifierCount >= 8 ? "density-tight" : modifierCount >= 6 ? "density-compact" : "density-normal";
+
+  return `
+    <section class="evaluate-card ${rarityClass} ${densityClass} ${feedbackClass(feedbackState.itemScannedAt, "is-scan-fresh")}">
+      <div class="evaluate-sidebar" data-item-section>
+        <div class="poe-item-banner">
+          <div class="banner-corner banner-corner-left" aria-hidden="true"></div>
+          <div class="banner-center">
+            <p class="banner-subtitle">${escapeHtml(item.rarity)} ${escapeHtml(itemClass)}</p>
+            <h2 class="banner-title">${escapeHtml(bannerTitle)}</h2>
+          </div>
+          <div class="banner-corner banner-corner-right" aria-hidden="true"></div>
+        </div>
+        <div class="item-profile" data-item-profile>
+          <div class="profile-pills">
+            ${["item_level", "required_level", "sockets", "spirit"]
+              .map((kind) => specs.find((spec) => spec.kind === kind))
+              .filter((spec): spec is ItemSpec => Boolean(spec))
+              .map((spec) => renderSpecButton(spec, "profile-pill"))
+              .join("")}
+          </div>
+          ${renderValueLines(valueEntries)}
+          <div class="spec-toolbar">
+            <span>${activeSpecCount ? `${activeSpecCount} trade filter${activeSpecCount === 1 ? "" : "s"} active` : "Click any stat or mod to rebuild search"}</span>
+            ${activeSpecCount ? `<button class="clear-specs" data-clear-specs type="button">Clear</button>` : ""}
+          </div>
+          <div class="mod-chip-stack" data-mod-stack aria-label="Clickable item specifications">
+            ${renderModifierSections(modifierGroups, item.rarity)}
+          </div>
+          <div class="item-tags">
+            <span>${escapeHtml(item.rarity)} ${escapeHtml(itemClass)}</span>
+            <span>${item.family === "currency" ? "Exchange Mode" : item.hazards.length ? "Hazards detected" : "Modifiable"}</span>
+          </div>
+          ${renderPriceProfileControls()}
+        </div>
+        ${hazardMarkup}
+      </div>
+      <div class="evaluate-results" data-results-section>
+        ${renderFilteredPriceCheck(priceCheck, item)}
+      </div>
+    </section>
+  `;
+}
+
+function renderValueLines(entries: ValueLineEntry[]) {
+  if (!entries.length) {
+    return "";
+  }
+
+  return `
+    <div class="defense-lines">
+      ${entries.map((entry) => renderValueEntry(entry)).join("")}
+    </div>
+  `;
+}
+
+function renderPriceProfileControls() {
+  return `
+    <div class="match-toggle-row" aria-label="Search profile">
+      ${PRICE_PROFILES.map(
+        (profile) => `
+          <label title="${escapeAttribute(profile.title)}">
+            <input
+              type="radio"
+              name="match-profile"
+              value="${escapeAttribute(profile.id)}"
+              data-price-profile="${escapeAttribute(profile.id)}"
+              ${selectedPriceProfile === profile.id ? "checked" : ""}
+            />
+            ${escapeHtml(profile.label)}
+          </label>
+        `,
+      ).join("")}
+    </div>
+  `;
+}
+
+function renderValueLine(spec: ItemSpec) {
+  const selected = isSpecSelected(spec);
+  const applied = selected && isSpecApplied(spec);
+  const [label, value] = splitSpecLabel(spec.label);
+
+  return `
+    <button
+      class="defense-spec value-line ${selected ? "is-active" : ""} ${applied ? "is-applied" : selected ? "is-pending" : ""}"
+      data-spec-key="${escapeAttribute(spec.key)}"
+      type="button"
+      title="Rebuild trade search with this item value"
+    >
+      <span class="value-label">${escapeHtml(label)}</span>
+      <span class="value-number">${escapeHtml(value)}</span>
+    </button>
+  `;
+}
+
+function renderStaticValueLine(label: string, value: string) {
+  return `
+    <div class="defense-spec value-line is-static">
+      <span class="value-label">${escapeHtml(label)}</span>
+      <span class="value-number">${escapeHtml(value)}</span>
+    </div>
+  `;
+}
+
+function renderValueEntry(entry: ValueLineEntry) {
+  return entry.spec ? renderValueLine(entry.spec) : renderStaticValueLine(entry.label, entry.value);
+}
+
+function renderPreviewPills(listing: PriceListing) {
+  const pills = [
+    listing.item_level ? `Item Level: ${listing.item_level}` : null,
+    listing.required_level ? `Requires Level: ${listing.required_level}` : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return pills.map((value) => `<div class="profile-pill preview-pill">${escapeHtml(value)}</div>`).join("");
+}
+
+function renderPreviewValueLines(entries: Array<{ label: string; value: string }>) {
+  if (!entries.length) {
+    return "";
+  }
+
+  return `
+    <div class="defense-lines preview-value-lines">
+      ${entries.map((entry) => renderStaticValueLine(entry.label, entry.value)).join("")}
+    </div>
+  `;
+}
+
+function previewValueEntries(listing: PriceListing, family: string | null) {
+  const entries: Array<{ label: string; value: string }> = [];
+  const seen = new Set<string>();
+
+  const addEntry = (label: string, value: string | null | undefined) => {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const normalized = normalizeDisplayLabel(label);
+    if (seen.has(normalized)) {
+      return;
+    }
+
+    seen.add(normalized);
+    entries.push({ label, value: trimmed });
+  };
+
+  if (listing.quality !== null) {
+    addEntry("Quality", `${listing.quality}%`);
+  }
+  if (listing.armour !== null) {
+    addEntry("Armour", `${listing.armour}`);
+  }
+  if (listing.evasion !== null) {
+    addEntry("Evasion Rating", `${listing.evasion}`);
+  }
+  if (listing.energy_shield !== null) {
+    addEntry("Energy Shield", `${listing.energy_shield}`);
+  }
+
+  (listing.preview_property_lines ?? []).forEach((line) => {
+    const property = parseDisplayPropertyLine(cleanTradeMarkup(line));
+    if (!property) {
+      return;
+    }
+    if (family && !shouldRenderPropertyValue(family, property.label)) {
+      return;
+    }
+    addEntry(property.label, property.value);
+  });
+
+  return entries;
+}
+
+type PreviewModifierGroups = {
+  rune: string[];
+  explicit: string[];
+  implicit: string[];
+  special: string[];
+};
+
+function previewModifierGroups(modifiers: string[]): PreviewModifierGroups {
+  const groups: PreviewModifierGroups = {
+    rune: [],
+    explicit: [],
+    implicit: [],
+    special: [],
+  };
+
+  modifiers.forEach((modifier) => {
+    const normalized = modifier.toLowerCase();
+
+    if (normalized.includes("(rune)")) {
+      groups.rune.push(modifier);
+      return;
+    }
+
+    if (normalized.includes("(implicit)")) {
+      groups.implicit.push(modifier);
+      return;
+    }
+
+    if (
+      normalized.includes("(desec") ||
+      normalized.includes("(corrupt") ||
+      normalized.includes("(enchant") ||
+      normalized.includes("(fractured)")
+    ) {
+      groups.special.push(modifier);
+      return;
+    }
+
+    groups.explicit.push(modifier);
+  });
+
+  return groups;
+}
+
+function renderPreviewModifierSections(groups: PreviewModifierGroups) {
+  const sections = [
+    renderPreviewModifierGroup("Rune Mods", groups.rune, "rune"),
+    renderPreviewModifierGroup("Item Mods", groups.explicit, "explicit"),
+    renderPreviewModifierGroup("Implicit", groups.implicit, "implicit"),
+    renderPreviewModifierGroup("Special", groups.special, "special"),
+  ].filter(Boolean);
+
+  return sections.length
+    ? sections.join("")
+    : `<div class="mod-chip muted">No explicit modifiers fetched for this listing.</div>`;
+}
+
+function renderPreviewModifierGroup(
+  label: string,
+  modifiers: string[],
+  tone: "rune" | "explicit" | "implicit" | "special",
+) {
+  if (!modifiers.length) {
+    return "";
+  }
+
+  return `
+    <section class="modifier-group modifier-group-${tone}">
+      <p class="modifier-group-label">${escapeHtml(label)}</p>
+      <div class="modifier-group-body">
+        ${modifiers.map((modifier) => `<span class="mod-chip is-${tone} preview-mod-chip">${escapeHtml(modifier)}</span>`).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderItemSpec(spec: ItemSpec, tone = "explicit", meta?: ModifierChipMeta) {
+  return renderSpecButton(spec, `mod-chip is-${tone}`, meta);
+}
+
+function renderModifierSections(groups: ModifierGroups, rarity: string) {
+  const sections = [
+    renderModifierGroup("Rune Mods", groups.rune, "rune", rarity),
+    renderModifierGroup("Item Mods", groups.explicit, "explicit", rarity),
+    renderModifierGroup("Implicit", groups.implicit, "implicit", rarity),
+    renderModifierGroup("Special", groups.special, "special", rarity),
+  ].filter(Boolean);
+
+  return sections.length
+    ? sections.join("")
+    : `<div class="mod-chip muted">No explicit modifiers parsed yet.</div>`;
+}
+
+function renderModifierGroup(
+  label: string,
+  specs: ItemSpec[],
+  tone: "rune" | "explicit" | "implicit" | "special",
+  rarity: string,
+) {
+  if (!specs.length) {
+    return "";
+  }
+
+  const metas = modifierChipMetas(specs, rarity);
+  return `
+    <section class="modifier-group modifier-group-${tone}">
+      <p class="modifier-group-label">${escapeHtml(label)}</p>
+      <div class="modifier-group-body">
+        ${specs.map((spec, index) => renderItemSpec(spec, tone, metas[index])).join("")}
+      </div>
+    </section>
+  `;
+}
+
+type ModifierChipMeta = {
+  tierLabel: string;
+  tierTitle: string;
+  affixLabel: string;
+  affixTone: "prefix" | "suffix" | "unique" | "special" | "unknown";
+  tierConfidence: "validated" | "template" | "unknown";
+};
+
+function modifierChipMetas(specs: ItemSpec[], rarity: string): ModifierChipMeta[] {
+  let prefixCount = 0;
+  let suffixCount = 0;
+
+  return specs.map((spec) => {
+    const affix = spec.tier_match?.affix ?? null;
+    const sourceKind = spec.tier_match?.source_kind ?? spec.source_kind_hint ?? null;
+    const isUnique = rarity.toLowerCase() === "unique";
+    const tierConfidence = spec.tier_match?.confidence ?? "unknown";
+    const tierLabel = spec.tier_match
+      ? tierLabelForMatch(spec.tier_match.tier, sourceKind, tierConfidence)
+      : sourceKindLabel(sourceKind);
+    const tierTitle = spec.tier_match
+      ? `${spec.tier_match.tier || sourceKindLabel(sourceKind)} ${spec.tier_match.tier_name} (${sourceKindLabel(sourceKind)}) - ${
+          tierConfidence === "validated" ? "validated roll band" : "template-only tier hint"
+        }`
+      : sourceKind ? `${sourceKindLabel(sourceKind)} source category inferred; exact tier unknown` : "Tier unknown until source data matches this modifier";
+
+    if (isUnique) {
+      return { tierLabel, tierTitle, affixLabel: "U", affixTone: "unique", tierConfidence };
+    }
+
+    if (affix === "prefix") {
+      prefixCount += 1;
+      return { tierLabel, tierTitle, affixLabel: `P${prefixCount}`, affixTone: "prefix", tierConfidence };
+    }
+
+    if (affix === "suffix") {
+      suffixCount += 1;
+      return { tierLabel, tierTitle, affixLabel: `S${suffixCount}`, affixTone: "suffix", tierConfidence };
+    }
+
+    if (sourceKind && sourceKind !== "normal" && sourceKind !== "table") {
+      return { tierLabel, tierTitle, affixLabel: sourceKindLabel(sourceKind), affixTone: "special", tierConfidence };
+    }
+
+    return { tierLabel, tierTitle, affixLabel: "", affixTone: "unknown", tierConfidence };
+  });
+}
+
+function sourceKindLabel(sourceKind: string | null) {
+  switch (sourceKind) {
+    case "socketable":
+    case "rune":
+      return "R";
+    case "bonded":
+      return "B";
+    case "item_card":
+      return "I";
+    case "essence":
+    case "perfect_essence":
+      return "E";
+    case "desecrated":
+      return "D";
+    case "implicit":
+      return "I";
+    case "corrupted":
+      return "C";
+    case "enchant":
+      return "EN";
+    case "normal":
+    case "table":
+      return "?";
+    case "repoe":
+      return "?";
+    default:
+      return sourceKind ? sourceKind.slice(0, 2).toUpperCase() : "?";
+  }
+}
+
+function tierLabelForMatch(
+  tier: string | null | undefined,
+  sourceKind: string | null,
+  confidence: "validated" | "template" | "unknown",
+) {
+  if (tier && tier.trim()) {
+    return `${tier}${confidence === "template" ? "?" : ""}`;
+  }
+  return sourceKindLabel(sourceKind);
+}
+
+function renderSpecButton(spec: ItemSpec, className: string, meta?: ModifierChipMeta) {
+  const selected = isSpecSelected(spec);
+  const applied = selected && isSpecApplied(spec);
+  const sideMeta = meta
+    ? `
+      <small class="mod-side-label" title="${escapeAttribute(meta.tierTitle)}">
+        <span class="mod-tier-label is-${escapeAttribute(meta.tierConfidence)}">${escapeHtml(meta.tierLabel)}</span>
+        <span class="mod-affix-label is-${escapeAttribute(meta.affixTone)}">${escapeHtml(meta.affixLabel)}</span>
+      </small>
+    `
+    : "";
+  return `
+    <button
+      class="${className} spec-chip ${selected ? "is-active" : ""} ${applied ? "is-applied" : selected ? "is-pending" : ""}"
+      data-spec-key="${escapeAttribute(spec.key)}"
+      type="button"
+      title="Rebuild trade search with this specification"
+    >
+      ${sideMeta}<span class="mod-chip-text">${escapeHtml(spec.label)}</span>
+    </button>
+  `;
+}
+
+type ModifierGroups = {
+  explicit: ItemSpec[];
+  implicit: ItemSpec[];
+  rune: ItemSpec[];
+  special: ItemSpec[];
+};
+
+function splitModifierSpecs(specs: ItemSpec[]): ModifierGroups {
+  const explicitSpecs = specs.filter((spec) => spec.kind === "explicit");
+  const groups: ModifierGroups = {
+    explicit: [],
+    implicit: [],
+    rune: [],
+    special: [],
+  };
+
+  explicitSpecs.forEach((spec) => {
+    const normalized = spec.label.toLowerCase();
+
+    if (isItemValueModifier(spec.label)) {
+      return;
+    }
+
+    if (normalized.includes("(rune)") || spec.source_kind_hint === "rune" || spec.tier_match?.source_kind === "rune") {
+      groups.rune.push(spec);
+      return;
+    }
+
+    if (normalized.includes("(implicit)") || spec.source_kind_hint === "implicit" || spec.tier_match?.source_kind === "implicit") {
+      groups.implicit.push(spec);
+      return;
+    }
+
+    if (
+      normalized.includes("(desec") ||
+      normalized.includes("(corrupt") ||
+      normalized.includes("(enchant") ||
+      normalized.includes("(fractured)") ||
+      ["desecrated", "corrupted", "enchant", "fractured"].includes(spec.source_kind_hint ?? spec.tier_match?.source_kind ?? "")
+    ) {
+      groups.special.push(spec);
+      return;
+    }
+
+    groups.explicit.push(spec);
+  });
+
+  return groups;
+}
+
+function splitSpecLabel(label: string) {
+  const [left, ...rest] = label.split(":");
+  if (!rest.length) {
+    return [label, ""];
+  }
+
+  return [left.trim(), rest.join(":").trim()];
+}
+
+function itemValueEntries(item: ScannedItem, specs: ItemSpec[]) {
+  const entries: ValueLineEntry[] = [];
+  const usedLabels = new Set<string>();
+  const specByKind = new Map(
+    specs
+      .filter((spec) => spec.kind !== "explicit")
+      .map((spec) => [spec.kind, spec] as const),
+  );
+
+  const addSpecKind = (kind: ItemSpec["kind"]) => {
+    const spec = specByKind.get(kind);
+    if (!spec) {
+      return;
+    }
+
+    const normalizedLabel = normalizeDisplayLabel(splitSpecLabel(spec.label)[0]);
+    if (usedLabels.has(normalizedLabel)) {
+      return;
+    }
+
+    usedLabels.add(normalizedLabel);
+    const [label, value] = splitSpecLabel(spec.label);
+    entries.push({ label, value, spec });
+  };
+
+  const addStaticEntry = (label: string, value: string) => {
+    const normalizedLabel = normalizeDisplayLabel(label);
+    if (!value || usedLabels.has(normalizedLabel)) {
+      return;
+    }
+
+    usedLabels.add(normalizedLabel);
+    entries.push({ label, value, spec: null });
+  };
+
+  familyValueKinds(item.family).forEach(addSpecKind);
+
+  displayPropertyLines(item).forEach((property) => {
+    if (!shouldRenderPropertyValue(item.family, property.label)) {
+      return;
+    }
+
+    addStaticEntry(property.label, property.value);
+  });
+
+  return entries;
+}
+
+function familyValueKinds(family: string): ItemSpec["kind"][] {
+  switch (family) {
+    case "currency":
+      return [];
+    case "armour":
+    case "offhand":
+      return ["quality", "armour", "evasion", "energy_shield"];
+    case "weapon":
+      return ["quality"];
+    case "accessory":
+    case "belt":
+    case "relic":
+      return ["quality"];
+    case "gem":
+    case "flask":
+    case "charm":
+    case "tablet":
+    case "waystone":
+      return [];
+    default:
+      return ["quality", "armour", "evasion", "energy_shield"];
+  }
+}
+
+function shouldRenderPropertyValue(family: string, label: string) {
+  const normalized = normalizeDisplayLabel(label);
+
+  switch (family) {
+    case "currency":
+      return false;
+    case "weapon":
+      return [
+        "physical damage",
+        "critical hit chance",
+        "attacks per second",
+        "weapon range",
+        "dps",
+        "block chance",
+      ].includes(normalized);
+    case "gem":
+      return ["level", "mana cost", "cast time", "attack time", "cooldown time", "duration"].includes(
+        normalized,
+      );
+    case "armour":
+    case "offhand":
+      return ["block chance"].includes(normalized);
+    case "belt":
+      return ["charm slots", "block chance"].includes(normalized);
+    case "accessory":
+    case "relic":
+      return ["block chance", "limit", "radius", "duration"].includes(normalized);
+    case "charm":
+      return ["lasts", "consumes", "currently has", "used when"].includes(normalized);
+    case "flask":
+      return false;
+    case "tablet":
+    case "waystone":
+      return true;
+    default:
+      return ["physical damage", "critical hit chance", "attacks per second", "weapon range", "dps"].includes(
+        normalized,
+      );
+  }
+}
+
+function displayPropertyLines(item: ScannedItem) {
+  return item.property_lines
+    .map((line) => parseDisplayPropertyLine(cleanTradeMarkup(line)))
+    .filter((property): property is { label: string; value: string } => Boolean(property));
+}
+
+function parseDisplayPropertyLine(line: string) {
+  if (!line || /^(flask|charm|relic)$/i.test(line)) {
+    return null;
+  }
+
+  const match = line.match(/^([^:]+):\s*(.+)$/);
+  if (match) {
+    return {
+      label: match[1].trim(),
+      value: match[2].trim(),
+    };
+  }
+
+  if (/^recovers /i.test(line)) {
+    return { label: "Recovers", value: line.replace(/^recovers\s+/i, "").trim() };
+  }
+
+  if (/^consumes /i.test(line)) {
+    return { label: "Consumes", value: line.replace(/^consumes\s+/i, "").trim() };
+  }
+
+  if (/^currently has /i.test(line)) {
+    return { label: "Currently Has", value: line.replace(/^currently has\s+/i, "").trim() };
+  }
+
+  if (/^lasts /i.test(line)) {
+    return { label: "Lasts", value: line.replace(/^lasts\s+/i, "").trim() };
+  }
+
+  if (/^used when /i.test(line)) {
+    return { label: "Used When", value: line.replace(/^used when\s+/i, "").trim() };
+  }
+
+  if (/^has \d+ charm slots?/i.test(line)) {
+    return {
+      label: "Charm Slots",
+      value: line.replace(/^has\s+/i, "").replace(/\s+charm slots?/i, "").trim(),
+    };
+  }
+
+  return {
+    label: "Property",
+    value: line,
+  };
+}
+
+function normalizeDisplayLabel(label: string) {
+  return label.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function apiTradeSourceUrl(sourceUrl: string | null | undefined) {
+  if (!sourceUrl || sourceUrl.includes("?q=")) {
+    return null;
+  }
+  return sourceUrl.includes("/trade2/search/poe2/") ? sourceUrl : null;
+}
+
+function currentTradeSourceUrl(priceCheck: PriceCheck, item: ScannedItem) {
+  const sourceUrl = apiTradeSourceUrl(priceCheck.source_url);
+  if (!sourceUrl) {
+    return null;
+  }
+
+  const expected = activeFilterSignature(hardPriceFiltersForSelection(
+    item,
+    selectedSpecKeys,
+    selectedPriceProfile,
+    state.source_truth_snapshot,
+  ));
+  const requested = activeFilterSignature(priceCheck.requested_filters ?? []);
+  return expected === requested ? sourceUrl : null;
+}
+
+function renderFilteredPriceCheck(priceCheck: PriceCheck | null, item: ScannedItem) {
+  if (!priceCheck) {
+    return `
+      <section class="price-check">
+        <div class="price-head">
+          <p class="section-label">Price Check</p>
+          <strong>Waiting for Ctrl+C scan</strong>
+        </div>
+      </section>
+    `;
+  }
+
+  if (item.family === "currency") {
+    return renderExchangeModePanel(priceCheck, item);
+  }
+
+  const visibleListingRanks = filteredListingRanks(priceCheck, item, selectedSpecKeys, state.source_truth_snapshot);
+  const visibleListings = visibleListingRanks.map((entry) => entry.listing);
+  const estimate = estimatePriceFromListings(priceCheck, visibleListings);
+  const selectedCurrency = currencyById(priceCheck, priceCheck.selected_currency);
+  const sourceUrl = currentTradeSourceUrl(priceCheck, item);
+  const filters = priceCheck.filters.length
+    ? priceCheck.filters
+        .map((filter) => renderPriceFilter(filter))
+        .join("")
+    : `<div class="price-filter muted">No editable filters parsed yet.</div>`;
+  const listings = visibleListings.length
+    ? visibleListingRanks.map((entry, index) => renderListingRow(entry.listing, item, index, entry)).join("")
+    : `<button class="listing-row empty-listing" type="button">${escapeHtml(emptyListingMessage(priceCheck, selectedCurrency))}</button>`;
+
+  const freshClass = feedbackClass(feedbackState.priceCheckUpdatedAt, "is-fresh-results");
+  const errorClass = priceCheck.error ? "has-price-error" : "";
+
+  return `
+    <section class="price-check ${freshClass} ${errorClass}">
+        <div class="price-check-meta">
+        <div class="estimate-card">
+          <div class="estimate-main">
+            <p class="section-label">Estimated Value</p>
+            <div class="estimate-value">
+              <span>~</span>
+              <strong>${estimate.amount === null ? "-" : formatCompactNumber(estimate.amount)}</strong>
+              ${estimate.iconUrl ? `<img class="currency-icon large" src="${escapeAttribute(estimate.iconUrl)}" alt="" />` : `<small>${escapeHtml(estimate.currencyId)}</small>`}
+            </div>
+            <p class="estimate-range">
+              Range: ${estimate.low === null || estimate.high === null ? "-" : `${formatCompactNumber(estimate.low)}-${formatCompactNumber(estimate.high)} ${escapeHtml(estimate.currencyId)}`}
+              <span class="reliability ${estimate.reliabilityClass}">Reliability: ${escapeHtml(estimate.reliability)}</span>
+            </p>
+          </div>
+          <button
+            class="stash-note-button"
+            data-copy-stash-note="${escapeAttribute(stashNoteFromEstimate(estimate))}"
+            type="button"
+            ${estimate.amount === null ? "disabled" : ""}
+            title="Copy a stash pricing note from the median estimate"
+          >
+            Copy note
+          </button>
+        </div>
+
+        <div class="result-source-row">
+          <span>${visibleListings.length}/${priceCheck.matched}</span>
+          <button class="source-link" data-source-url="${escapeAttribute(sourceUrl ?? "")}" type="button" ${sourceUrl ? "" : "disabled"}>
+            Results from pathofexile.com/trade
+          </button>
+          <button class="refresh-mark" data-source-url="${escapeAttribute(sourceUrl ?? "")}" type="button" ${sourceUrl ? "" : "disabled"} title="Open latest filtered search" aria-label="Open latest filtered search">
+            <svg class="redirect-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 7H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-2" />
+              <path d="M13 4h7v7" />
+              <path d="m11 13 9-9" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="trade-control-row">
+          <label>
+            <span>Buyout Price</span>
+            <select data-price-option aria-label="Filter listings by buyout price mode">
+              ${renderPriceOptions(priceCheck)}
+            </select>
+          </label>
+          <label>
+            <span>Display In</span>
+            <select data-price-currency aria-label="Normalize listing prices into currency">
+              ${renderCurrencyOptions(priceCheck)}
+            </select>
+          </label>
+          <label>
+            <span>Listed</span>
+            <select aria-label="Listed time">
+              <option>Any Time</option>
+              <option>1 Day</option>
+              <option>3 Days</option>
+              <option>1 Week</option>
+            </select>
+          </label>
+        </div>
+
+        <details class="filter-drawer">
+          <summary>Editable Search Values</summary>
+          <div class="price-filters">${filters}</div>
+        </details>
+      </div>
+
+      <div class="listing-table">
+        <div class="listing-header"><span></span><span>Price</span><span>iLvl</span><span>Q%</span><span>Account</span><span>Listed</span></div>
+        <div class="listing-scroll" data-load-more-marketplace="true">
+          ${listings}
+        </div>
+      </div>
+      ${renderTradeRateLimit(priceCheck.rate_limit)}
+    </section>
+  `;
+}
+
+function renderExchangeModePanel(priceCheck: PriceCheck, item: ScannedItem) {
+  const properties = displayPropertyLines(item)
+    .map(
+      (property) => `
+        <div class="price-filter muted">
+          <span>
+            <strong>${escapeHtml(property.label)}</strong>
+            <small>${escapeHtml(property.value)}</small>
+          </span>
+        </div>
+      `,
+    )
+    .join("");
+
+  return `
+    <section class="price-check">
+      <div class="price-check-meta">
+        <div class="estimate-card">
+          <div>
+            <p class="section-label">Exchange Mode</p>
+            <div class="estimate-value">
+              <strong>${escapeHtml(item.base_type ?? item.name)}</strong>
+            </div>
+            <p>Stackable currency-style items are intentionally kept out of normal gear trade search.</p>
+          </div>
+        </div>
+
+        <div class="result-source-row">
+          <span>0/0</span>
+          <button class="source-link" type="button" disabled>
+            Exchange conversion pending
+          </button>
+          <button class="refresh-mark" type="button" disabled title="Exchange pricing is not wired yet">Soon</button>
+        </div>
+
+        <details class="filter-drawer" open>
+          <summary>Parsed Item Values</summary>
+          <div class="price-filters">
+            ${properties || `<div class="price-filter muted">No stackable properties parsed yet.</div>`}
+          </div>
+        </details>
+      </div>
+
+      <div class="listing-table">
+        <div class="listing-scroll">
+          <button class="listing-row empty-listing" type="button">
+            ${escapeHtml(priceCheck.status)}
+          </button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderPriceCheck(priceCheck: PriceCheck | null, item?: ScannedItem) {
+  if (!priceCheck) {
+    return `
+      <section class="price-check">
+        <div class="price-head">
+          <p class="section-label">Price Check</p>
+          <strong>Waiting for Ctrl+C scan</strong>
+        </div>
+      </section>
+    `;
+  }
+
+  const estimate = estimatePrice(priceCheck);
+  const sourceUrl = item ? currentTradeSourceUrl(priceCheck, item) : apiTradeSourceUrl(priceCheck.source_url);
+  const filters = priceCheck.filters.length
+    ? priceCheck.filters
+        .slice(0, 8)
+        .map((filter) => renderPriceFilter(filter))
+        .join("")
+    : `<div class="price-filter muted">No editable filters parsed yet.</div>`;
+
+  const listings = priceCheck.listings.length
+    ? priceCheck.listings.map((listing, index) => renderListingRow(listing, item, index)).join("")
+    : `<button class="listing-row empty-listing" type="button">${escapeHtml(priceCheck.error ?? priceCheck.status)}</button>`;
+
+  return `
+    <section class="price-check">
+      <div class="estimate-card">
+        <div>
+          <p class="section-label">Estimated Value</p>
+          <div class="estimate-value">
+            <span>≈</span>
+            <strong>${estimate.amount === null ? "-" : formatCompactNumber(estimate.amount)}</strong>
+            ${estimate.iconUrl ? `<img class="currency-icon large" src="${escapeAttribute(estimate.iconUrl)}" alt="" />` : `<small>${escapeHtml(estimate.currencyId)}</small>`}
+          </div>
+          <p>
+            Range: ${estimate.low === null || estimate.high === null ? "-" : `${formatCompactNumber(estimate.low)}-${formatCompactNumber(estimate.high)} ${escapeHtml(estimate.currencyId)}`}
+            <span class="reliability ${estimate.reliabilityClass}">Reliability: ${escapeHtml(estimate.reliability)}</span>
+          </p>
+        </div>
+      </div>
+
+      <div class="result-source-row">
+        <span>${priceCheck.listings.length}/${priceCheck.matched}</span>
+        <button class="source-link" data-source-url="${escapeAttribute(sourceUrl ?? "")}" type="button" ${sourceUrl ? "" : "disabled"}>
+          Results from pathofexile.com/trade
+        </button>
+        <button class="refresh-mark" data-source-url="${escapeAttribute(sourceUrl ?? "")}" type="button" ${sourceUrl ? "" : "disabled"} title="Open latest filtered search">↻</button>
+      </div>
+
+        <div class="trade-control-row">
+          <label>
+            <span>Buyout Price</span>
+            <select data-price-option aria-label="Filter listings by buyout price mode">
+              ${renderPriceOptions(priceCheck)}
+            </select>
+          </label>
+          <label>
+            <span>Display In</span>
+            <select data-price-currency aria-label="Normalize listing prices into currency">
+              ${renderCurrencyOptions(priceCheck)}
+            </select>
+          </label>
+        <label>
+          <span>Listed</span>
+          <select aria-label="Listed time">
+            <option>Any Time</option>
+            <option>1 Day</option>
+            <option>3 Days</option>
+            <option>1 Week</option>
+          </select>
+        </label>
+      </div>
+
+      <details class="filter-drawer">
+        <summary>Editable Search Values</summary>
+        <div class="price-filters">${filters}</div>
+      </details>
+
+      <div class="listing-table">
+        <div class="listing-header"><span></span><span>Price</span><span>rLvl</span><span>Q%</span><span>Account</span><span>Listed</span></div>
+        <div class="listing-scroll" data-load-more-marketplace="true">
+          ${listings}
+        </div>
+      </div>
+      ${renderTradeRateLimit(priceCheck.rate_limit)}
+    </section>
+  `;
+}
+
+function renderCurrencyOptions(priceCheck: PriceCheck) {
+  const currencies = priceCheck.currencies.length
+    ? priceCheck.currencies
+    : fallbackCurrencies();
+
+  return currencies
+    .map(
+      (currency) =>
+        `<option value="${escapeAttribute(currency.id)}" ${currency.id === priceCheck.selected_currency ? "selected" : ""}>${escapeHtml(currency.name)}</option>`,
+    )
+    .join("");
+}
+
+function renderPriceOptions(priceCheck: PriceCheck) {
+  const directCurrencies = priceCheck.currencies.length
+    ? priceCheck.currencies
+    : fallbackCurrencies();
+  const options = [
+    { value: "equivalent", label: "Exalted Orb Equivalent" },
+    { value: "exalted_divine", label: "Exalted or Divine Orbs" },
+    ...directCurrencies.map((currency) => ({
+      value: currency.id,
+      label: currency.name,
+    })),
+  ];
+
+  return options
+    .map(
+      (option) =>
+        `<option value="${escapeAttribute(option.value)}" ${option.value === priceCheck.selected_price_option ? "selected" : ""}>${escapeHtml(option.label)}</option>`,
+    )
+    .join("");
+}
+
+function renderPriceFilter(filter: PriceFilter) {
+  const value = filter.value ?? "";
+  const min = filter.min ?? "";
+  const max = filter.max ?? "";
+  const tier = filter.tier ? `<mark>${escapeHtml(filter.tier)}</mark>` : "";
+
+  return `
+    <label class="price-filter">
+      <input type="checkbox" ${filter.enabled ? "checked" : ""} />
+      <span>
+        <strong>${escapeHtml(filter.label)}</strong>
+        <small>${escapeHtml(filter.source)} ${tier}</small>
+      </span>
+      <input value="${escapeAttribute(String(value))}" aria-label="Current value" />
+      <input value="${escapeAttribute(String(min))}" aria-label="Minimum value" />
+      <input value="${escapeAttribute(String(max))}" aria-label="Maximum value" placeholder="MAX" />
+    </label>
+  `;
+}
+
+function renderTradeRateLimit(rateLimit: TradeRateLimit | null) {
+  if (!rateLimit) {
+    return `<div class="trade-rate-limit" aria-hidden="true"></div>`;
+  }
+
+  const width = Math.max(5, Math.min(100, Math.round(rateLimit.usage_ratio * 100)));
+  const cooling = (rateLimit.retry_after_seconds ?? 0) > 0 || (rateLimit.active_timeout_seconds ?? 0) > 0;
+  const usageText =
+    rateLimit.current_hits !== null && rateLimit.limit !== null && rateLimit.interval_seconds !== null
+      ? `${rateLimit.current_hits}/${rateLimit.limit} in ${rateLimit.interval_seconds}s`
+      : `${width}% usage`;
+  const cooldownText = rateLimit.retry_after_seconds
+    ? ` · cooldown ${rateLimit.retry_after_seconds}s`
+    : rateLimit.active_timeout_seconds
+      ? ` · timeout ${rateLimit.active_timeout_seconds}s`
+      : "";
+  const title = `${rateLimit.policy ?? "trade2"} ${rateLimit.scope} usage: ${usageText}${cooldownText}`;
+
+  return `
+    <div class="trade-rate-limit ${cooling ? "is-cooling" : ""} ${feedbackClass(feedbackState.rateLimitAt, "is-alerting")}" title="${escapeAttribute(title)}" aria-label="${escapeAttribute(title)}">
+      <div class="trade-rate-limit-track">
+        <div class="trade-rate-limit-fill ${cooling ? "is-cooling" : ""}" style="width:${width}%"></div>
+      </div>
+      <span class="trade-rate-limit-label">${cooling ? `${rateLimit.retry_after_seconds ?? rateLimit.active_timeout_seconds}s` : usageText}</span>
+    </div>
+  `;
+}
+
+function renderListingRow(
+  listing: PriceListing,
+  item: ScannedItem | undefined,
+  index: number,
+  rank?: ListingRank,
+) {
+  const priceCheck = state.price_check;
+  const useEquivalentDisplay = !!priceCheck && priceCheck.selected_price_option === "equivalent";
+  const showNormalizedDisplay = useEquivalentDisplay && !!listing.normalized_price;
+  const priceText = showNormalizedDisplay ? listing.normalized_price! : listing.price;
+  const priceCurrencyId = showNormalizedDisplay ? listing.normalized_currency : listing.currency;
+  const priceIconUrl = resolveCurrencyIcon(
+    priceCurrencyId,
+    showNormalizedDisplay ? listing.normalized_currency_icon_url : listing.currency_icon_url,
+  );
+  const priceIcon = priceIconUrl
+    ? `<img class="currency-icon" src="${escapeAttribute(priceIconUrl)}" alt="" />`
+    : "";
+  const seller = listing.seller ?? "Unknown";
+  const quality = listing.quality ?? (item ? itemProfile(item).quality ?? 0 : 0);
+  const itemLevel = listing.item_level ?? item?.item_level ?? 0;
+  const softMiss = !!rank && rank.score >= 0 && rank.score < rank.maxScore && rank.penalties.length > 0;
+  const titleParts = [
+    showNormalizedDisplay && listing.price !== priceText ? `Listed as ${listing.price}` : "",
+    softMiss ? `Official row, local match ${rank!.score}/${rank!.maxScore}: ${rank!.penalties.join("; ")}` : "",
+  ].filter(Boolean);
+  const title = titleParts.length ? ` title="${escapeAttribute(titleParts.join(" | "))}"` : "";
+  const rowClass = [
+    "listing-row",
+    softMiss ? "is-soft-miss" : "",
+    feedbackClass(feedbackState.priceCheckUpdatedAt, "is-fresh-row"),
+  ].filter(Boolean).join(" ");
+  const matchNote = softMiss
+    ? `<small class="listing-match-note">partial ${rank!.score}/${rank!.maxScore}</small>`
+    : "";
+  const rawPriceNote =
+    showNormalizedDisplay && listing.price !== priceText
+      ? `<small class="listing-price-raw">listed ${escapeHtml(listing.price)}</small>`
+      : "";
+
+  return `
+    <div class="${rowClass}" style="--row-index:${index}"${title}>
+      <button class="inspect-eye ${pinnedListingPreviewIndex === index ? "is-active" : ""}" data-preview-listing="${index}" type="button" title="Click to inspect this exact listing">View</button>
+      <span class="listing-price">${priceIcon}${escapeHtml(priceText)}${rawPriceNote}${listing.online ? '<i class="online-dot"></i>' : ""}</span>
+      <span>${itemLevel}</span>
+      <span>${quality}%</span>
+      <span class="seller-name">${escapeHtml(shortSeller(seller))}${matchNote}</span>
+      <span>${escapeHtml(formatListed(listing.listed))}</span>
+    </div>
+  `;
+}
+
+function renderTradePanel(exchangeTab: ExchangeTabState) {
+  const categories = exchangeTab.categories.length
+    ? exchangeTab.categories
+    : fallbackExchangeTab().categories;
+  if (tradeViewPreference.view === "market") {
+    return `
+      <section class="trade-market">
+        ${renderTradeSidebar(exchangeTab, categories)}
+        ${renderMarketBoardMain()}
+      </section>`;
+  }
+  const selectedCategory =
+    categories.find((category) => category.id === exchangeTab.selected_category_id) ?? categories[0];
+  const overview = exchangeTab.overview;
+  const filteredEntries = filteredExchangeEntries(exchangeTab, tradeSearchQuery);
+  const filteredPins = filteredExchangeWatchlistPins(exchangeWatchlistState, tradeSearchQuery);
+  const currencyIcons = exchangeHeaderCurrencies(exchangeTab);
+  const sourceLabel = overview?.source ?? "poe.ninja cache";
+  const statusText = tradeWatchlistMode
+    ? `${filteredPins.length}/${exchangeWatchlistState.pins.length} local pins from cached exchange data.`
+    : exchangeTab.error ?? exchangeTab.status;
+  const quantityLabel = selectedCategory?.feed === "stash" ? "Listings" : "Quantity";
+  const updatedAt = tradeWatchlistMode
+    ? `Local watchlist - ${exchangeWatchlistState.pins.length} pinned`
+    : overview
+    ? `Last updated at ${formatTimestamp(overview.fetched_at_epoch_ms)}`
+    : "Waiting for cached exchange snapshot";
+  const title = tradeWatchlistMode ? "Favorites" : selectedCategory?.label ?? "Currency";
+
+  return `
+    <section class="trade-market">
+      <aside class="trade-sidebar">
+        <div class="trade-sidebar-section">
+          <p class="section-label">Personal</p>
+          <button class="trade-market-board-button" data-market-board-toggle type="button">
+            <span class="trade-market-board-glyph">↗</span>
+            <span>Market Board</span>
+          </button>
+          <button class="trade-favorite-button ${tradeViewPreference.view === "favorites" ? "is-active" : ""}" data-exchange-watchlist-toggle type="button">
+            <span>Favorites</span>
+            <strong>${exchangeWatchlistState.pins.length}</strong>
+          </button>
+          ${renderExchangeFocusPreset(exchangeTab, categories)}
+        </div>
+        <div class="trade-sidebar-section trade-sidebar-scroll">
+          <p class="section-label">General</p>
+          ${renderExchangeCategoryGroups(categories, tradeViewPreference.view === "category" ? exchangeTab.selected_category_id : "")}
+        </div>
+      </aside>
+
+      <div class="trade-market-main">
+        <header class="trade-market-header">
+          <div>
+            <h2>${escapeHtml(title)}</h2>
+            <p>${escapeHtml(overview?.league ?? state.trade_league)} · ${escapeHtml(updatedAt)}</p>
+          </div>
+          <div class="trade-currency-strip">
+            ${currencyIcons.map((quote) => renderExchangeCurrencyChip(quote, exchangeTab.selected_quote_currency_id ?? null)).join("")}
+          </div>
+        </header>
+
+        <label class="trade-search-bar" aria-label="Search exchange items">
+          <span>Search</span>
+          <input data-trade-search type="search" placeholder="Search items..." value="${escapeAttribute(tradeSearchQuery)}" />
+        </label>
+
+        <div class="trade-market-meta">
+          <span>${escapeHtml(tradeWatchlistMode ? "local watchlist cache" : sourceLabel)}</span>
+          <strong>${escapeHtml(statusText)}</strong>
+          <button class="trade-refresh-button" data-refresh-exchange type="button">Refresh</button>
+        </div>
+
+        <div class="trade-table-shell">
+          <div class="trade-table-header">
+            <span>Item</span>
+            <span>Price</span>
+            <span>${escapeHtml(tradeWatchlistMode ? "Quantity" : quantityLabel)}</span>
+            <span>History</span>
+            <span>Actions</span>
+          </div>
+          <div class="trade-table-scroll">
+            ${
+              tradeWatchlistMode
+                ? filteredPins.length
+                  ? filteredPins.map((pin) => renderExchangeWatchlistRow(pin, exchangeTab.selected_quote_currency_id ?? null)).join("")
+                  : `<div class="trade-empty-row">${escapeHtml(exchangeWatchlistEmptyMessage())}</div>`
+                : filteredEntries.length
+                  ? filteredEntries.map((entry, index) => renderExchangeRow(entry, exchangeTab, exchangeTab.selected_item_id, index)).join("")
+                  : `<div class="trade-empty-row">${escapeHtml(exchangeEmptyMessage(exchangeTab, selectedCategory))}</div>`
+            }
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderTradeSidebar(exchangeTab: ExchangeTabState, categories: ExchangeCategory[]) {
+  return `
+    <aside class="trade-sidebar">
+      <div class="trade-sidebar-section">
+        <p class="section-label">Personal</p>
+        <button class="trade-market-board-button is-active" data-market-board-toggle type="button">
+          <span class="trade-market-board-glyph">↗</span>
+          <span>Market Board</span>
+        </button>
+        <button class="trade-favorite-button" data-exchange-watchlist-toggle type="button">
+          <span>Favorites</span>
+          <strong>${exchangeWatchlistState.pins.length}</strong>
+        </button>
+        ${renderExchangeFocusPreset(exchangeTab, categories)}
+      </div>
+      <div class="trade-sidebar-section trade-sidebar-scroll">
+        <p class="section-label">General</p>
+        ${renderExchangeCategoryGroups(categories, "")}
+      </div>
+    </aside>`;
+}
+
+function renderMarketBoardMain() {
+  const dataset = marketBoardLoadState.key === marketBoardKey() ? marketBoardLoadState.dataset : null;
+  const updatedAt = dataset ? formatTimestamp(dataset.generated_at_epoch_ms) : "Waiting for shared snapshot";
+  const sourceText = marketBoardLoadState.source === "cache"
+    ? "Cached shared feed"
+    : dataset?.source ?? "Supabase shared history";
+  const comparisonText = dataset?.status === "ready" && dataset.comparison_window_ms
+    ? ` · ${formatMarketComparisonWindow(dataset.comparison_window_ms)} comparison`
+    : "";
+  const baselineMessage = dataset ? marketBaselineMessage(dataset) : null;
+
+  return `
+    <div class="trade-market-main market-board-main ${feedbackClass(feedbackState.marketUpdatedAt, "is-market-updated")}">
+      <header class="trade-market-header market-board-header">
+        <div>
+          <p class="section-label">Shared Economy Tape</p>
+          <h2>Market Board</h2>
+          <p>${escapeHtml(state.trade_league)} · ${escapeHtml(updatedAt)}</p>
+        </div>
+        <div class="market-period-switch" aria-label="Market comparison period">
+          ${(["30m", "1d", "7d"] as const).map((period) => `
+            <button class="${tradeViewPreference.period === period ? "is-active" : ""}" data-market-period="${period}" type="button">${period.toUpperCase()}</button>
+          `).join("")}
+        </div>
       </header>
-      <section class="metric-grid">
-        ${renderMetric("Area", "Headland", "Map level 79")}
-        ${renderMetric("Waystone", "Armed", "T15 - 106% quant")}
-        ${renderMetric("Safety", "Warning", "1 danger modifier")}
-        ${renderMetric("Profile", "Martial Artist", "Life based")}
-      </section>
-      <section class="line-preview">
-        <img src="${asset("micro_status_hazard.png")}" alt="" />
-        <div>
-          <strong>Headland</strong>
-          <span>OCR 16 mods | Chest, Strongbox | 0:42</span>
-          <b>Risk: Monsters deal 16% of damage as extra lightning</b>
-        </div>
-        <button>Open</button>
-      </section>
-    </article>
-  `;
-}
 
-function renderMetric(label: string, value: string, sub: string): string {
-  return `<section class="panel metric"><p class="eyebrow">${label}</p><h3>${value}</h3><span>${sub}</span></section>`;
-}
-
-function renderTemple(): string {
-  return `
-    <article class="screen temple-screen">
-      <aside class="panel room-palette">
-        <p class="eyebrow">Rooms</p>
-        <div class="room-icons">
-          ${["micro_status_chest.png","micro_status_boss.png","micro_status_shrine.png","micro_hazard_danger.png","micro_market_coin_stack.png","micro_status_waystone.png"].map((icon) => `<button><img src="${asset(icon)}" alt="" /></button>`).join("")}
-        </div>
-        <button class="primary wide">Destabilize</button>
-        <button class="ghost wide">Undo</button>
-      </aside>
-      <section class="temple-board">
-        ${markedTempleNodes.map(renderTempleTile).join("")}
-      </section>
-      <aside class="panel inspector">
-        <p class="eyebrow">Active Bonuses</p>
-        <h3>Effect Summary</h3>
-        <dl>
-          <dt>Monster</dt><dd>Rare chests +10%</dd>
-          <dt>Loot</dt><dd>Increased gold +25%</dd>
-          <dt>Special</dt><dd>Architect's Orb</dd>
-        </dl>
-      </aside>
-    </article>
-  `;
-}
-
-function renderTempleTile(node: TempleNode): string {
-  const x = 50 + node.x * 7.8 + node.y * 7.8;
-  const y = 45 + node.y * 5.2 - node.x * 5.2;
-  return `<button class="temple-tile ${node.state}" style="left:${x}%;top:${y}%"><span>${node.label ?? ""}</span></button>`;
-}
-
-function renderProfile(): string {
-  return `
-    <article class="screen profile-screen">
-      <section class="panel hero-profile">
-        <div class="avatar">MA</div>
-        <div>
-          <p class="eyebrow">Runes of Aldur League</p>
-          <h2>Pharsbeyblade</h2>
-          <span>Level 97 Martial Artist</span>
-        </div>
-      </section>
-      <section class="stat-columns">
-        <div class="panel"><h3>Defensive</h3><p>Life 1329 / Energy Shield 1945 / Spirit 156</p><p>Resistances 75 / 74 / 75 / 100</p></div>
-        <div class="panel"><h3>Build Fingerprint</h3><p>General safe mapping</p><p>Chaos safe, armour light, flask dependent.</p></div>
-      </section>
-    </article>
-  `;
-}
-
-function renderSettings(): string {
-  return `
-    <article class="screen settings-screen">
-      <header class="screen-header"><div><p class="eyebrow">Settings</p><h2>Overlay Feel</h2><span>Experimental controls are local to this shell.</span></div></header>
-      <section class="settings-grid">
-        <label class="panel control">
-          <span>Accent Hue</span>
-          <input data-control="hue" type="range" min="0" max="359" value="${state.hue}" />
-          <b>${state.hue} deg</b>
-        </label>
-        <label class="panel control">
-          <span>Panel Transparency</span>
-          <input data-control="opacity" type="range" min="35" max="100" value="${state.opacity}" />
-          <b>${state.opacity}%</b>
-        </label>
-        <section class="panel"><h3>Hotkeys</h3><p>Item scan: Ctrl + C</p><p>Waystone arm: Alt + W</p><p>Trade URL: Alt + D</p></section>
-        <section class="panel"><h3>Discord RPC</h3><p>Enabled by default in production. This experiment only models the shell.</p></section>
-      </section>
-    </article>
-  `;
-}
-
-function renderLineMode(): string {
-  return `
-    <main class="line-shell">
-      <div class="line-icon"><img src="${asset("micro_status_waystone.png")}" alt="" /></div>
-      <div class="line-copy">
-        <strong>Headland</strong>
-        <span>OCR 16 mods | Chest, Strongbox | 0:42</span>
-        <b>Risk: Monsters deal 16% of damage as extra lightning</b>
+      <div class="market-board-meta">
+        <span>${escapeHtml(`${sourceText}${comparisonText}`)}</span>
+        <strong>${escapeHtml(marketBoardLoadState.error && dataset ? "Offline · using last valid snapshot" : `All exchange + unique feeds · prices in ${dataset?.quote_currency_label ?? "Divine Orb"}`)}</strong>
+        <button class="trade-refresh-button" data-refresh-market type="button">Refresh</button>
       </div>
-      <div class="line-metrics">
-        <span>R 54%</span>
-        <span>Pack 4%</span>
-        <span>Rare 112%</span>
-      </div>
-      <button data-action="full">Open</button>
-    </main>
+
+      ${renderMarketBoardBody(dataset, baselineMessage)}
+    </div>
   `;
 }
 
-function bindEvents(): void {
-  document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.tab = button.dataset.tab as TabId;
+function formatMarketComparisonWindow(milliseconds: number) {
+  const minutes = Math.max(1, Math.round(milliseconds / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+}
+
+function renderMarketBoardBody(dataset: MarketBoardDataset | null, baselineMessage: string | null) {
+  if (marketBoardLoadState.status === "loading" && !dataset) {
+    return `<div class="market-board-state"><strong>Loading shared market history...</strong><span>Checking the latest published dataset for ${escapeHtml(state.trade_league)}.</span></div>`;
+  }
+  if (!dataset) {
+    return `<div class="market-board-state is-error"><strong>Shared market feed is not available yet.</strong><span>${escapeHtml(marketBoardLoadState.error ?? "The first published snapshot has not landed.")}</span></div>`;
+  }
+  if (dataset.status === "building") {
+    const progress = Math.min(100, Math.round((dataset.snapshots_collected / dataset.snapshots_required) * 100));
+    return `
+      <div class="market-board-state is-building">
+        <strong>${escapeHtml(baselineMessage ?? "Building market baseline")}</strong>
+        <span>Reliquary will not rank movers until the shared comparison window is complete.</span>
+        <div class="market-baseline-track"><i style="width:${progress}%"></i></div>
+      </div>`;
+  }
+
+  return `
+    <div class="market-board-columns">
+      ${renderMarketMoverColumn("winner", dataset.winners, dataset.quote_currency_id, dataset.quote_currency_label)}
+      ${renderMarketMoverColumn("loser", dataset.losers, dataset.quote_currency_id, dataset.quote_currency_label)}
+    </div>`;
+}
+
+function renderMarketMoverColumn(
+  direction: MarketDirection,
+  movers: MarketMover[],
+  quoteCurrencyId: string,
+  quoteCurrencyLabel: string,
+) {
+  const visible = scrollableMarketMovers(movers, marketBoardVisibleRows[direction]);
+  const title = direction === "winner" ? "Biggest Winners" : "Biggest Losers";
+  const subtitle = direction === "winner" ? "Strongest risk-adjusted gains" : "Sharpest risk-adjusted declines";
+  return `
+    <section class="market-mover-column is-${direction}">
+      <header>
+        <div><span>${escapeHtml(title)}</span><small>${escapeHtml(subtitle)}</small></div>
+        <strong>${movers.length}</strong>
+      </header>
+      <div class="market-mover-list" data-market-scroll="${direction}" tabindex="0" aria-label="${direction === "winner" ? "Market winners" : "Market losers"}">
+        ${visible.length ? visible.map((mover, index) => renderMarketMoverRow(mover, direction, index + 1, quoteCurrencyId, quoteCurrencyLabel)).join("") : `<div class="market-column-empty">No ${direction === "winner" ? "positive" : "negative"} movers cleared confidence checks.</div>`}
+      </div>
+      ${visible.length < movers.length ? `<div class="market-scroll-hint">${movers.length} ranked movers · scroll for more</div>` : ""}
+    </section>`;
+}
+
+function renderMarketMoverRow(
+  mover: MarketMover,
+  direction: MarketDirection,
+  rank: number,
+  quoteCurrencyId: string,
+  quoteCurrencyLabel: string,
+) {
+  const icon = mover.icon_url
+    ? `<img src="${escapeAttribute(mover.icon_url)}" alt="" loading="lazy" />`
+    : `<span class="market-mover-icon-fallback">${escapeHtml(mover.name.slice(0, 1))}</span>`;
+  const quoteIconUrl = resolveCurrencyIcon(quoteCurrencyId, null);
+  const quoteIcon = quoteIconUrl
+    ? `<img class="market-quote-icon" src="${escapeAttribute(quoteIconUrl)}" alt="${escapeAttribute(quoteCurrencyLabel)}" title="${escapeAttribute(`${quoteCurrencyLabel} equivalent`)}" />`
+    : "";
+  const sign = mover.change_percent > 0 ? "+" : "";
+  return `
+    <article class="market-mover-row is-${direction} ${feedbackClass(feedbackState.marketUpdatedAt, "is-fresh-row")}" style="--row-index:${rank}">
+      <span class="market-mover-rank">${rank}</span>
+      <span class="market-mover-icon">${icon}</span>
+      <span class="market-mover-name"><strong>${escapeHtml(mover.name)}</strong><small>${escapeHtml(mover.category_label)}</small></span>
+      <span class="market-mover-price" title="Prices in ${escapeAttribute(`${quoteCurrencyLabel} equivalent`)}"><strong>${escapeHtml(formatMarketPrice(mover.current_price))}${quoteIcon}</strong><small>from ${escapeHtml(formatMarketPrice(mover.baseline_price))} ${escapeHtml(quoteCurrencyLabel)}</small></span>
+      <span class="market-mover-change">${sign}${mover.change_percent.toFixed(1)}%</span>
+      <span class="market-confidence is-${mover.confidence}">${escapeHtml(marketConfidenceLabel(mover.confidence))}</span>
+    </article>`;
+}
+
+function formatMarketPrice(value: number) {
+  return value >= 1000 ? formatCompactNumber(value) : value >= 10 ? value.toFixed(1) : value.toFixed(2);
+}
+
+function marketConfidenceLabel(confidence: MarketConfidence) {
+  return confidence === "high" ? "High" : confidence === "medium" ? "Med" : "Low";
+}
+
+function renderExchangeFocusPreset(exchangeTab: ExchangeTabState, categories: ExchangeCategory[]) {
+  const focus = atlasFocusPreset();
+  const categoryIds = exchangeWatchlistFocusCategoryIds(atlasFocusState.selected);
+  const relevantCategories = categoryIds
+    .map((categoryId) => categories.find((category) => category.id === categoryId))
+    .filter((category): category is ExchangeCategory => Boolean(category?.available));
+  const selectedIsRelevant = categoryIds.includes(exchangeTab.selected_category_id);
+  const canPinCurrent = selectedIsRelevant && (exchangeTab.overview?.entries.length ?? 0) > 0 && tradeViewPreference.view === "category";
+
+  return `
+    <div class="trade-focus-preset">
+      <small>Atlas focus</small>
+      <strong>${escapeHtml(focus.label)}</strong>
+      <div class="trade-focus-preset-actions">
+        ${canPinCurrent ? `<button class="trade-mini-action" data-exchange-focus-pin type="button">Pin visible</button>` : ""}
+        ${relevantCategories.slice(0, 3).map((category) => `
+          <button class="trade-mini-action ${category.id === exchangeTab.selected_category_id && tradeViewPreference.view === "category" ? "is-active" : ""}" data-exchange-category="${escapeAttribute(category.id)}" type="button">
+            ${escapeHtml(category.label)}
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderExchangeCategoryGroups(categories: ExchangeCategory[], selectedCategoryId: string) {
+  const groups = categories.reduce<Map<string, ExchangeCategory[]>>((acc, category) => {
+    const group = category.group || "General";
+    acc.set(group, [...(acc.get(group) ?? []), category]);
+    return acc;
+  }, new Map());
+
+  return [...groups.entries()]
+    .map(
+      ([group, groupedCategories]) => `
+        <div class="trade-category-group">
+          <p class="section-label">${escapeHtml(group)}</p>
+          <div class="trade-category-list">
+            ${groupedCategories.map((category) => renderExchangeCategoryButton(category, selectedCategoryId)).join("")}
+          </div>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function renderExchangeCategoryButton(category: ExchangeCategory, selectedCategoryId: string) {
+  const isActive = category.id === selectedCategoryId;
+  const classes = [
+    "trade-category-button",
+    isActive ? "is-active" : "",
+    category.available ? "" : "is-disabled",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return `
+    <button
+      class="${classes}"
+      data-exchange-category="${escapeAttribute(category.id)}"
+      type="button"
+      ${category.available ? "" : "disabled"}
+      title="${category.available ? category.label : `${category.label} feed is not available yet`}"
+    >
+      ${
+        category.icon_url
+          ? `<img class="trade-category-icon" src="${escapeAttribute(category.icon_url)}" alt="" />`
+          : `<span class="trade-category-glyph" aria-hidden="true"></span>`
+      }
+      <span>${escapeHtml(category.label)}</span>
+    </button>
+  `;
+}
+
+function renderExchangeCurrencyChip(
+  quote: ExchangeQuoteCurrency,
+  selectedQuoteCurrencyId: string | null,
+) {
+  const currency = quote.currency;
+  const icon = resolveCurrencyIcon(currency.id, currency.icon_url);
+  const activeClass = currency.id === selectedQuoteCurrencyId ? "is-active" : "";
+  return `
+    <button class="trade-currency-chip ${activeClass}" data-exchange-quote="${escapeAttribute(currency.id)}" type="button" title="${escapeAttribute(currency.name)}">
+      ${icon ? `<img src="${escapeAttribute(icon)}" alt="${escapeAttribute(currency.name)}" />` : `<span>${escapeHtml(currency.name.slice(0, 2))}</span>`}
+    </button>
+  `;
+}
+
+function exchangeCategoryLabel(categoryId: string) {
+  const labels: Record<string, string> = {
+    currency: "Currency",
+    essences: "Essences",
+    delirium: "Liquid Emotions",
+    breach: "Catalysts",
+    ritual: "Omens",
+    expedition: "Expedition",
+    abyss: "Abyssal Bones",
+    incursion: "Incursion",
+    fragments: "Fragments",
+    runes: "Runes",
+    "soul-cores": "Soul Cores",
+    idols: "Idols",
+    "uncut-gems": "Uncut Gems",
+    gems: "Lineage Gems",
+    verisium: "Verisium",
+    "unique-weapons": "Unique Weapons",
+    "unique-armours": "Unique Armours",
+    "unique-accessories": "Unique Accessories",
+    "unique-flasks": "Unique Flasks",
+    "unique-charms": "Unique Charms",
+    "unique-jewels": "Unique Jewels",
+    "unique-maps": "Unique Maps",
+    "unique-relics": "Unique Relics",
+  };
+
+  return labels[categoryId] ?? categoryId;
+}
+
+function renderExchangeRow(
+  entry: ExchangeEntry,
+  exchangeTab: ExchangeTabState,
+  selectedItemId: string | null,
+  index = 0,
+) {
+  const overview = exchangeTab.overview;
+  const itemUrl = exchangeEntryUrl(entry, overview);
+  const selected = selectedItemId === entry.id ? "is-selected" : "";
+  const fresh = feedbackClass(feedbackState.exchangeUpdatedAt, "is-fresh-row");
+  const icon = entry.icon_url
+    ? `<img class="trade-item-icon" src="${escapeAttribute(entry.icon_url)}" alt="" />`
+    : `<span class="trade-item-icon fallback"></span>`;
+  const history = renderSparkline(entry.sparkline, entry.history_change_percent);
+  const historyClass = exchangeHistoryClass(entry.history_change_percent);
+  const activeQuote = activeExchangeQuoteCurrency(exchangeTab);
+  const convertedPrice = convertExchangePrice(entry, exchangeTab);
+  const priceCurrency = activeQuote?.currency ?? overview?.primary_currency;
+  const priceIconUrl = priceCurrency ? resolveCurrencyIcon(priceCurrency.id, priceCurrency.icon_url) : null;
+  const priceIcon = priceIconUrl
+    ? `<img class="currency-icon" src="${escapeAttribute(priceIconUrl)}" alt="" />`
+    : "";
+  const categoryId = overview?.category_id ?? exchangeTab.selected_category_id;
+  const pinned = isExchangeWatchlistPinned(exchangeWatchlistState, categoryId, entry.id);
+
+  return `
+    <article class="trade-table-row ${selected} ${fresh}" style="--row-index:${index}">
+      <div class="trade-item-cell">
+        ${icon}
+        <div>
+          <strong>${escapeHtml(entry.name)}</strong>
+          <small>${escapeHtml(entry.item_category ?? "Exchange item")}</small>
+        </div>
+      </div>
+      <div class="trade-price-cell">
+        <strong>${convertedPrice === null ? "-" : formatCompactNumber(convertedPrice)}</strong>
+        ${priceIcon}
+      </div>
+      <div class="trade-quantity-cell">${entry.quantity === null ? "-" : formatCompactNumber(entry.quantity)}</div>
+      <div class="trade-history-cell ${historyClass}">
+        ${history}
+        <strong>${formatHistoryPercent(entry.history_change_percent)}</strong>
+      </div>
+      <div class="trade-actions-cell">
+        <button class="trade-row-action trade-pin-action ${pinned ? "is-pinned" : ""}" data-pin-exchange="${escapeAttribute(entry.id)}" type="button" title="${pinned ? "Remove from Favorites" : "Pin to Favorites"}">${pinned ? "Pinned" : "Pin"}</button>
+        <button class="trade-row-action" data-source-url="${escapeAttribute(itemUrl ?? overview?.source_url ?? "")}" type="button" ${itemUrl || overview?.source_url ? "" : "disabled"}>Open</button>
+        <button class="trade-row-action" data-copy-exchange="${escapeAttribute(entry.name)}" type="button">Copy</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderExchangeWatchlistRow(pin: ExchangeWatchlistPin, selectedQuoteCurrencyId: string | null) {
+  const itemUrl = exchangeWatchlistEntryUrl(pin);
+  const icon = pin.icon_url
+    ? `<img class="trade-item-icon" src="${escapeAttribute(pin.icon_url)}" alt="" />`
+    : `<span class="trade-item-icon fallback"></span>`;
+  const history = renderSparkline(pin.sparkline, pin.history_change_percent);
+  const historyClass = exchangeHistoryClass(pin.history_change_percent);
+  const activeQuote = activeExchangeWatchlistQuote(pin, selectedQuoteCurrencyId);
+  const convertedPrice = convertExchangeWatchlistPrice(pin, selectedQuoteCurrencyId);
+  const priceCurrency = activeQuote?.currency ?? pin.primary_currency;
+  const priceIconUrl = priceCurrency ? resolveCurrencyIcon(priceCurrency.id, priceCurrency.icon_url) : null;
+  const priceIcon = priceIconUrl ? `<img class="currency-icon" src="${escapeAttribute(priceIconUrl)}" alt="" />` : "";
+  const staleLabel = pin.fetched_at_epoch_ms ? `cached ${formatRelativeAge(pin.fetched_at_epoch_ms)}` : "cached snapshot";
+
+  return `
+    <article class="trade-table-row">
+      <div class="trade-item-cell">
+        ${icon}
+        <div>
+          <strong>${escapeHtml(pin.name)}</strong>
+          <small>${escapeHtml(pin.category_label)} - ${escapeHtml(staleLabel)}</small>
+        </div>
+      </div>
+      <div class="trade-price-cell">
+        <strong>${convertedPrice === null ? "-" : formatCompactNumber(convertedPrice)}</strong>
+        ${priceIcon}
+      </div>
+      <div class="trade-quantity-cell">${pin.quantity === null ? "-" : formatCompactNumber(pin.quantity)}</div>
+      <div class="trade-history-cell ${historyClass}">
+        ${history}
+        <strong>${formatHistoryPercent(pin.history_change_percent)}</strong>
+      </div>
+      <div class="trade-actions-cell">
+        <button class="trade-row-action trade-pin-action is-pinned" data-unpin-exchange="${escapeAttribute(pin.id)}" data-unpin-exchange-category="${escapeAttribute(pin.category_id)}" type="button">Unpin</button>
+        <button class="trade-row-action" data-source-url="${escapeAttribute(itemUrl ?? pin.source_url ?? "")}" type="button" ${itemUrl || pin.source_url ? "" : "disabled"}>Open</button>
+        <button class="trade-row-action" data-copy-exchange="${escapeAttribute(pin.name)}" type="button">Copy</button>
+      </div>
+    </article>
+  `;
+}
+
+function filteredExchangeEntries(exchangeTab: ExchangeTabState, query: string) {
+  const entries = exchangeTab.overview?.entries ?? [];
+  const normalizedQuery = query.trim().toLowerCase();
+
+  if (!normalizedQuery) {
+    return entries;
+  }
+
+  return entries.filter((entry) => {
+    const haystack = [entry.name, entry.item_category ?? "", entry.id].join(" ").toLowerCase();
+    return haystack.includes(normalizedQuery);
+  });
+}
+
+function filteredExchangeWatchlistPins(watchlist: ExchangeWatchlistState, query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return watchlist.pins;
+  }
+
+  return watchlist.pins.filter((pin) => {
+    const haystack = [
+      pin.name,
+      pin.category_label,
+      pin.item_category ?? "",
+      pin.league,
+      pin.id,
+    ].join(" ").toLowerCase();
+    return haystack.includes(normalizedQuery);
+  });
+}
+
+function exchangeWatchlistSourceFromCurrentEntry(entryId: string): ExchangeWatchlistEntrySource | null {
+  const overview = state.exchange_tab.overview;
+  const entry = overview?.entries.find((candidate) => candidate.id === entryId);
+  if (!overview || !entry) {
+    return null;
+  }
+
+  return {
+    category_id: overview.category_id || state.exchange_tab.selected_category_id,
+    category_label: overview.category_label || exchangeCategoryLabel(state.exchange_tab.selected_category_id),
+    league: overview.league || state.trade_league,
+    source: overview.source || "poe.ninja cache",
+    source_url: overview.source_url || null,
+    fetched_at_epoch_ms: overview.fetched_at_epoch_ms,
+    primary_currency: overview.primary_currency,
+    quote_currencies: overview.quote_currencies,
+    entry,
+  };
+}
+
+function pinCurrentExchangeEntry(entryId: string) {
+  const source = exchangeWatchlistSourceFromCurrentEntry(entryId);
+  if (!source) {
+    pushStatus("exchange", "Cannot pin until this exchange category has cached data.");
+    return;
+  }
+
+  const wasPinned = isExchangeWatchlistPinned(exchangeWatchlistState, source.category_id, entryId);
+  exchangeWatchlistState = wasPinned
+    ? unpinExchangeWatchlistEntry(exchangeWatchlistState, source.category_id, entryId)
+    : pinExchangeWatchlistEntry(exchangeWatchlistState, source);
+  saveExchangeWatchlistState();
+  pushStatus("exchange", wasPinned ? `Removed ${source.entry.name} from Favorites.` : `Pinned ${source.entry.name} to Favorites.`);
+}
+
+function pinVisibleFocusExchangeEntries() {
+  const categoryIds = exchangeWatchlistFocusCategoryIds(atlasFocusState.selected);
+  const overview = state.exchange_tab.overview;
+  if (!overview || !categoryIds.includes(overview.category_id)) {
+    pushStatus("exchange", "Load an Atlas focus category before pinning its visible entries.");
+    return;
+  }
+
+  const visibleEntries = filteredExchangeEntries(state.exchange_tab, tradeSearchQuery).slice(0, 5);
+  if (!visibleEntries.length) {
+    pushStatus("exchange", "No visible exchange entries to pin.");
+    return;
+  }
+
+  visibleEntries.forEach((entry) => {
+    const source = exchangeWatchlistSourceFromCurrentEntry(entry.id);
+    if (source) {
+      exchangeWatchlistState = pinExchangeWatchlistEntry(exchangeWatchlistState, source);
+    }
+  });
+  saveExchangeWatchlistState();
+  pushStatus("exchange", `Pinned ${visibleEntries.length} ${atlasFocusPreset().label} watch entries.`);
+}
+
+function activeExchangeWatchlistQuote(pin: ExchangeWatchlistPin, selectedQuoteCurrencyId: string | null) {
+  return (
+    pin.quote_currencies.find((quote) => quote.currency.id === selectedQuoteCurrencyId) ??
+    pin.quote_currencies[0] ??
+    null
+  );
+}
+
+function convertExchangeWatchlistPrice(pin: ExchangeWatchlistPin, selectedQuoteCurrencyId: string | null) {
+  if (pin.price_in_primary === null) {
+    return null;
+  }
+
+  const activeQuote = activeExchangeWatchlistQuote(pin, selectedQuoteCurrencyId);
+  return activeQuote ? pin.price_in_primary * activeQuote.per_primary : pin.price_in_primary;
+}
+
+function exchangeWatchlistEntryUrl(pin: ExchangeWatchlistPin) {
+  if (!pin.source_url || !pin.details_id) {
+    return pin.source_url;
+  }
+  return `${pin.source_url}/${pin.details_id}`;
+}
+
+function exchangeWatchlistEmptyMessage() {
+  if (!exchangeWatchlistState.pins.length) {
+    return "No pinned exchange items yet. Pin rows from any cached Trade category to build a local watchlist.";
+  }
+  if (tradeSearchQuery.trim()) {
+    return `No pinned exchange items match "${tradeSearchQuery.trim()}".`;
+  }
+  return "Pinned exchange items will appear here from cached Trade data.";
+}
+
+function exchangeHeaderCurrencies(exchangeTab: ExchangeTabState) {
+  return exchangeTab.overview?.quote_currencies?.length
+    ? exchangeTab.overview.quote_currencies.slice(0, 4)
+    : [
+        { currency: fallbackCurrencies()[1], per_primary: 1 },
+        { currency: fallbackCurrencies()[0], per_primary: 1 },
+        { currency: fallbackCurrencies()[4], per_primary: 1 },
+      ];
+}
+
+function activeExchangeQuoteCurrency(exchangeTab: ExchangeTabState) {
+  const quotes = exchangeTab.overview?.quote_currencies ?? [];
+  return (
+    quotes.find((quote) => quote.currency.id === exchangeTab.selected_quote_currency_id) ??
+    quotes[0] ??
+    null
+  );
+}
+
+function convertExchangePrice(entry: ExchangeEntry, exchangeTab: ExchangeTabState) {
+  if (entry.price_in_primary === null) {
+    return null;
+  }
+
+  const activeQuote = activeExchangeQuoteCurrency(exchangeTab);
+  return activeQuote ? entry.price_in_primary * activeQuote.per_primary : entry.price_in_primary;
+}
+
+function exchangeEntryUrl(entry: ExchangeEntry, overview: ExchangeOverview | null) {
+  if (!overview?.source_url || !entry.details_id) {
+    return overview?.source_url ?? null;
+  }
+
+  return `${overview.source_url}/${entry.details_id}`;
+}
+
+function exchangeHistoryClass(change: number | null) {
+  if (change === null) {
+    return "is-flat";
+  }
+  if (change > 0.2) {
+    return "is-up";
+  }
+  if (change < -0.2) {
+    return "is-down";
+  }
+  return "is-flat";
+}
+
+function formatHistoryPercent(change: number | null) {
+  if (change === null || !Number.isFinite(change)) {
+    return "--";
+  }
+  const sign = change > 0 ? "+" : "";
+  return `${sign}${change.toFixed(1)}%`;
+}
+
+function renderSparkline(points: number[], change: number | null) {
+  if (!points.length) {
+    return `<div class="trade-sparkline empty"></div>`;
+  }
+
+  const width = 96;
+  const height = 28;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const span = max - min || 1;
+  const path = points
+    .map((point, index) => {
+      const x = (index / Math.max(points.length - 1, 1)) * width;
+      const y = height - ((point - min) / span) * (height - 4) - 2;
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+  const historyClass = exchangeHistoryClass(change);
+
+  return `
+    <svg class="trade-sparkline ${historyClass}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
+      <path d="${path}"></path>
+    </svg>
+  `;
+}
+
+function exchangeEmptyMessage(exchangeTab: ExchangeTabState, category: ExchangeCategory | undefined) {
+  if (exchangeTab.error) {
+    return exchangeTab.error;
+  }
+
+  if (tradeSearchQuery.trim()) {
+    return `No ${category?.label ?? "exchange"} items match "${tradeSearchQuery.trim()}".`;
+  }
+
+  return exchangeTab.status;
+}
+
+function formatTimestamp(epochMs: number) {
+  if (!Number.isFinite(epochMs) || epochMs <= 0) {
+    return "unknown time";
+  }
+
+  return new Date(epochMs).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function renderCampaignTabPanel() {
+  const subTab = activeCampaignSubTab;
+  const isZoneResetPending = campaignResetConfirmHandle > 0;
+
+  return `
+    <section class="campaign-panel-shell">
+      <nav class="campaign-sub-tabs">
+        <button type="button" data-campaign-sub-tab="timer" class="${subTab === "timer" ? "is-active" : ""}">Timer</button>
+        <button type="button" data-campaign-sub-tab="map-runs" class="${subTab === "map-runs" ? "is-active" : ""}">Map Runs</button>
+      </nav>
+      <div class="campaign-sub-content">
+        ${subTab === "timer" ? renderCampaignTimerSubTab(isZoneResetPending) : ""}
+        ${subTab === "map-runs" ? renderCampaignMapRunsSubTab(isZoneResetPending) : ""}
+      </div>
+    </section>
+  `;
+}
+
+function renderCampaignTimerSubTab(isZoneResetPending: boolean) {
+  const acts = campaignGuideActs.filter(a => a.act >= 1 && a.act <= 4);
+  const interlude = campaignGuideActs.find(a => a.act === 5);
+  const selectedAct = campaignSelectedAct === 5
+    ? interlude
+    : acts.find(a => a.act === campaignSelectedAct) ?? acts.find(a => a.act === 1);
+  const actRows = acts.map(act => {
+    const isActive = act.act === (selectedAct?.act ?? 1) && campaignSelectedAct !== 5;
+    const actIdx = Math.max(0, act.act - 1);
+    const time = formatCampaignTime(campaignActTimes[actIdx] ?? 0);
+    const deaths = state.deaths[act.act] ?? 0;
+    const deathBadge = deaths > 0 ? `<small class="act-deaths-badge">Deaths ${deaths}</small>` : "";
+    return `<button type="button" class="campaign-act-button${isActive ? " is-active" : ""}" data-campaign-act="${act.act}">
+      <span>${actDisplayName(act.act)}${deathBadge}</span><strong>${time}</strong>
+    </button>`;
+  }).join("");
+
+  const interludeTime = formatCampaignTime(campaignActTimes[4] ?? 0);
+  const interludeDeaths = (state.deaths[5] ?? 0) + (state.deaths[6] ?? 0);
+  const interludeDeathBadge = interludeDeaths > 0 ? `<small class="act-deaths-badge">Deaths ${interludeDeaths}</small>` : "";
+  const interludeActive = campaignSelectedAct === 5;
+  const interludeRow = `<button type="button" class="campaign-act-button${interludeActive ? " is-active" : ""}" data-campaign-act="5">
+    <span>INTERLUDE${interludeDeathBadge}</span><strong>${interludeTime}</strong>
+  </button>`;
+
+  let zoneRows = "";
+  if (selectedAct) {
+    const zones = selectedAct.zones;
+    zoneRows = zones.map(zone => {
+      const normalizedName = normalizeZoneName(zone.name);
+      const zoneTime = campaignZoneTimes.get(normalizedName) ?? 0;
+      const currentName = normalizeZoneName(state.current_area?.name ?? "");
+      const isCurrentZone = currentName === normalizedName
+        || currentName.includes(normalizedName)
+        || normalizedName.includes(currentName);
+      const liveTime = isCurrentZone && campaignCurrentZoneEnteredAt > 0
+        ? Date.now() - campaignCurrentZoneEnteredAt
+        : 0;
+      const totalTime = zoneTime + liveTime;
+      const wp = zone.waypoint ? `<span class="campaign-zone-wp" title="Waypoint">W</span>` : "";
+      const current = isCurrentZone ? " is-current" : "";
+      return `<div class="campaign-zone-row${current}">
+        <span class="campaign-zone-name">${escapeHtml(zone.name)}${wp}</span>
+        <span class="campaign-zone-level">L${escapeHtml(zone.level)}</span>
+        <span class="campaign-zone-time">${totalTime > 0 ? formatZoneTime(totalTime) : "\u2014"}</span>
+      </div>`;
+    }).join("");
+  }
+
+  const totalText = formatCampaignTime(campaignTotalMs);
+  const actText = selectedAct ? formatCampaignTime(campaignActTimes[Math.max(0, (selectedAct.act <= 4 ? selectedAct.act : 5) - 1)] ?? 0) : "0:00";
+  const resetLabel = isZoneResetPending ? "Are you sure?" : "Reset All";
+  const deathText = totalCampaignDeaths();
+
+  return `
+    <aside class="campaign-sidebar">
+      ${actRows}${interludeRow}
+      <div class="campaign-sidebar-footer">
+        <button type="button" class="campaign-reset-button${isZoneResetPending ? " confirm" : ""}" data-campaign-zone-reset>${escapeHtml(resetLabel)}</button>
+      </div>
+    </aside>
+    <div class="campaign-main">
+      <header class="campaign-main-header">
+        <h2>${selectedAct ? escapeHtml(selectedAct.name) : "Select an act"}</h2>
+        <span>Deaths: ${deathText}</span>
+        <span>Total: ${totalText} · Act: ${actText}</span>
+      </header>
+      <div class="campaign-zone-list">
+        ${zoneRows || "<div class=\"campaign-zone-empty\">No zones for this act.</div>"}
+      </div>
+    </div>
+  `;
+}
+
+function renderCampaignMapRunsSubTab(isZoneResetPending: boolean) {
+  if (!campaignMapRuns.length) {
+    return `<div class="campaign-maps-empty">
+      <p class="section-label">Map Runs</p>
+      <p>No endgame map runs recorded yet. Enter a map to start tracking.</p>
+    </div>`;
+  }
+
+  const maxTime = Math.max(...campaignMapRuns.map(r => r.elapsed_ms || 1));
+  const cards = campaignMapRuns.map(run => {
+    const time = run.elapsed_ms > 0 ? formatZoneTime(run.elapsed_ms) : "In progress";
+    const boss = run.boss ? `<small>${escapeHtml(run.boss)}</small>` : "";
+    const barPct = run.elapsed_ms > 0 ? Math.round((run.elapsed_ms / maxTime) * 100) : 0;
+    const bar = `<div class="campaign-map-bar"><div class="campaign-map-bar-fill" style="width:${barPct}%"></div></div>`;
+    const deaths = (run.deaths ?? 0) > 0 ? `<span class="campaign-map-deaths">Deaths ${run.deaths}</span>` : "";
+    return `<div class="campaign-map-card">
+      <div class="campaign-map-header">
+        <strong>${escapeHtml(run.name)}</strong>
+        <span>T${run.tier ?? "?"}</span>
+      </div>
+      ${boss}
+      <div class="campaign-map-meta"><span class="campaign-map-time">${time}</span>${deaths}</div>
+      ${bar}
+    </div>`;
+  }).join("");
+  const totalDeaths = campaignMapRuns.reduce((sum, run) => sum + (run.deaths ?? 0), 0);
+  const averageDeaths = campaignMapRuns.length ? (totalDeaths / campaignMapRuns.length).toFixed(1) : "0.0";
+
+  const resetLabel = isZoneResetPending ? "Are you sure?" : "Reset Map History";
+
+  return `
+    <div class="campaign-maps-content">
+      <header class="campaign-maps-header">
+        <h2>Recent Map Runs</h2>
+        <span>Last ${campaignMapRuns.length} maps · Avg deaths ${averageDeaths}</span>
+      </header>
+      <div class="campaign-maps-grid">${cards}</div>
+      <div class="campaign-maps-footer">
+        <button type="button" class="campaign-reset-button${isZoneResetPending ? " confirm" : ""}" data-campaign-map-reset>${escapeHtml(resetLabel)}</button>
+      </div>
+    </div>
+  `;
+}
+
+function formatZoneTime(ms: number) {
+  const totalSec = Math.floor(ms / 1000);
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  if (mins >= 60) {
+    const hours = Math.floor(mins / 60);
+    const remainMins = mins % 60;
+    return `${hours}:${remainMins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  }
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function renderDataPanel() {
+  const sourceTruth = state.source_truth_snapshot;
+  const worldAreas = state.world_area_status;
+  const worldAreaDetail = worldAreas.error
+    ? `${worldAreas.error} | ${worldAreas.cache_path || "cache path unavailable"}`
+    : `${worldAreas.count} areas from ${worldAreas.source}${worldAreas.cache_path ? ` | ${worldAreas.cache_path}` : ""}`;
+  const sourceStatus = sourceTruth?.status.message ?? "Waiting for PoE2DB source-truth cache...";
+  const sourceFreshness = sourceTruth
+    ? `${sourceTruth.mod_pages.reduce((count, page) => count + page.tiers.length, 0)} tiers · ${sourceTruth.families.length} families · ${formatRelativeAge(sourceTruth.fetched_at_epoch_ms)}`
+    : "No cached snapshot loaded yet.";
+  const sourceQuality = sourceTruth?.status.quality;
+  const sourceQualityText = sourceQuality
+    ? `${sourceQuality.total_tiers} tiers · ${sourceQuality.empty_roll_band_tiers} empty bands · ${sourceQuality.normal_unknown_affix_tiers} normal affix gaps`
+    : "Quality summary waiting for source-truth refresh.";
+  const failedPages = sourceTruth?.status.failed_pages.length
+    ? `<small>${escapeHtml(sourceTruth.status.failed_pages.slice(0, 3).join(" | "))}</small>`
+    : `<small>${escapeHtml(sourceTruth?.cache_path ?? "Cache path appears once the adapter writes its snapshot.")}</small>`;
+  const catalogRows = state.league_catalog.length
+    ? state.league_catalog
+        .map((league) => renderLeagueCatalogRow(league))
+        .join("")
+    : "<li>Building merged league catalog...</li>";
+  const dataLeagueRows = state.data_leagues.length
+    ? state.data_leagues
+        .slice(0, 6)
+        .map((league) => renderDataLeagueRow(league))
+        .join("")
+    : "<li>Listening to PoE2DB league data...</li>";
+
+  return `
+    <div class="data-grid">
+      <div class="data-source-card">
+        <span>Sources</span>
+        <strong>Live data health</strong>
+        <div class="source-card-grid">
+          <section><span>Rates</span><strong>poe.ninja</strong><small>Exchange-rate normalization cache.</small></section>
+          <section><span>World Areas</span><strong>${escapeHtml(worldAreas.state)}</strong><small>${escapeHtml(worldAreaDetail)}</small></section>
+          <section><span>PoE2DB Adapter</span><strong>${escapeHtml(sourceTruth?.status.state ?? "warming")}</strong><small>${escapeHtml(sourceStatus)}</small></section>
+          <section><span>Freshness</span><strong>${escapeHtml(sourceFreshness)}</strong>${failedPages}</section>
+          <section><span>Tier Quality</span><strong>${escapeHtml(sourceQualityText)}</strong><small>Prefix/suffix labels only show when source data proves them.</small></section>
+          <section><span>Debug Log</span><strong>Trade diagnostics</strong><small>${escapeHtml(state.debug_log_path ?? "Log path loading...")}</small></section>
+        </div>
+      </div>
+      <div><span>League Catalog</span><strong>${escapeHtml(state.trade_league)}</strong><ul class="feed-list">${catalogRows}</ul></div>
+      <div><span>PoE2DB Data Feed</span><strong>Early league/item signal</strong><ul class="feed-list">${dataLeagueRows}</ul></div>
+    </div>
+  `;
+}
+
+function renderCampaignSection() {
+  const rows = [1, 2, 3, 4, 5].map(act => {
+    const time = formatCampaignTime(campaignActTimes[act - 1] ?? 0);
+    const isCurrent = act === campaignGuideAct;
+    const cls = isCurrent ? `campaign-act-row${campaignTimerRunning ? " running" : ""}` : "campaign-act-row";
+    return `<div class="${cls}"><span>${actDisplayName(act)}</span><strong>${time}</strong></div>`;
+  }).join("");
+
+  return `
+    <div class="campaign-panel">
+      <div class="campaign-act-list">${rows}</div>
+      <button class="chrome-button campaign-reset" data-campaign-reset type="button">Reset</button>
+    </div>
+  `;
+}
+
+function formatCampaignTime(totalMs: number) {
+  const hours = Math.floor(totalMs / 3600000);
+  const mins = Math.floor((totalMs % 3600000) / 60000);
+  const secs = Math.floor((totalMs % 60000) / 1000);
+  if (hours > 0) return `${hours}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function renderAtlasPanel() {
+  const sections: { id: typeof selectedAtlasSection; label: string }[] = [
+    { id: "overview", label: "Overview" },
+    { id: "safety", label: "Waystone Safety" },
+    { id: "profile", label: "Danger Profile" },
+    { id: "focus", label: "Endgame Focus" },
+    { id: "history", label: "Run History" },
+  ];
+
+  const sidebar = sections.map((section) => `
+    <button class="trade-category-button ${selectedAtlasSection === section.id ? "is-active" : ""}" data-atlas-section="${section.id}" type="button">
+      <span class="trade-category-glyph" aria-hidden="true"></span>
+      <span>${escapeHtml(section.label)}</span>
+    </button>
+  `).join("");
+
+  return `
+    <section class="trade-market atlas-shell">
+      <aside class="trade-sidebar">
+        <div class="trade-sidebar-section trade-sidebar-scroll">
+          <p class="section-label">Atlas</p>
+          <div class="trade-category-list">
+            ${sidebar}
+          </div>
+        </div>
+      </aside>
+      <div class="trade-market-main atlas-main">
+        <header class="trade-market-header">
+          <div>
+            <h2>Atlas</h2>
+            <p>Current run context · build-aware waystone safety</p>
+          </div>
+        </header>
+        ${renderAtlasDashboard()}
+      </div>
+    </section>
+  `;
+}
+
+function renderAtlasDashboard() {
+  if (selectedAtlasSection === "safety") return renderAtlasSafetyDashboard();
+  if (selectedAtlasSection === "profile") return renderAtlasProfileDashboard();
+  if (selectedAtlasSection === "focus") return renderAtlasFocusDashboard();
+  if (selectedAtlasSection === "history") return renderAtlasHistoryDashboard();
+  return renderAtlasOverviewDashboard();
+}
+
+function atlasContext() {
+  const run = state.active_map_run;
+  const area = run?.area ?? state.current_area;
+  const waystone = run?.waystone ?? state.pending_waystone;
+  const confidence: MapRunConfidence = run?.confidence ?? pendingWaystoneConfidence(state.pending_waystone);
+  return { run, area, waystone, confidence };
+}
+
+function pendingWaystoneConfidence(waystone: WaystoneSnapshot | null): MapRunConfidence {
+  if (!waystone) return "area_only";
+  return Date.now() - waystone.captured_at_epoch_ms > WAYSTONE_ARM_TIMEOUT_MS ? "stale" : "unknown";
+}
+
+function atlasActionTitle(waystone: WaystoneSnapshot | null | undefined, confidence: MapRunConfidence) {
+  if (!waystone) return "Arm a waystone before mapping";
+  if (confidence === "stale") return "Armed waystone is stale";
+  if (confidence === "armed") return "Active map is bound to this waystone";
+  return "Waystone armed for the next map";
+}
+
+function atlasActionCopy(waystone: WaystoneSnapshot | null | undefined, confidence: MapRunConfidence) {
+  if (!waystone) return "Copy a waystone first so Atlas can show tier, quant, pack size, and build-aware warnings.";
+  if (confidence === "stale") {
+    return "This waystone has been armed for more than 15 minutes. Clear it or copy the current waystone again before entering a map.";
+  }
+  if (confidence === "armed") return "Reliquary consumed this waystone when Client.txt reported the generated map.";
+  return "Reliquary will consume this armed waystone exactly once when Client.txt reports the next generated map.";
+}
+
+function renderAtlasOverviewDashboard() {
+  const { run, area, waystone, confidence } = atlasContext();
+  const summary = waystone?.profile_hazard_summary ?? { info: 0, warning: 0, danger: 0, build_breaking: 0 };
+  const warnings = waystone?.profile_hazards ?? [];
+  const pendingWaystone = state.pending_waystone;
+  const canRequestOcr = Boolean(run && run.area.area_type === "map" && !run.waystone && confidence !== "armed");
+  const showActionRow = pendingWaystone || canRequestOcr;
+
+  return `
+    <div class="atlas-dashboard">
+      <div class="atlas-summary-grid">
+        ${renderAtlasStatCard("Area", area?.name ?? "No active area", area?.area_level ? `Area Lv ${area.area_level}` : "Waiting for Client.txt")}
+        ${renderAtlasStatCard("Waystone", waystone?.base_type ?? waystone?.name ?? "Not armed", renderWaystoneStatsText(waystone))}
+        ${renderAtlasStatCard("Safety", safetySummaryLabel(summary), `${summary.build_breaking} breaking · ${summary.danger} danger · ${summary.warning} warning`)}
+        ${renderAtlasStatCard("Profile", profileLabel(state.hazard_profile_id), mapConfidenceLabel(confidence))}
+      </div>
+
+      <div class="atlas-overview-grid">
+        <section class="atlas-card atlas-overview-run-card">
+          <p class="section-label">Current Run</p>
+          <h3>${escapeHtml(area?.name ?? "No map detected")}</h3>
+          ${area ? `
+            <div class="atlas-detail-list">
+              <span><strong>Type</strong>${escapeHtml(area.area_type)}</span>
+              <span><strong>Level</strong>${area.area_level ?? "-"}</span>
+              <span><strong>Boss</strong>${escapeHtml(area.boss ?? "Unknown")}</span>
+              <span><strong>Confidence</strong>${escapeHtml(mapConfidenceLabel(confidence))}</span>
+            </div>
+            <p>${escapeHtml(mapConfidenceDescription(confidence))}</p>
+          ` : renderAtlasEmptyState("Waiting for map context", "Enter a generated map or keep Client.txt readable so Reliquary can bind the current area.")}
+        </section>
+
+        <section class="atlas-card atlas-overview-waystone-card">
+          <p class="section-label">Armed Waystone</p>
+          <h3>${escapeHtml(waystone?.name ?? "No waystone armed")}</h3>
+          ${waystone ? `
+            <div class="atlas-detail-list">
+              <span><strong>Tier</strong>${waystone.tier ?? "-"}</span>
+              <span><strong>Quantity</strong>${waystone.quantity != null ? `${waystone.quantity}%` : "-"}</span>
+              <span><strong>Rarity</strong>${waystone.rarity != null ? `${waystone.rarity}%` : "-"}</span>
+              <span><strong>Pack Size</strong>${waystone.pack_size != null ? `${waystone.pack_size}%` : "-"}</span>
+            </div>
+            <p>${escapeHtml(renderWaystoneStatsText(waystone))}</p>
+          ` : renderAtlasEmptyState("Copy a waystone first", "Atlas can still OCR an area-only Tab overlay, but armed waystones give the safest run binding and hazard summary.")}
+        </section>
+
+        <section class="atlas-card atlas-overview-safety-card">
+          <p class="section-label">Quick Safety</p>
+          <h3>${escapeHtml(safetySummaryLabel(summary))}</h3>
+          <div class="atlas-safety-strip">
+            <span class="atlas-danger-pill breaking">${summary.build_breaking} breaking</span>
+            <span class="atlas-danger-pill danger">${summary.danger} danger</span>
+            <span class="atlas-danger-pill warning">${summary.warning} warning</span>
+          </div>
+          <div class="atlas-warning-list compact">
+            ${warnings.length ? warnings.slice(0, 3).map(renderAtlasWarning).join("") : renderAtlasEmptyState(
+              waystone ? "No profile warnings" : "No hazard data yet",
+              waystone ? "This waystone has no matched warnings for the active danger profile." : "Arm a waystone or read the Tab overlay to populate safety context.",
+            )}
+          </div>
+        </section>
+
+        <section class="atlas-card atlas-next-action-card">
+          <p class="section-label">Next Action</p>
+          <div class="atlas-action-heading">
+            <h3>${escapeHtml(atlasActionTitle(waystone, confidence))}</h3>
+            <span class="atlas-state-pill confidence-${escapeAttribute(confidence)}">${escapeHtml(mapConfidenceLabel(confidence))}</span>
+          </div>
+          <p>${escapeHtml(atlasActionCopy(waystone, confidence))}</p>
+          ${run?.ocr_evidence ? renderAtlasOcrEvidence(run.ocr_evidence) : ""}
+          ${showActionRow ? `
+            <div class="atlas-action-row">
+              <div class="atlas-action-buttons">
+                ${pendingWaystone ? `<button class="atlas-secondary-action" type="button" data-clear-pending-waystone>Clear armed waystone</button>` : ""}
+                ${canRequestOcr ? `<button class="atlas-secondary-action" type="button" data-request-map-ocr>Read Tab overlay</button>` : ""}
+              </div>
+              <span>${pendingWaystone ? `${escapeHtml(pendingWaystone.name)}${pendingWaystone.tier ? ` · T${pendingWaystone.tier}` : ""}` : "Area-only run can be enriched from the in-game Tab overlay."}</span>
+            </div>
+          ` : ""}
+        </section>
+      </div>
+    </div>
+  `;
+}
+
+function renderAtlasOcrEvidence(evidence: MapOcrEvidence) {
+  const score = evidence.confidence_score == null ? "" : ` · ${(evidence.confidence_score * 100).toFixed(0)}%`;
+  const count = evidence.normalized_mods.length
+    ? ` - ${evidence.normalized_mods.length}/${evidence.raw_lines.length || evidence.normalized_mods.length} lines`
+    : "";
+  const summary = evidence.summary;
+  const summaryParts = summary ? [
+    summary.reward_lines.length ? `${summary.reward_lines.length} reward` : "",
+    summary.player_danger_lines.length ? `${summary.player_danger_lines.length} player-risk` : "",
+    summary.monster_danger_lines.length ? `${summary.monster_danger_lines.length} monster-risk` : "",
+    summary.content_flags.length ? summary.content_flags.join(", ") : "",
+  ].filter(Boolean) : [];
+  const mods = evidence.normalized_mods.length
+    ? evidence.normalized_mods.map((mod) => `<li>${escapeHtml(mod)}</li>`).join("")
+    : `<li>${escapeHtml(evidence.reason ?? "No recognized map modifier lines yet.")}</li>`;
+  const feedbackClasses = [
+    feedbackClass(feedbackState.ocrRequestedAt, "is-reading"),
+    feedbackClass(feedbackState.ocrUpdatedAt, "is-fresh-ocr"),
+  ].filter(Boolean).join(" ");
+  return `
+    <div class="atlas-ocr-evidence state-${escapeAttribute(evidence.state)} ${feedbackClasses}">
+      <strong>Tab OCR: ${escapeHtml(evidence.state.replace("_", " "))}${escapeHtml(score)}${escapeHtml(count)}</strong>
+      ${summaryParts.length ? `<p>${escapeHtml(summaryParts.join(" · "))}</p>` : ""}
+      <ul>${mods}</ul>
+    </div>
+  `;
+}
+
+function renderAtlasSafetyDashboard() {
+  const { waystone } = atlasContext();
+  const summary = waystone?.profile_hazard_summary ?? { info: 0, warning: 0, danger: 0, build_breaking: 0 };
+  const warnings = waystone?.profile_hazards ?? [];
+
+  return `
+    <div class="atlas-dashboard">
+      <div class="atlas-summary-grid three">
+        ${renderAtlasStatCard("Build-breaking", String(summary.build_breaking), "Usually reroll")}
+        ${renderAtlasStatCard("Danger", String(summary.danger), "High-risk for profile")}
+        ${renderAtlasStatCard("Warning", String(summary.warning), "Playable but notable")}
+      </div>
+      <section class="atlas-card atlas-card-full">
+        <p class="section-label">Waystone Safety</p>
+        <h3>${escapeHtml(profileLabel(state.hazard_profile_id))}</h3>
+        <div class="atlas-warning-list">
+          ${warnings.length ? warnings.map(renderAtlasWarning).join("") : renderAtlasEmptyState(
+            waystone ? "No profile warnings" : "No waystone safety data",
+            waystone ? "The selected profile did not flag this waystone. Keep an eye on player comfort, but Reliquary has no matched warning here." : "Copy a waystone or use Tab OCR during a map to make this panel useful.",
+          )}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAtlasProfileDashboard() {
+  const profiles = hazardProfiles.length ? hazardProfiles : [
+    { id: "general_safe_mapping", label: "General Safe Mapping", rules: [] },
+    { id: "energy_shield_recovery", label: "Energy Shield / Recovery", rules: [] },
+    { id: "minion", label: "Minion", rules: [] },
+  ];
+  const snapshot = state.build_snapshot;
+  const fingerprint = state.build_fingerprint;
+  const snapshotTitle = snapshot?.character
+    ? `${snapshot.character}${snapshot.account ? ` @ ${snapshot.account}` : ""}`
+    : "No personal snapshot";
+  const snapshotMeta = snapshot
+    ? [
+        snapshot.league ? `League: ${snapshot.league}` : null,
+        snapshot.class_name ?? snapshot.ascendancy,
+        snapshot.level ? `Lv ${snapshot.level}` : null,
+        `Profile: ${profileLabel(fingerprint?.recommended_profile_id ?? state.hazard_profile_id)}`,
+      ].filter(Boolean).join(" | ")
+    : "Paste a public PoE.ninja character URL. Reliquary stays OAuth-free and stores only a local snapshot.";
+  const tagMarkup = fingerprint?.tags.length
+    ? fingerprint.tags.map((tag) => `<span class="atlas-build-tag">${escapeHtml(tag.replace(/_/g, " "))}</span>`).join("")
+    : `<span class="atlas-build-tag muted">metadata only</span>`;
+  const notes = fingerprint?.notes.length
+    ? `<div class="atlas-build-notes">${fingerprint.notes.map((note) => `<small>${escapeHtml(note)}</small>`).join("")}</div>`
+    : "";
+
+  return `
+    <div class="atlas-dashboard">
+      <section class="atlas-card atlas-card-full">
+        <p class="section-label">Build Profile</p>
+        <h3>${escapeHtml(snapshotTitle)}</h3>
+        <p>${escapeHtml(snapshotMeta)}</p>
+        ${renderBuildProfileImportControls()}
+        <div class="atlas-build-tags">${tagMarkup}</div>
+        ${notes}
+      </section>
+      <section class="atlas-card atlas-card-full">
+        <p class="section-label">Danger Profile</p>
+        <h3>${escapeHtml(profileLabel(state.hazard_profile_id))}</h3>
+        <div class="atlas-profile-grid">
+          ${profiles.map((profile) => `
+            <button class="atlas-profile-card ${profile.id === state.hazard_profile_id ? "is-active" : ""}" data-hazard-profile="${escapeAttribute(profile.id)}" type="button">
+              <p class="section-label">${profile.id === state.hazard_profile_id ? "Active" : "Profile"}</p>
+              <strong>${escapeHtml(profile.label)}</strong>
+              <span>${profile.rules.length} safety rules</span>
+            </button>
+          `).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAtlasFocusDashboard() {
+  const focus = atlasFocusPreset();
+  const { area } = atlasContext();
+  const checklist = focus.checklist.map((item, index) => {
+    const key = `${focus.id}:${index}`;
+    return `
+      <label class="atlas-focus-check">
+        <input type="checkbox" data-atlas-focus-check="${escapeAttribute(key)}" ${atlasFocusState.checklist[key] ? "checked" : ""} />
+        <span>${escapeHtml(item)}</span>
+      </label>
+    `;
+  }).join("");
+  const completed = focus.checklist.filter((_, index) => atlasFocusState.checklist[`${focus.id}:${index}`]).length;
+
+  return `
+    <div class="atlas-dashboard">
+      <div class="atlas-summary-grid three">
+        ${renderAtlasStatCard("Selected Focus", focus.label, `${completed}/${focus.checklist.length} checklist`)}
+        ${renderAtlasStatCard("Current Boss", area?.boss ?? "Unknown", area?.name ?? "Waiting for map context")}
+        ${renderAtlasStatCard("Fortress Scout", "Manual", "Notes-only until pathing data is reliable")}
+      </div>
+
+      <section class="atlas-card atlas-card-full atlas-focus-card">
+        <p class="section-label">Endgame Focus</p>
+        <h3>${escapeHtml(focus.label)}</h3>
+        <p>${escapeHtml(focus.summary)}</p>
+        <div class="atlas-focus-grid">
+          ${ATLAS_FOCUS_PRESETS.map((preset) => `
+            <button class="atlas-focus-option ${preset.id === focus.id ? "is-active" : ""}" type="button" data-atlas-focus="${escapeAttribute(preset.id)}">
+              <strong>${escapeHtml(preset.label)}</strong>
+              <span>${escapeHtml(preset.summary)}</span>
+            </button>
+          `).join("")}
+        </div>
+      </section>
+
+      <div class="atlas-overview-grid atlas-focus-workbench">
+        <section class="atlas-card">
+          <div class="atlas-card-header-row">
+            <div>
+              <p class="section-label">Checklist</p>
+              <h3>${completed}/${focus.checklist.length} done</h3>
+            </div>
+            <button class="atlas-secondary-action" type="button" data-atlas-focus-reset>Reset</button>
+          </div>
+          <div class="atlas-focus-checklist">${checklist}</div>
+        </section>
+
+        <section class="atlas-card">
+          <p class="section-label">Run Notes</p>
+          <h3>Manual tracker</h3>
+          <textarea class="atlas-focus-notes" data-atlas-focus-notes placeholder="Example: fortress path east, skip chilled ground maps, save logbooks for later.">${escapeHtml(atlasFocusState.notes)}</textarea>
+          <p>Stored locally on this machine. No account sync, no hidden automation.</p>
+        </section>
+
+        <section class="atlas-card atlas-card-full">
+          <p class="section-label">Boss / Fortress Placeholder</p>
+          <h3>${escapeHtml(area?.boss ? `Boss: ${area.boss}` : "Useful, honest placeholders")}</h3>
+          <div class="atlas-detail-list">
+            <span><strong>Boss</strong>${escapeHtml(area?.boss ?? "Unknown until Client.txt/source data identifies it")}</span>
+            <span><strong>Fortress</strong>Manual note only</span>
+            <span><strong>Area</strong>${escapeHtml(area?.name ?? "No active map")}</span>
+            <span><strong>Risk</strong>${escapeHtml(profileLabel(state.hazard_profile_id))}</span>
+          </div>
+          <p>Reliquary will show boss/fortress context only when it has defensible local data. Until then, this lane is a reminder board, not fake guidance.</p>
+        </section>
+      </div>
+    </div>
+  `;
+}
+
+function renderAtlasEmptyState(title: string, copy: string) {
+  return `
+    <div class="atlas-empty-state">
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(copy)}</span>
+    </div>
+  `;
+}
+
+function renderAtlasHistoryDashboard() {
+  const clearLabel = atlasHistoryClearConfirmHandle > 0 ? "Click again to clear" : "Clear History";
+  if (!atlasRunHistory.length) {
+    return `
+      <div class="atlas-dashboard">
+        <section class="atlas-card atlas-card-full">
+          <div class="atlas-card-header-row">
+            <div>
+              <p class="section-label">Run History</p>
+              <h3>Mapping log</h3>
+            </div>
+            <button class="atlas-secondary-action" type="button" data-clear-atlas-history disabled>Clear History</button>
+          </div>
+          <div class="empty-listing">No Atlas runs recorded yet. Enter a generated map to start the local run history.</div>
+        </section>
+      </div>
+    `;
+  }
+
+  const rows = atlasRunHistory.slice(0, 12).map((run) => {
+    const elapsed = run.elapsed_ms > 0 ? formatZoneTime(run.elapsed_ms) : "In progress";
+    const waystone = run.waystone ? renderWaystoneStatsText(run.waystone) : "No armed waystone";
+    const hazards = run.waystone?.profile_hazard_summary;
+    const hazardText = hazards ? `${hazards.build_breaking} breaking | ${hazards.danger} danger | ${hazards.warning} warning` : "No waystone risk";
+    const boss = run.area.boss ? `Boss: ${run.area.boss}` : "Boss unknown";
+    const source = run.ocr_evidence?.state === "confirmed"
+      ? `OCR ${run.ocr_evidence.normalized_mods.length} lines`
+      : mapConfidenceLabel(run.confidence);
+    const completed = run.completed_at_epoch_ms ? formatTimestamp(run.completed_at_epoch_ms) : "Active now";
+    return `
+      <article class="atlas-run-history-row confidence-${escapeAttribute(run.confidence)}">
+        <div>
+          <strong>${escapeHtml(run.area.name)}</strong>
+          <small>${escapeHtml(source)} | ${escapeHtml(waystone)}</small>
+          <small>${escapeHtml(boss)} | ${escapeHtml(formatTimestamp(run.started_at_epoch_ms))}</small>
+        </div>
+        <span>${escapeHtml(elapsed)}</span>
+        <span>${run.deaths} deaths</span>
+        <span>${escapeHtml(hazardText)}</span>
+        <span>${escapeHtml(completed)}</span>
+      </article>
+    `;
+  }).join("");
+
+  return `
+    <div class="atlas-dashboard">
+      <section class="atlas-card atlas-card-full">
+        <div class="atlas-card-header-row">
+          <div>
+            <p class="section-label">Run History</p>
+            <h3>Mapping log</h3>
+          </div>
+          <button class="atlas-secondary-action${atlasHistoryClearConfirmHandle > 0 ? " confirm" : ""}" type="button" data-clear-atlas-history>${escapeHtml(clearLabel)}</button>
+        </div>
+        <div class="atlas-run-history-list">${rows}</div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAtlasStatCard(label: string, value: string, detail: string) {
+  return `
+    <section class="atlas-stat-card">
+      <p class="section-label">${escapeHtml(label)}</p>
+      <strong>${escapeHtml(value)}</strong>
+      <span>${escapeHtml(detail)}</span>
+    </section>
+  `;
+}
+
+function renderAtlasWarning(warning: WaystoneHazardWarning) {
+  return `
+    <article class="price-filter atlas-warning severity-${escapeAttribute(warning.severity)}">
+      <span>
+        <strong>${escapeHtml(warning.modifier)}</strong>
+        <small>${escapeHtml(warning.profile_label)} · ${escapeHtml(warning.reason)}</small>
+      </span>
+      <em>${escapeHtml(warning.severity.replace("_", " "))}</em>
+    </article>
+  `;
+}
+
+function renderWaystoneStatsText(waystone: {
+  tier: number | null;
+  quantity: number | null;
+  rarity: number | null;
+  pack_size: number | null;
+  hazard_count: number;
+} | null | undefined) {
+  if (!waystone) return "Arm a waystone before entering a map.";
+  const parts = [
+    waystone.tier ? `T${waystone.tier}` : null,
+    waystone.quantity != null ? `Q:${waystone.quantity}%` : null,
+    waystone.rarity != null ? `R:${waystone.rarity}%` : null,
+    waystone.pack_size != null ? `Pack:${waystone.pack_size}%` : null,
+    waystone.hazard_count ? `${waystone.hazard_count} warnings` : null,
+  ].filter(Boolean);
+  return parts.join(" · ") || "Waystone armed.";
+}
+
+function safetySummaryLabel(summary: HazardSummary) {
+  if (summary.build_breaking > 0) return "Build-breaking";
+  if (summary.danger > 0) return "Danger";
+  if (summary.warning > 0) return "Warning";
+  return "No warnings";
+}
+
+function mapConfidenceLabel(confidence: MapRunConfidence) {
+  if (confidence === "armed") return "Armed";
+  if (confidence === "stale") return "Stale";
+  if (confidence === "unknown") return "Pending";
+  if (confidence === "ocr_partial") return "OCR partial";
+  if (confidence === "ocr_confirmed") return "OCR confirmed";
+  return "Area-only";
+}
+
+function mapConfidenceDescription(confidence: MapRunConfidence) {
+  if (confidence === "armed") return "This run consumed an explicitly armed waystone.";
+  if (confidence === "stale") return "A waystone existed, but it was too old to trust.";
+  if (confidence === "unknown") return "A waystone is armed and waiting for the next generated map.";
+  if (confidence === "ocr_partial") return "The run was enriched by a low-confidence Tab overlay read.";
+  if (confidence === "ocr_confirmed") return "The run was enriched by a confirmed Tab overlay read.";
+  return "Client.txt detected the area, but no waystone was armed.";
+}
+
+function profileLabel(profileId: string) {
+  return hazardProfiles.find((profile) => profile.id === profileId)?.label ?? profileId.replace(/_/g, " ");
+}
+
+function renderSettingsPanel() {
+  const transparencyPercent = Math.round((1 - appSettings.panelAlpha) * 100);
+
+  return `
+    <section class="settings-panel">
+      <div class="settings-hero">
+        <div>
+          <p class="section-label">Settings</p>
+          <h2>Overlay feel</h2>
+          <p>Visual controls apply instantly and stay local to this machine.</p>
+        </div>
+        <button class="action-button settings-reset-button" data-reset-visual-settings type="button">Reset visuals</button>
+      </div>
+
+      <div class="settings-grid">
+        <label class="settings-field">
+          <span>
+            <strong>Accent Hue</strong>
+            <small>Defaults to Reliquary red. Warnings stay red even when the accent changes.</small>
+          </span>
+          <input
+            data-setting="accentHue"
+            type="range"
+            min="0"
+            max="359"
+            step="1"
+            value="${escapeAttribute(String(Math.round(appSettings.accentHue)))}"
+          />
+          <output data-setting-output="accentHue">${escapeHtml(String(Math.round(appSettings.accentHue)))} deg</output>
+        </label>
+
+        <label class="settings-field">
+          <span>
+            <strong>Panel Transparency</strong>
+            <small>Changes only the OLED shell behind the readable cards. At 100%, the shell can disappear completely.</small>
+          </span>
+          <input
+            data-setting="panelAlpha"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value="${escapeAttribute(String(transparencyPercent))}"
+          />
+          <output data-setting-output="panelAlpha">${escapeHtml(String(transparencyPercent))}%</output>
+        </label>
+
+        <label class="settings-field">
+          <span>
+            <strong>Saturation</strong>
+            <small>Full color at 100%. Slide to 0% for pure grayscale, or push past 100% for vivid colorways.</small>
+          </span>
+          <input
+            data-setting="saturation"
+            type="range"
+            min="0"
+            max="200"
+            step="5"
+            value="${escapeAttribute(String(appSettings.saturation))}"
+          />
+          <output data-setting-output="saturation">${escapeHtml(String(appSettings.saturation))}%</output>
+        </label>
+
+        <div class="settings-field">
+          <span>
+            <strong>Item Metadata Hotkey</strong>
+            <small>Copies the hovered item into Scan for pricing and market checks.</small>
+          </span>
+          <div class="keybind-row">
+            <select data-setting="scanMod">
+              <option value="Ctrl"${appSettings.scanMod === "Ctrl" ? " selected" : ""}>Ctrl</option>
+              <option value="Alt"${appSettings.scanMod === "Alt" ? " selected" : ""}>Alt</option>
+            </select>
+            <span>+</span>
+            <input
+              data-setting="scanKey"
+              type="text"
+              maxlength="1"
+              class="keybind-letter"
+              value="${escapeAttribute(appSettings.scanKey)}"
+            />
+          </div>
+        </div>
+
+        <div class="settings-field">
+          <span>
+            <strong>Waystone Metadata Hotkey</strong>
+            <small>Copies the hovered waystone into Atlas and arms it for the next map. It does not replace the item scan card.</small>
+          </span>
+          <div class="keybind-row">
+            <select data-setting="waystoneMod">
+              <option value="Ctrl"${appSettings.waystoneMod === "Ctrl" ? " selected" : ""}>Ctrl</option>
+              <option value="Alt"${appSettings.waystoneMod === "Alt" ? " selected" : ""}>Alt</option>
+            </select>
+            <span>+</span>
+            <input
+              data-setting="waystoneKey"
+              type="text"
+              maxlength="1"
+              class="keybind-letter"
+              value="${escapeAttribute(appSettings.waystoneKey)}"
+            />
+          </div>
+        </div>
+
+        <div class="settings-field">
+          <span>
+            <strong>Trade Hotkey</strong>
+            <small>Opens the latest generated trade URL in your browser.</small>
+          </span>
+          <div class="keybind-row">
+            <select data-setting="tradeMod">
+              <option value="Ctrl"${appSettings.tradeMod === "Ctrl" ? " selected" : ""}>Ctrl</option>
+              <option value="Alt"${appSettings.tradeMod === "Alt" ? " selected" : ""}>Alt</option>
+            </select>
+            <span>+</span>
+            <input
+              data-setting="tradeKey"
+              type="text"
+              maxlength="1"
+              class="keybind-letter"
+              value="${escapeAttribute(appSettings.tradeKey)}"
+            />
+          </div>
+        </div>
+
+        <label class="settings-field settings-field-toggle settings-field-wide">
+          <span>
+            <strong>Discord Rich Presence</strong>
+            <small>Opt in to show your character, level, current campaign area, hideout, or map on Discord. Confirmed OCR mechanics may appear beside the map name.</small>
+            <small data-discord-presence-status>${escapeHtml(discordPresenceStatus?.message ?? "Checking Discord availability...")}</small>
+          </span>
+          <input
+            data-setting="discordPresenceEnabled"
+            type="checkbox"
+            ${appSettings.discordPresenceEnabled ? "checked" : ""}
+            aria-label="Enable Discord Rich Presence"
+          />
+        </label>
+
+      </div>
+    </section>
+  `;
+}
+
+function renderLeagueCatalogRow(league: LeagueCatalogEntry) {
+  const flags = [
+    league.trade_enabled ? "trade" : null,
+    league.exchange_enabled ? "exchange" : null,
+    league.indexed ? "indexed" : null,
+  ]
+    .filter((flag): flag is string => Boolean(flag))
+    .join(" · ");
+  const expansion = league.expansion ? ` <${league.expansion}>` : "";
+  const startsAt = league.discovered_at ? ` | ${league.discovered_at}` : "";
+
+  return `
+    <li>
+      ${escapeHtml(`${league.display_name}${expansion}${startsAt}`)}
+      <mark class="${league.trade_enabled && league.exchange_enabled ? "feed-live" : "feed-data"}">${escapeHtml(flags || "discovered")}</mark>
+    </li>
+  `;
+}
+
+function renderDataLeagueRow(league: DataLeague) {
+  const expansion = league.expansion ? ` <${league.expansion}>` : "";
+  const startsAt = league.starts_at ? ` | ${league.starts_at}` : "";
+  const version = league.version ? ` ${league.version}` : "";
+  const status = league.trade_enabled ? "trade live" : "data only";
+
+  return `
+    <li>
+      ${escapeHtml(`${league.name}${expansion}${version}${startsAt}`)}
+      <mark class="${league.trade_enabled ? "feed-live" : "feed-data"}">${escapeHtml(status)}</mark>
+    </li>
+  `;
+}
+
+function formatCoordinates(coordinates: TabCoordinates | null) {
+  if (!coordinates) {
+    return "No stash coordinates found";
+  }
+
+  return `Tab ${coordinates.tab_name}: left ${coordinates.left}, top ${coordinates.top}`;
+}
+
+function applyProfileSelection(item: ScannedItem, profile: PriceProfileId = selectedPriceProfile) {
+  selectedSpecKeys = profileSpecKeySet(item, profile, state.source_truth_snapshot);
+}
+
+function formatRelativeAge(epochMs: number) {
+  if (!Number.isFinite(epochMs) || epochMs <= 0) {
+    return "unknown age";
+  }
+
+  const ageSeconds = Math.max(0, Math.floor((Date.now() - epochMs) / 1000));
+  if (ageSeconds < 60) {
+    return `${ageSeconds}s old`;
+  }
+  const ageMinutes = Math.floor(ageSeconds / 60);
+  if (ageMinutes < 60) {
+    return `${ageMinutes}m old`;
+  }
+  return `${Math.floor(ageMinutes / 60)}h old`;
+}
+
+function activePriceFiltersForCurrentSelection() {
+  return activePriceFiltersForSelection(
+    state.scanned_item,
+    selectedSpecKeys,
+    selectedPriceProfile,
+    state.source_truth_snapshot,
+  );
+}
+
+function currentPriceRequestSignature(filters: ReturnType<typeof activePriceFiltersForCurrentSelection>) {
+  return [
+    state.scanned_item?.raw_text ?? "",
+    state.trade_league,
+    state.price_currency,
+    state.price_option,
+    activeFilterSignature(filters),
+  ].join("||");
+}
+
+function hardPriceFiltersForCurrentSelection() {
+  return hardPriceFiltersForSelection(
+    state.scanned_item,
+    selectedSpecKeys,
+    selectedPriceProfile,
+    state.source_truth_snapshot,
+  );
+}
+
+function recentlyRequestedPriceCheck(signature: string) {
+  const now = Date.now();
+  for (const [cachedSignature, timestamp] of recentPriceRequestSignatures) {
+    if (now - timestamp > PRICE_REQUEST_COOLDOWN_MS) {
+      recentPriceRequestSignatures.delete(cachedSignature);
+    }
+  }
+
+  const lastRequestedAt = recentPriceRequestSignatures.get(signature);
+  if (lastRequestedAt && now - lastRequestedAt <= PRICE_REQUEST_COOLDOWN_MS) {
+    return true;
+  }
+
+  recentPriceRequestSignatures.set(signature, now);
+  return false;
+}
+
+function currentRequestedFilterSignature() {
+  return activeFilterSignature(hardPriceFiltersForCurrentSelection());
+}
+
+function isSpecApplied(
+  spec: ItemSpec,
+  item = state.scanned_item,
+  priceCheck = state.price_check,
+) {
+  if (!item || !priceCheck) {
+    return false;
+  }
+
+  return appliedSpecKeySet(item, priceCheck, state.source_truth_snapshot).has(spec.key);
+}
+
+function isSpecSelected(spec: ItemSpec) {
+  return selectedSpecKeys.has(spec.key);
+}
+
+function estimatePriceFromListings(priceCheck: PriceCheck, listings: PriceListing[]): PriceEstimate {
+  const currency = currencyById(priceCheck, priceCheck.selected_currency);
+  const values = listings
+    .map((listing) => listing.normalized_amount ?? normalizedFallbackAmount(listing, priceCheck.selected_currency))
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)
+    .sort((left, right) => left - right);
+
+  if (!values.length) {
+    return {
+      amount: null,
+      low: null,
+      high: null,
+      reliability: "Very Low",
+      reliabilityClass: "very-low",
+      currencyId: priceCheck.selected_currency,
+      currencyName: currency.name,
+      iconUrl: currency.icon_url,
+    };
+  }
+
+  const median = percentile(values, 0.5);
+  const low = percentile(values, values.length >= 5 ? 0.1 : 0);
+  const high = percentile(values, values.length >= 5 ? 0.9 : 1);
+  const spread = high && low ? high / Math.max(low, 0.0001) : Number.POSITIVE_INFINITY;
+  const reliability =
+    values.length >= 8 && spread <= 3
+      ? "High"
+      : values.length >= 5 && spread <= 6
+        ? "Moderate"
+        : values.length >= 3
+          ? "Low"
+          : "Very Low";
+
+  return {
+    amount: median,
+    low,
+    high,
+    reliability,
+    reliabilityClass: reliability.toLowerCase().replace(/\s+/g, "-"),
+    currencyId: priceCheck.selected_currency,
+    currencyName: currency.name,
+    iconUrl: currency.icon_url,
+  };
+}
+
+function stashNoteFromEstimate(estimate: PriceEstimate) {
+  if (estimate.amount === null) {
+    return "";
+  }
+
+  return `~price ${formatStashPriceAmount(estimate.amount)} ${estimate.currencyId}`;
+}
+
+function formatStashPriceAmount(amount: number) {
+  if (amount >= 100) {
+    return String(Math.round(amount));
+  }
+  if (amount >= 10) {
+    return String(Math.round(amount * 10) / 10);
+  }
+  return String(Math.round(amount * 100) / 100);
+}
+
+function emptyListingMessage(priceCheck: PriceCheck, currency: CurrencyMeta) {
+  if (priceCheck.error) {
+    return priceCheck.error;
+  }
+
+  if (!priceCheck.listings.some((listing) => listingMatchesSelectedPriceOption(priceCheck, listing))) {
+    if (priceCheck.selected_price_option === "equivalent") {
+      return "No fetched listings have a listed buyout price.";
+    }
+
+    if (priceCheck.selected_price_option === "exalted_divine") {
+      return "No fetched listings are priced in Exalted or Divine Orbs.";
+    }
+
+    return `No fetched listings are priced in ${priceOptionLabel(priceCheck)}.`;
+  }
+
+  if (state.scanned_item && selectedSpecKeys.size) {
+    return "No fetched listings match the selected item specifications.";
+  }
+
+  return priceCheck.status;
+}
+
+async function pushActivePriceFilters() {
+  if (!state.scanned_item) {
+    return;
+  }
+
+  const hardFilters = hardPriceFiltersForCurrentSelection();
+  const allFilters = activePriceFiltersForCurrentSelection();
+  latestRequestedFilterSignature = activeFilterSignature(hardFilters);
+  const requestSignature = currentPriceRequestSignature(hardFilters);
+  if (recentlyRequestedPriceCheck(requestSignature)) {
+    if (state.price_check) {
+      state.price_check.status = allFilters.length
+        ? `Using locally filtered listings for ${allFilters.length} selected filter${allFilters.length === 1 ? "" : "s"} (${hardFilters.length} hard)...`
+        : "Using locally filtered listings without selected filters...";
       render();
+    }
+    return;
+  }
+
+  if (state.price_check) {
+    state.price_check.status = allFilters.length
+      ? `Refreshing trade search for ${hardFilters.length} hard filter${hardFilters.length === 1 ? "" : "s"} (${allFilters.length} selected)...`
+      : "Refreshing trade search without selected filters...";
+    render();
+  }
+
+  await invoke("set_active_price_filters", {
+    filters: hardFilters,
+  }).catch((error) => pushStatus("price", String(error)));
+}
+
+function scheduleActivePriceFilterPush() {
+  window.clearTimeout(activeFilterPushTimer);
+  activeFilterPushTimer = window.setTimeout(() => {
+    void pushActivePriceFilters();
+  }, 100);
+}
+
+function estimatePrice(priceCheck: PriceCheck): PriceEstimate {
+  const currency = currencyById(priceCheck, priceCheck.selected_currency);
+  const values = priceCheck.listings
+    .map((listing) => listing.normalized_amount ?? normalizedFallbackAmount(listing, priceCheck.selected_currency))
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)
+    .sort((left, right) => left - right);
+
+  if (!values.length) {
+    return {
+      amount: null,
+      low: null,
+      high: null,
+      reliability: "Very Low",
+      reliabilityClass: "very-low",
+      currencyId: priceCheck.selected_currency,
+      currencyName: currency.name,
+      iconUrl: currency.icon_url,
+    };
+  }
+
+  const median = percentile(values, 0.5);
+  const low = percentile(values, values.length >= 5 ? 0.1 : 0);
+  const high = percentile(values, values.length >= 5 ? 0.9 : 1);
+  const spread = high && low ? high / Math.max(low, 0.0001) : Number.POSITIVE_INFINITY;
+  const reliability =
+    values.length >= 8 && spread <= 3
+      ? "High"
+      : values.length >= 5 && spread <= 6
+        ? "Moderate"
+        : values.length >= 3
+          ? "Low"
+          : "Very Low";
+
+  return {
+    amount: median,
+    low,
+    high,
+    reliability,
+    reliabilityClass: reliability.toLowerCase().replace(/\s+/g, "-"),
+    currencyId: priceCheck.selected_currency,
+    currencyName: currency.name,
+    iconUrl: currency.icon_url,
+  };
+}
+
+function priceOptionLabel(priceCheck: PriceCheck) {
+  switch (priceCheck.selected_price_option) {
+    case "equivalent":
+      return "Exalted Orb Equivalent";
+    case "exalted_divine":
+      return "Exalted or Divine Orbs";
+    default:
+      return currencyById(priceCheck, priceCheck.selected_price_option).name;
+  }
+}
+
+function currencyById(priceCheck: PriceCheck, currencyId: string): CurrencyMeta {
+  return (
+    priceCheck.currencies.find((currency) => currency.id === currencyId) ??
+    fallbackCurrencies().find((currency) => currency.id === currencyId) ?? {
+      id: currencyId,
+      name: currencyId,
+      icon_url: resolveCurrencyIcon(currencyId, null),
+    }
+  );
+}
+
+function normalizedFallbackAmount(listing: PriceListing, selectedCurrency: string) {
+  if (listing.currency === selectedCurrency) {
+    return listing.amount;
+  }
+
+  return null;
+}
+
+function percentile(values: number[], point: number) {
+  if (!values.length) {
+    return null;
+  }
+
+  const index = Math.min(values.length - 1, Math.max(0, Math.round((values.length - 1) * point)));
+  return values[index];
+}
+
+function formatCompactNumber(value: number) {
+  if (value >= 1000) {
+    return Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value);
+  }
+
+  return Intl.NumberFormat(undefined, {
+    maximumFractionDigits: value >= 10 ? 0 : 1,
+  }).format(value);
+}
+
+function shortSeller(seller: string) {
+  if (seller.length <= 14) {
+    return seller;
+  }
+
+  return `${seller.slice(0, 12)}...`;
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;",
+    };
+    return entities[character];
+  });
+}
+
+function escapeAttribute(value: string) {
+  return escapeHtml(value).replace(/`/g, "&#096;");
+}
+
+function clampNumber(value: number, min: number, max: number, fallback: number) {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, value));
+}
+
+function readAppSettings(): AppSettings {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) ?? "{}") as Partial<AppSettings>;
+
+    return {
+      accentHue: clampNumber(Number(parsed.accentHue), 0, 359, DEFAULT_APP_SETTINGS.accentHue),
+      panelAlpha: clampNumber(Number(parsed.panelAlpha), 0, 1, DEFAULT_APP_SETTINGS.panelAlpha),
+      saturation: clampNumber(Number(parsed.saturation), 0, 200, DEFAULT_APP_SETTINGS.saturation),
+      discordPresenceEnabled:
+        typeof parsed.discordPresenceEnabled === "boolean"
+          ? parsed.discordPresenceEnabled
+          : DEFAULT_APP_SETTINGS.discordPresenceEnabled,
+      scanMod: parsed.scanMod === "Ctrl" || parsed.scanMod === "Alt" ? parsed.scanMod : DEFAULT_APP_SETTINGS.scanMod,
+      scanKey: normalizeShortcutKey(parsed.scanKey, DEFAULT_APP_SETTINGS.scanKey),
+      waystoneMod: parsed.waystoneMod === "Ctrl" || parsed.waystoneMod === "Alt" ? parsed.waystoneMod : DEFAULT_APP_SETTINGS.waystoneMod,
+      waystoneKey: normalizeShortcutKey(parsed.waystoneKey, DEFAULT_APP_SETTINGS.waystoneKey),
+      tradeMod: parsed.tradeMod === "Ctrl" || parsed.tradeMod === "Alt" ? parsed.tradeMod : DEFAULT_APP_SETTINGS.tradeMod,
+      tradeKey: normalizeShortcutKey(parsed.tradeKey, DEFAULT_APP_SETTINGS.tradeKey),
+    };
+  } catch {
+    return { ...DEFAULT_APP_SETTINGS };
+  }
+}
+
+function normalizeShortcutKey(value: unknown, fallback: string) {
+  if (typeof value !== "string" || value.length !== 1) {
+    return fallback;
+  }
+
+  const key = value.toUpperCase();
+  return isSupportedShortcutKey(key) ? key : fallback;
+}
+
+function isSupportedShortcutKey(key: string) {
+  return key.length === 1 && ((key >= "A" && key <= "Z") || (key >= "0" && key <= "9"));
+}
+
+function saveAppSettings() {
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(appSettings));
+  } catch {
+    pushStatus("settings", "Unable to save local visual settings.");
+  }
+}
+
+function applyAppSettings(settings: AppSettings) {
+  const hue = clampNumber(settings.accentHue, 0, 359, DEFAULT_APP_SETTINGS.accentHue);
+  const rootStyle = document.documentElement.style;
+
+  rootStyle.setProperty("--gold", `hsl(${hue} 62% 36%)`);
+  rootStyle.setProperty("--gold-bright", `hsl(${hue} 70% 58%)`);
+  rootStyle.setProperty("--gold-deep", `hsl(${hue} 61% 16%)`);
+  rootStyle.setProperty("--accent-hue", String(hue));
+  rootStyle.setProperty("--line", `hsl(${hue} 70% 58% / 0.26)`);
+  rootStyle.setProperty("--line-strong", `hsl(${hue} 70% 58% / 0.56)`);
+  const sat = settings.saturation / 100;
+  rootStyle.setProperty("--saturation", (settings.saturation).toFixed(0) + "%");
+  rootStyle.setProperty("--accent-sat", (70 * sat).toFixed(0) + "%");
+  rootStyle.setProperty("--accent-sat-bg", (62 * sat).toFixed(0) + "%");
+  rootStyle.setProperty("--surface-alpha", settings.panelAlpha.toFixed(2));
+  rootStyle.setProperty("--surface-glow-alpha", (settings.panelAlpha * 0.16).toFixed(3));
+  void invoke("set_keybinds", {
+    scanMod: settings.scanMod,
+    scanKey: settings.scanKey,
+    waystoneMod: settings.waystoneMod,
+    waystoneKey: settings.waystoneKey,
+    tradeMod: settings.tradeMod,
+    tradeKey: settings.tradeKey,
+  }).catch((err) => pushStatus("keybinds", String(err)));
+
+  if (lastSyncedDiscordPresenceEnabled !== settings.discordPresenceEnabled) {
+    lastSyncedDiscordPresenceEnabled = settings.discordPresenceEnabled;
+    void syncDiscordPresenceSetting(settings.discordPresenceEnabled);
+  }
+}
+
+async function syncDiscordPresenceSetting(enabled: boolean) {
+  try {
+    discordPresenceStatus = await invoke<DiscordPresenceStatus>(
+      "set_discord_presence_enabled",
+      { enabled },
+    );
+    updateDiscordPresenceStatusText();
+  } catch (error) {
+    discordPresenceStatus = {
+      enabled,
+      configured: false,
+      connected: false,
+      message: String(error),
+    };
+    updateDiscordPresenceStatusText();
+  }
+}
+
+function updateDiscordPresenceStatusText() {
+  const output = document.querySelector<HTMLElement>("[data-discord-presence-status]");
+  if (output) {
+    output.textContent = discordPresenceStatus?.message ?? "Checking Discord availability...";
+  }
+}
+
+function updateSettingOutput(settingName: keyof AppSettings) {
+  const output = document.querySelector<HTMLOutputElement>(`[data-setting-output="${settingName}"]`);
+  if (!output) {
+    return;
+  }
+
+  if (settingName === "panelAlpha") {
+    output.textContent = `${Math.round((1 - appSettings.panelAlpha) * 100)}%`;
+  } else if (settingName === "saturation") {
+    output.textContent = `${appSettings.saturation}%`;
+  } else {
+    output.textContent = `${Math.round(appSettings.accentHue)} deg`;
+  }
+}
+
+function fallbackCurrencies(): CurrencyMeta[] {
+  return [
+    { id: "exalted", name: "Exalted Orb", icon_url: resolveCurrencyIcon("exalted", null) },
+    { id: "divine", name: "Divine Orb", icon_url: resolveCurrencyIcon("divine", null) },
+    { id: "regal", name: "Regal Orb", icon_url: resolveCurrencyIcon("regal", null) },
+    { id: "transmute", name: "Orb of Transmutation", icon_url: resolveCurrencyIcon("transmute", null) },
+    { id: "chaos", name: "Chaos Orb", icon_url: resolveCurrencyIcon("chaos", null) },
+    { id: "alch", name: "Orb of Alchemy", icon_url: resolveCurrencyIcon("alch", null) },
+    { id: "chance", name: "Orb of Chance", icon_url: resolveCurrencyIcon("chance", null) },
+    { id: "aug", name: "Orb of Augmentation", icon_url: resolveCurrencyIcon("aug", null) },
+    { id: "annul", name: "Orb of Annulment", icon_url: resolveCurrencyIcon("annul", null) },
+    { id: "mirror", name: "Mirror of Kalandra", icon_url: resolveCurrencyIcon("mirror", null) },
+    { id: "vaal", name: "Vaal Orb", icon_url: resolveCurrencyIcon("vaal", null) },
+  ];
+}
+
+function fallbackExchangeTab(): ExchangeTabState {
+  return {
+    categories: [
+      "currency",
+      "fragments",
+      "abyss",
+      "uncut-gems",
+      "gems",
+      "essences",
+      "soul-cores",
+      "idols",
+      "runes",
+      "ritual",
+      "expedition",
+      "delirium",
+      "breach",
+      "verisium",
+      "unique-weapons",
+      "unique-armours",
+      "unique-accessories",
+      "unique-flasks",
+      "unique-charms",
+      "unique-jewels",
+      "unique-maps",
+      "unique-relics",
+    ].map((id) => ({
+      id,
+      group: id.startsWith("unique-") ? "Equipment" : "General",
+      label: exchangeCategoryLabel(id),
+      feed: id.startsWith("unique-") ? "stash" : "exchange",
+      poe_ninja_type: null,
+      poe_ninja_slug: null,
+      icon_url: null,
+      available: true,
+    })),
+    selected_category_id: "currency",
+    selected_item_id: null,
+    overview: null,
+    selected_quote_currency_id: "divine",
+    status: "Exchange cache is idle.",
+    error: null,
+  };
+}
+
+function localCurrencyIconUrl(currencyId: string | null | undefined) {
+  if (!currencyId) {
+    return null;
+  }
+
+  const normalizedCurrencyId = CURRENCY_ICON_ALIASES[currencyId.toLowerCase()] ?? currencyId.toLowerCase();
+  return LOCAL_CURRENCY_ICONS[normalizedCurrencyId] ?? null;
+}
+
+function resolveCurrencyIcon(currencyId: string | null | undefined, remoteUrl: string | null) {
+  return localCurrencyIconUrl(currencyId) ?? remoteUrl;
+}
+
+function normalizeExchangeTab(exchangeTab: ExchangeTabState | null | undefined): ExchangeTabState {
+  const fallback = fallbackExchangeTab();
+
+  if (!exchangeTab) {
+    return fallback;
+  }
+
+  return {
+    categories: exchangeTab.categories?.length
+      ? exchangeTab.categories.map((category) => ({
+          ...category,
+          group: category.group || (category.id.startsWith("unique-") ? "Equipment" : "General"),
+          feed: category.feed || (category.id.startsWith("unique-") ? "stash" : "exchange"),
+          icon_url: category.icon_url ?? null,
+        }))
+      : fallback.categories,
+    selected_category_id: exchangeTab.selected_category_id || fallback.selected_category_id,
+    selected_item_id: exchangeTab.selected_item_id ?? null,
+    selected_quote_currency_id:
+      exchangeTab.selected_quote_currency_id ??
+      exchangeTab.overview?.quote_currencies?.[0]?.currency.id ??
+      fallback.selected_quote_currency_id,
+    overview: exchangeTab.overview
+      ? {
+          ...exchangeTab.overview,
+          primary_currency: exchangeTab.overview.primary_currency
+            ? {
+                ...exchangeTab.overview.primary_currency,
+                icon_url: resolveCurrencyIcon(
+                  exchangeTab.overview.primary_currency.id,
+                  exchangeTab.overview.primary_currency.icon_url,
+                ),
+              }
+            : null,
+          secondary_currency: exchangeTab.overview.secondary_currency
+            ? {
+                ...exchangeTab.overview.secondary_currency,
+                icon_url: resolveCurrencyIcon(
+                  exchangeTab.overview.secondary_currency.id,
+                  exchangeTab.overview.secondary_currency.icon_url,
+                ),
+              }
+            : null,
+          quote_currencies: (exchangeTab.overview.quote_currencies ?? []).map((quote) => ({
+            ...quote,
+            currency: {
+              ...quote.currency,
+              icon_url: resolveCurrencyIcon(quote.currency.id, quote.currency.icon_url),
+            },
+          })),
+          entries: (exchangeTab.overview.entries ?? []).map((entry) => ({
+            ...entry,
+            icon_url: entry.icon_url ?? null,
+          })),
+        }
+      : null,
+    status: exchangeTab.status || fallback.status,
+    error: exchangeTab.error ?? null,
+  };
+}
+
+function normalizePriceCheck(priceCheck: PriceCheck | null): PriceCheck | null {
+  if (!priceCheck) {
+    return null;
+  }
+
+  return {
+    ...priceCheck,
+    selected_price_option: priceCheck.selected_price_option || "equivalent",
+    requested_filters: priceCheck.requested_filters ?? [],
+    applied_filters: priceCheck.applied_filters ?? [],
+    currencies: priceCheck.currencies.map((currency) => ({
+      ...currency,
+      icon_url: resolveCurrencyIcon(currency.id, currency.icon_url),
+    })),
+    listings: priceCheck.listings.map((listing) => ({
+      ...listing,
+      currency_icon_url: resolveCurrencyIcon(listing.currency, listing.currency_icon_url),
+      normalized_currency_icon_url: resolveCurrencyIcon(
+        listing.normalized_currency,
+        listing.normalized_currency_icon_url,
+      ),
+    })),
+  };
+}
+
+function rarityClassName(rarity: string) {
+  const normalized = rarity.trim().toLowerCase();
+
+  if (normalized === "normal" || normalized === "common") {
+    return "rarity-common";
+  }
+
+  if (normalized === "magic") {
+    return "rarity-magic";
+  }
+
+  if (normalized === "rare") {
+    return "rarity-rare";
+  }
+
+  if (normalized === "unique") {
+    return "rarity-unique";
+  }
+
+  return "rarity-rare";
+}
+
+
+
+function desiredWindowLayout(): "scan" | "trade" | "settings" | "temple" | "campaign" | "atlas" | "idle" | "default" | "compact" {
+  if (compactMode) {
+    return "compact";
+  }
+
+  if (activeTab === "trade") {
+    return "trade";
+  }
+
+  if (activeTab === "temple") {
+    return "temple";
+  }
+
+  if (activeTab === "atlas") {
+    return "atlas";
+  }
+
+  if (activeTab === "campaign") {
+    return "campaign";
+  }
+
+  if (activeTab === "settings") {
+    return "settings";
+  }
+
+  if (activeTab !== "scan") {
+    return "default";
+  }
+
+  return state.scanned_item || state.price_check ? "scan" : "idle";
+}
+
+function syncWindowLayout() {
+  const layout = desiredWindowLayout();
+  if (layout === appliedWindowLayout) {
+    return;
+  }
+
+  appliedWindowLayout = layout;
+  void invoke("set_window_layout", { layout }).catch((error) => {
+    appliedWindowLayout = null;
+    pushStatus("window", String(error));
+  });
+}
+
+function syncCompactWindowHeight() {
+  const strip = root?.querySelector<HTMLElement>(".compact-strip");
+  if (!strip) return;
+  const height = strip.getBoundingClientRect().height;
+  void invoke("set_compact_window_height", { contentHeight: height }).catch((err) =>
+    pushStatus("window", String(err)),
+  );
+}
+
+function queueCompactWindowHeightSync() {
+  if (compactHeightFrame) {
+    cancelAnimationFrame(compactHeightFrame);
+  }
+
+  compactHeightFrame = requestAnimationFrame(() => {
+    compactHeightFrame = 0;
+    syncCompactWindowHeight();
+  });
+}
+
+function queueEvaluateLayoutSync() {
+  if (evaluateLayoutFrame) {
+    cancelAnimationFrame(evaluateLayoutFrame);
+  }
+
+  evaluateLayoutFrame = requestAnimationFrame(() => {
+    evaluateLayoutFrame = 0;
+    syncEvaluateLayout();
+  });
+}
+
+function syncEvaluateLayout() {
+  if (activeTab !== "scan") {
+    return;
+  }
+
+  const evaluate = panelElement!.querySelector<HTMLElement>(".evaluate-card");
+  const itemSection = evaluate?.querySelector<HTMLElement>("[data-item-section]");
+  const itemProfile = evaluate?.querySelector<HTMLElement>("[data-item-profile]");
+  const modStack = evaluate?.querySelector<HTMLElement>("[data-mod-stack]");
+  const resultsSection = evaluate?.querySelector<HTMLElement>("[data-results-section]");
+  const priceCheckMeta = resultsSection?.querySelector<HTMLElement>(".price-check-meta");
+  const listingTable = resultsSection?.querySelector<HTMLElement>(".listing-table");
+  const listingHeader = listingTable?.querySelector<HTMLElement>(".listing-header");
+  const listingRow = listingTable?.querySelector<HTMLElement>(".listing-row");
+
+  if (!evaluate || !itemSection || !itemProfile || !modStack || !resultsSection) {
+    return;
+  }
+
+  const panelHeight = panelElement!.clientHeight;
+  if (!panelHeight) {
+    return;
+  }
+
+  const sectionGap = 6;
+  const metaHeight = priceCheckMeta?.offsetHeight ?? 0;
+  const listingHeaderHeight = listingHeader?.offsetHeight ?? 0;
+  const listingRowHeight = Math.max(28, listingRow?.offsetHeight ?? 28);
+  const desiredVisibleRows = 5;
+  const listingChrome = 16;
+  const minimumResultsHeight =
+    metaHeight + listingHeaderHeight + desiredVisibleRows * listingRowHeight + listingChrome;
+  const minimumItemHeight = 430;
+  const minimumResultsFloor = 220;
+  const maximumResultsHeight = Math.max(minimumResultsFloor, panelHeight - minimumItemHeight - sectionGap);
+  const resultsHeight = Math.min(minimumResultsHeight, maximumResultsHeight);
+  evaluate.style.setProperty("--results-height", `${resultsHeight}px`);
+
+  const itemChildren = Array.from(itemProfile.children) as HTMLElement[];
+  const staticProfileHeight = itemChildren
+    .filter((child) => !child.hasAttribute("data-mod-stack"))
+    .reduce((sum, child) => sum + child.offsetHeight, 0);
+
+  const itemSectionChildren = Array.from(itemSection.children) as HTMLElement[];
+  const nonProfileHeight = itemSectionChildren
+    .filter((child) => child !== itemProfile)
+    .reduce((sum, child) => sum + child.offsetHeight, 0);
+
+  const desiredItemHeight = Math.max(
+    minimumItemHeight,
+    nonProfileHeight + staticProfileHeight + modStack.scrollHeight + 18,
+  );
+  evaluate.style.setProperty("--item-row-height", `${desiredItemHeight}px`);
+
+  const desiredWindowHeight = Math.ceil(
+    panelElement!.offsetTop + desiredItemHeight + resultsHeight + sectionGap + 12,
+  );
+  syncScanWindowHeight(desiredWindowHeight);
+
+  const availableItemHeight = Math.max(minimumItemHeight, desiredItemHeight);
+  const modsMaxHeight = Math.max(
+    92,
+    availableItemHeight - nonProfileHeight - staticProfileHeight - 14,
+  );
+
+  evaluate.style.setProperty("--mods-max-height", `${modsMaxHeight}px`);
+}
+
+function syncScanWindowHeight(height: number) {
+  if (compactMode || activeTab !== "scan") {
+    return;
+  }
+
+  const currentWindowHeight = hudElement?.clientHeight ?? window.innerHeight;
+  if (Math.abs(height - requestedScanWindowHeight) < 10 && currentWindowHeight >= height - 8) {
+    return;
+  }
+
+  requestedScanWindowHeight = height;
+  void invoke("set_scan_window_height", { contentHeight: height }).catch((error) =>
+    pushStatus("window", String(error)),
+  );
+}
+
+async function setPassthrough(passthrough: boolean) {
+  try {
+    await invoke("set_click_passthrough", { passthrough });
+  } catch (error) {
+    pushStatus("ui", `click passthrough failed: ${String(error)}`);
+  }
+}
+
+function pushStatus(worker: string, message: string) {
+  workerMessages = [...workerMessages.slice(-4), { worker, message }];
+  if (/error|failed|rate limit|429|timeout/i.test(message)) {
+    markFeedback("errorAt");
+  }
+  render();
+}
+
+function canLoadMoreMarketplaceResults() {
+  if (!state.price_check || !state.scanned_item || state.scanned_item.family === "currency") {
+    return false;
+  }
+
+  const fetched = state.price_check.listings.length;
+  const maximumAvailable = Math.min(state.price_check.matched, 50);
+  return fetched > 0 && fetched < maximumAvailable;
+}
+
+tabButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    activeTab = button.dataset.tab as TabId;
+    render();
+  });
+});
+
+if (!isListingPreviewWindow && leagueElement) {
+  leagueElement.addEventListener("change", async () => {
+    state.trade_league = leagueElement.value;
+    state.price_check = null;
+    marketBoardLoadState = { key: null, status: "idle", dataset: null, source: "none", error: null };
+    marketBoardVisibleRows = { winner: MARKET_INITIAL_ROWS, loser: MARKET_INITIAL_ROWS };
+    marketBoardScrollTop = { winner: 0, loser: 0 };
+    loadingMoreMarketplaceResults = false;
+    await invoke("set_trade_league", { league: state.trade_league }).catch((error) =>
+      pushStatus("league", String(error)),
+    );
+    pushStatus("league", `Trade league set to ${state.trade_league}`);
+  });
+
+  root.addEventListener("contextmenu", (event) => {
+    const target = event.target as HTMLElement;
+    const templeCell = target.closest<HTMLElement>(".temple-cell[data-temple-cell]");
+    if (!templeCell?.dataset.templeCell) return;
+
+    event.preventDefault();
+    removeTempleCellFromContextMenu(templeCell.dataset.templeCell);
+  });
+
+  root.addEventListener("click", async (event) => {
+    const target = event.target as HTMLElement;
+    const openTrade = target.closest<HTMLButtonElement>("[data-open-trade]");
+    const macroButton = target.closest<HTMLButtonElement>("[data-macro]");
+    const compactButton = target.closest<HTMLButtonElement>("[data-toggle-compact]");
+    const closeButton = target.closest<HTMLButtonElement>("[data-close-app]");
+    const sourceButton = target.closest<HTMLButtonElement>("[data-source-url]");
+    const specButton = target.closest<HTMLButtonElement>("[data-spec-key]");
+    const clearSpecsButton = target.closest<HTMLButtonElement>("[data-clear-specs]");
+    const exchangeCategoryButton = target.closest<HTMLButtonElement>("[data-exchange-category]");
+    const exchangeRefreshButton = target.closest<HTMLButtonElement>("[data-refresh-exchange]");
+    const exchangeCopyButton = target.closest<HTMLButtonElement>("[data-copy-exchange]");
+    const exchangeQuoteButton = target.closest<HTMLButtonElement>("[data-exchange-quote]");
+    const exchangeWatchlistToggle = target.closest<HTMLButtonElement>("[data-exchange-watchlist-toggle]");
+    const exchangePinButton = target.closest<HTMLButtonElement>("[data-pin-exchange]");
+    const exchangeUnpinButton = target.closest<HTMLButtonElement>("[data-unpin-exchange]");
+    const exchangeFocusPinButton = target.closest<HTMLButtonElement>("[data-exchange-focus-pin]");
+    const marketBoardToggle = target.closest<HTMLButtonElement>("[data-market-board-toggle]");
+    const marketPeriodButton = target.closest<HTMLButtonElement>("[data-market-period]");
+    const marketRefreshButton = target.closest<HTMLButtonElement>("[data-refresh-market]");
+    const stashNoteButton = target.closest<HTMLButtonElement>("[data-copy-stash-note]");
+    const resetVisualSettingsButton = target.closest<HTMLButtonElement>("[data-reset-visual-settings]");
+    const campaignStepButton = target.closest<HTMLElement>("[data-campaign-step-key]");
+    const campaignTimerButton = target.closest<HTMLElement>("[data-campaign-timer]");
+    const campaignResetButton = target.closest<HTMLButtonElement>("[data-campaign-reset]");
+    const compactMetaClick = target.closest<HTMLElement>("[data-compact-meta]");
+    const compactTitleClick = target.closest<HTMLElement>("[data-compact-title]");
+    const templeRoomButton = target.closest<HTMLButtonElement>("[data-temple-room]");
+    const templeCellButton = target.closest<HTMLButtonElement>("[data-temple-cell]");
+    const templeClearButton = target.closest<HTMLButtonElement>("[data-temple-clear]");
+    const templeTierButton = target.closest<HTMLButtonElement>("[data-temple-tier]");
+    const templeSaveButton = target.closest<HTMLButtonElement>("[data-temple-save]");
+    const templeLockButton = target.closest<HTMLButtonElement>("[data-temple-lock-toggle]");
+    const templeDestabilizeButton = target.closest<HTMLButtonElement>("[data-temple-destabilize]");
+    const templeDestabilizeUndoButton = target.closest<HTMLButtonElement>("[data-temple-destabilize-undo]");
+    const campaignSubTabButton = target.closest<HTMLButtonElement>("[data-campaign-sub-tab]");
+    const campaignActButton = target.closest<HTMLButtonElement>("[data-campaign-act]");
+    const campaignZoneResetButton = target.closest<HTMLButtonElement>("[data-campaign-zone-reset]");
+    const campaignMapResetButton = target.closest<HTMLButtonElement>("[data-campaign-map-reset]");
+    const clearPendingWaystoneButton = target.closest<HTMLButtonElement>("[data-clear-pending-waystone]");
+    const requestMapOcrButton = target.closest<HTMLButtonElement>("[data-request-map-ocr]");
+    const clearAtlasHistoryButton = target.closest<HTMLButtonElement>("[data-clear-atlas-history]");
+    const importBuildProfileButton = target.closest<HTMLButtonElement>("[data-import-build-profile]");
+    const importPobProfileButton = target.closest<HTMLButtonElement>("[data-import-pob-profile]");
+    const profileReimportButton = target.closest<HTMLButtonElement>("[data-profile-reimport]");
+    const atlasFocusButton = target.closest<HTMLButtonElement>("[data-atlas-focus]");
+    const atlasFocusResetButton = target.closest<HTMLButtonElement>("[data-atlas-focus-reset]");
+
+    const atlasSectionButton = target.closest<HTMLButtonElement>("[data-atlas-section]");
+    if (atlasSectionButton?.dataset.atlasSection) {
+      selectedAtlasSection = atlasSectionButton.dataset.atlasSection as typeof selectedAtlasSection;
+      render();
+      return;
+    }
+
+    if (atlasFocusButton?.dataset.atlasFocus && isAtlasFocusId(atlasFocusButton.dataset.atlasFocus)) {
+      atlasFocusState.selected = atlasFocusButton.dataset.atlasFocus;
+      saveAtlasFocusState();
+      render();
+      return;
+    }
+
+    if (atlasFocusResetButton) {
+      const focus = atlasFocusPreset();
+      focus.checklist.forEach((_, index) => {
+        delete atlasFocusState.checklist[`${focus.id}:${index}`];
+      });
+      saveAtlasFocusState();
+      render();
+      return;
+    }
+
+    const hazardProfileButton = target.closest<HTMLButtonElement>("[data-hazard-profile]");
+    if (hazardProfileButton?.dataset.hazardProfile) {
+      state.hazard_profile_id = hazardProfileButton.dataset.hazardProfile;
+      render();
+      void invoke("set_hazard_profile", { profileId: hazardProfileButton.dataset.hazardProfile }).catch((error) =>
+        pushStatus("hazards", String(error)),
+      );
+      return;
+    }
+
+    if (importBuildProfileButton) {
+      const input = root.querySelector<HTMLInputElement>("[data-build-profile-url]");
+      buildProfileUrlInput = input?.value.trim() ?? buildProfileUrlInput;
+      if (!buildProfileUrlInput) {
+        pushStatus("build-profile", "Paste a PoE.ninja character URL first.");
+        return;
+      }
+      pushStatus("build-profile", "Importing PoE.ninja character snapshot...");
+      await invoke<BuildProfileImportResult>("import_poe_ninja_build_url", { url: buildProfileUrlInput })
+        .then((result) => {
+          state.build_snapshot = result.snapshot;
+          state.build_fingerprint = result.fingerprint;
+          state.hazard_profile_id = result.fingerprint.recommended_profile_id;
+          markFeedback("profileImportedAt");
+          pushStatus("build-profile", `Imported ${result.snapshot.character ?? "character"} snapshot.`);
+          render();
+        })
+        .catch((error) => pushStatus("build-profile", String(error)));
+      return;
+    }
+
+    if (profileReimportButton) {
+      const card = root.querySelector<HTMLElement>("[data-profile-import-card]");
+      if (card) {
+        card.hidden = !card.hidden;
+      }
+      return;
+    }
+
+    if (importPobProfileButton) {
+      const input = root.querySelector<HTMLTextAreaElement>("[data-build-profile-text]");
+      buildProfileTextInput = input?.value.trim() ?? buildProfileTextInput;
+      if (!buildProfileTextInput) {
+        pushStatus("build-profile", "Paste a PoB export code or readable build text first.");
+        return;
+      }
+      pushStatus("build-profile", "Importing local PoB/build snapshot...");
+      await invoke<BuildProfileImportResult>("import_pob_build_text", { text: buildProfileTextInput })
+        .then((result) => {
+          state.build_snapshot = result.snapshot;
+          state.build_fingerprint = result.fingerprint;
+          state.hazard_profile_id = result.fingerprint.recommended_profile_id;
+          markFeedback("profileImportedAt");
+          pushStatus("build-profile", `Imported ${result.snapshot.character ?? "build"} profile.`);
+          render();
+        })
+        .catch((error) => pushStatus("build-profile", String(error)));
+      return;
+    }
+
+    if (clearPendingWaystoneButton) {
+      state.pending_waystone = null;
+      render();
+      void invoke("clear_pending_waystone").catch((error) => pushStatus("map-context", String(error)));
+      return;
+    }
+
+    if (requestMapOcrButton) {
+      markFeedback("ocrRequestedAt");
+      render();
+      void invoke("request_map_overlay_ocr").catch((error) => pushStatus("map-ocr", String(error)));
+      return;
+    }
+
+    if (clearAtlasHistoryButton && !clearAtlasHistoryButton.disabled) {
+      if (atlasHistoryClearConfirmHandle > 0) {
+        window.clearTimeout(atlasHistoryClearConfirmHandle);
+        atlasHistoryClearConfirmHandle = 0;
+        clearAtlasRunHistory();
+        render();
+      } else {
+        atlasHistoryClearConfirmHandle = window.setTimeout(() => {
+          atlasHistoryClearConfirmHandle = 0;
+          render();
+        }, 3000);
+        render();
+      }
+      return;
+    }
+
+    if (campaignSubTabButton?.dataset.campaignSubTab) {
+      activeCampaignSubTab = campaignSubTabButton.dataset.campaignSubTab as CampaignSubTab;
+      render();
+      return;
+    }
+
+    if (campaignActButton?.dataset.campaignAct) {
+      const act = Number(campaignActButton.dataset.campaignAct);
+      if (act >= 1 && act <= 5) {
+        campaignSelectedAct = act;
+        render();
+      }
+      return;
+    }
+
+    if (campaignZoneResetButton) {
+      if (campaignResetConfirmHandle > 0) {
+        window.clearTimeout(campaignResetConfirmHandle);
+        campaignResetConfirmHandle = 0;
+        campaignZoneTimes.clear();
+        campaignMapRuns = [];
+        clearAtlasRunHistory();
+        campaignActTimes = [0, 0, 0, 0, 0, 0, 0, 0];
+        campaignTotalMs = 0;
+        state.deaths = {};
+        saveCampaignZoneData();
+        saveCampaignProgress();
+        render();
+      } else {
+        campaignResetConfirmHandle = window.setTimeout(() => {
+          campaignResetConfirmHandle = 0;
+          render();
+        }, 3000);
+        render();
+      }
+      return;
+    }
+
+    if (campaignMapResetButton) {
+      if (campaignResetConfirmHandle > 0) {
+        window.clearTimeout(campaignResetConfirmHandle);
+        campaignResetConfirmHandle = 0;
+        campaignMapRuns = [];
+        clearAtlasRunHistory();
+        saveCampaignZoneData();
+        render();
+      } else {
+        campaignResetConfirmHandle = window.setTimeout(() => {
+          campaignResetConfirmHandle = 0;
+          render();
+        }, 3000);
+        render();
+      }
+      return;
+    }
+
+    if (templeRoomButton?.dataset.templeRoom) {
+      const roomId = templeRoomButton.dataset.templeRoom as TempleRoomId;
+      if (roomId in TEMPLE_ROOMS) {
+        selectedTempleRoomId = roomId;
+        activeTab = "temple";
+        render();
+      }
+      return;
+    }
+
+    if (templeTierButton?.dataset.templeTier && templeTierButton.dataset.templeCell) {
+      if (templeDestabilizationAnimation.busy) return;
+      const tier = Number(templeTierButton.dataset.templeTier) as TempleTier;
+      const [rawX, rawY] = templeTierButton.dataset.templeCell.split(",");
+      templeLayout = setTempleManualTier(templeLayout, Number(rawX), Number(rawY), tier);
+      saveTempleLayout();
+      render();
+      return;
+    }
+
+    if (templeClearButton?.dataset.templeClear) {
+      if (templeDestabilizationAnimation.busy) return;
+      const [rawX, rawY] = templeClearButton.dataset.templeClear.split(",");
+      templeLayout = setTempleRoom(templeLayout, Number(rawX), Number(rawY), "empty");
+      saveTempleLayout();
+      render();
+      return;
+    }
+
+    if (templeCellButton?.dataset.templeCell) {
+      if (templeDestabilizationAnimation.busy) return;
+      const [rawX, rawY] = templeCellButton.dataset.templeCell.split(",");
+      const x = Number(rawX);
+      const y = Number(rawY);
+      const existingCell = getTempleCellByKey(templeLayout, templeCellKey(x, y));
+      if (existingCell?.roomId === "empty") {
+        templeLayout = setTempleRoom(templeLayout, x, y, selectedTempleRoomId);
+      } else {
+        templeLayout = { ...templeLayout, selectedCellKey: templeCellKey(x, y), updatedAt: Date.now() };
+      }
+      saveTempleLayout();
+      render();
+      return;
+    }
+
+    if (templeLockButton?.dataset.templeLockToggle) {
+      if (templeDestabilizationAnimation.busy) return;
+      const [rawX, rawY] = templeLockButton.dataset.templeLockToggle.split(",");
+      const x = Number(rawX);
+      const y = Number(rawY);
+      const cell = getTempleCellByKey(templeLayout, templeCellKey(x, y));
+      if (cell) {
+        templeLayout = setTempleCellLocked(templeLayout, x, y, !cell.locked);
+        saveTempleLayout();
+        render();
+      }
+      return;
+    }
+
+    if (templeDestabilizeButton) {
+      if (templeDestabilizationAnimation.busy) return;
+      await runTempleDestabilization();
+      return;
+    }
+
+    if (templeDestabilizeUndoButton) {
+      if (templeDestabilizationAnimation.busy) return;
+      undoTempleDestabilization();
+      return;
+    }
+
+    if (templeSaveButton) {
+      const input = root.querySelector<HTMLInputElement>("[data-temple-save-name]");
+      templeSaveName = input?.value.trim() ?? templeSaveName;
+      saveTempleLayout();
+      pushStatus("temple", templeSaveName ? `Saved ${templeSaveName}` : "Temple layout saved");
+      return;
+    }
+
+    if (resetVisualSettingsButton) {
+      appSettings = { ...DEFAULT_APP_SETTINGS };
+      applyAppSettings(appSettings);
+      saveAppSettings();
+      render();
+      return;
+    }
+
+    if (marketBoardToggle) {
+      setTradeSubView("market");
+      marketBoardVisibleRows = { winner: MARKET_INITIAL_ROWS, loser: MARKET_INITIAL_ROWS };
+      marketBoardScrollTop = { winner: 0, loser: 0 };
+      render();
+      return;
+    }
+
+    if (marketPeriodButton?.dataset.marketPeriod) {
+      const period = marketPeriodButton.dataset.marketPeriod;
+      if (period === "30m" || period === "1d" || period === "7d") {
+        setMarketPeriod(period);
+        marketBoardLoadState = { key: null, status: "idle", dataset: null, source: "none", error: null };
+        render();
+      }
+      return;
+    }
+
+    if (marketRefreshButton) {
+      ensureMarketBoardLoaded(true);
+      render();
+      return;
+    }
+
+    if (exchangeQuoteButton?.dataset.exchangeQuote) {
+      state.exchange_tab.selected_quote_currency_id = exchangeQuoteButton.dataset.exchangeQuote;
+      render();
+      return;
+    }
+
+    if (exchangeWatchlistToggle) {
+      setTradeSubView("favorites");
+      render();
+      return;
+    }
+
+    if (exchangePinButton?.dataset.pinExchange) {
+      pinCurrentExchangeEntry(exchangePinButton.dataset.pinExchange);
+      render();
+      return;
+    }
+
+    if (exchangeUnpinButton?.dataset.unpinExchange && exchangeUnpinButton.dataset.unpinExchangeCategory) {
+      const pin = exchangeWatchlistState.pins.find(
+        (candidate) =>
+          candidate.id === exchangeUnpinButton.dataset.unpinExchange &&
+          candidate.category_id === exchangeUnpinButton.dataset.unpinExchangeCategory,
+      );
+      exchangeWatchlistState = unpinExchangeWatchlistEntry(
+        exchangeWatchlistState,
+        exchangeUnpinButton.dataset.unpinExchangeCategory,
+        exchangeUnpinButton.dataset.unpinExchange,
+      );
+      saveExchangeWatchlistState();
+      pushStatus("exchange", `Removed ${pin?.name ?? "watchlist entry"} from Favorites.`);
+      render();
+      return;
+    }
+
+    if (exchangeFocusPinButton) {
+      pinVisibleFocusExchangeEntries();
+      render();
+      return;
+    }
+
+    if (exchangeCategoryButton?.dataset.exchangeCategory) {
+      const categoryId = exchangeCategoryButton.dataset.exchangeCategory;
+      const categoryLabel = exchangeCategoryButton.textContent?.trim() ?? exchangeCategoryLabel(categoryId);
+      setTradeSubView("category");
+      tradeSidebarScrollTop =
+        exchangeCategoryButton.closest<HTMLElement>(".trade-sidebar-scroll")?.scrollTop ?? tradeSidebarScrollTop;
+      state.exchange_tab = {
+        ...state.exchange_tab,
+        selected_category_id: categoryId,
+        selected_item_id: null,
+        overview: null,
+        error: null,
+        status: `Loading ${categoryLabel} overview...`,
+      };
+      activeTab = "trade";
+      render();
+      await invoke("set_exchange_category", {
+        categoryId,
+      }).catch((error) => pushStatus("exchange", String(error)));
+      return;
+    }
+
+    if (exchangeRefreshButton) {
+      state.exchange_tab.status = "Refreshing exchange snapshot...";
+      render();
+      await invoke("refresh_exchange_category").catch((error) =>
+        pushStatus("exchange", String(error)),
+      );
+      return;
+    }
+
+    if (exchangeCopyButton?.dataset.copyExchange) {
+      void navigator.clipboard
+        .writeText(exchangeCopyButton.dataset.copyExchange)
+        .then(() => pushStatus("exchange", `Copied ${exchangeCopyButton.dataset.copyExchange}`))
+        .catch((error) => pushStatus("exchange", String(error)));
+      return;
+    }
+
+    if (stashNoteButton?.dataset.copyStashNote) {
+      void navigator.clipboard
+        .writeText(stashNoteButton.dataset.copyStashNote)
+        .then(() => pushStatus("stash", `Copied stash note ${stashNoteButton.dataset.copyStashNote}`))
+        .catch((error) => pushStatus("stash", String(error)));
+      return;
+    }
+
+    if (specButton?.dataset.specKey) {
+      const specKey = specButton.dataset.specKey;
+      activeTab = "scan";
+      if (selectedSpecKeys.has(specKey)) {
+        selectedSpecKeys.delete(specKey);
+      } else {
+        selectedSpecKeys.add(specKey);
+      }
+      if (state.price_check) {
+        state.price_check.status = "Rebuilding trade search with selected specs...";
+      }
+      loadingMoreMarketplaceResults = false;
+      render();
+      scheduleActivePriceFilterPush();
+      return;
+    }
+
+    if (clearSpecsButton) {
+      selectedSpecKeys.clear();
+      if (state.price_check) {
+        state.price_check.status = "Clearing selected spec filters...";
+      }
+      loadingMoreMarketplaceResults = false;
+      render();
+      scheduleActivePriceFilterPush();
+      return;
+    }
+
+    if (compactButton) {
+      compactMode = !compactMode;
+      render();
+      return;
+    }
+
+    if (closeButton) {
+      await invoke("exit_app").catch((error) =>
+        pushStatus("window", String(error)),
+      );
+      return;
+    }
+
+    if (openTrade) {
+      await invoke("open_last_trade_search").catch((error) =>
+        pushStatus("trade", String(error)),
+      );
+    }
+
+    if (sourceButton?.dataset.sourceUrl) {
+      await invoke("open_external_url", { url: sourceButton.dataset.sourceUrl }).catch((error) =>
+        pushStatus("trade", String(error)),
+      );
+    }
+
+    if (macroButton) {
+      const command = macroButton.dataset.macro;
+      const buyerName = macroButton.dataset.buyer;
+
+      if (command && buyerName) {
+        await invoke(command, { buyerName }).catch((error) =>
+          pushStatus("macro", String(error)),
+        );
+      }
+    }
+
+    if (campaignStepButton?.dataset.campaignStepKey) {
+      const key = campaignStepButton.dataset.campaignStepKey;
+      if (campaignCompletedSteps.has(key)) {
+        campaignCompletedSteps.delete(key);
+      } else {
+        campaignCompletedSteps.add(key);
+      }
+      saveCampaignProgress();
+      render();
+      return;
+    }
+
+    if (campaignResetButton) {
+      campaignActTimes = [0, 0, 0, 0, 0, 0, 0, 0];
+      campaignTotalMs = 0;
+      stopCampaignTimer();
+      saveCampaignProgress();
+      render();
+      return;
+    }
+
+    if (compactTitleClick && campaignGuideAct > 0) {
+      campaignExpanded = !campaignExpanded;
+      render();
+      queueCompactWindowHeightSync();
+      return;
+    }
+  });
+
+  root.addEventListener("change", async (event) => {
+    const target = event.target as HTMLElement;
+    const settingInput = target.closest<HTMLElement>("[data-setting]");
+    const priceProfileInput = target.closest<HTMLInputElement>("[data-price-profile]");
+    const priceOptionSelect = target.closest<HTMLSelectElement>("[data-price-option]");
+    const currencySelect = target.closest<HTMLSelectElement>("[data-price-currency]");
+    const templeDestabilizeOption = target.closest<HTMLInputElement>("[data-temple-destabilize-option]");
+
+    if (templeDestabilizeOption?.dataset.templeDestabilizeOption) {
+      const option = templeDestabilizeOption.dataset.templeDestabilizeOption;
+      if (option === "architectDefeated" || option === "atziriDefeated") {
+        templeDestabilizationOptions = {
+          ...templeDestabilizationOptions,
+          [option]: templeDestabilizeOption.checked,
+        };
+        render();
+      }
+      return;
+    }
+
+    if (settingInput?.dataset.setting) {
+      const el = settingInput as HTMLInputElement | HTMLSelectElement;
+      const name = el.dataset.setting!;
+      if (name === "discordPresenceEnabled" && el instanceof HTMLInputElement) {
+        appSettings.discordPresenceEnabled = el.checked;
+      }
+      if (name === "scanMod" || name === "waystoneMod" || name === "tradeMod") {
+        const val = el.value as "Ctrl" | "Alt";
+        if (val === "Ctrl" || val === "Alt") {
+          appSettings[name] = val;
+        }
+      }
+      applyAppSettings(appSettings);
+      saveAppSettings();
+      return;
+    }
+
+    if (priceProfileInput?.dataset.priceProfile) {
+      selectedPriceProfile = priceProfileInput.dataset.priceProfile as PriceProfileId;
+      if (state.scanned_item) {
+        applyProfileSelection(state.scanned_item);
+      }
+      if (state.price_check) {
+        state.price_check.status = `Applying ${priceProfileLabel(selectedPriceProfile)} profile...`;
+      }
+      loadingMoreMarketplaceResults = false;
+      render();
+      scheduleActivePriceFilterPush();
+      return;
+    }
+
+    if (priceOptionSelect) {
+      state.price_option = priceOptionSelect.value;
+      if (state.price_check) {
+        state.price_check.selected_price_option = priceOptionSelect.value;
+        state.price_check.status = "Refreshing buyout price mode...";
+        loadingMoreMarketplaceResults = false;
+        render();
+      }
+
+      await invoke("set_price_option", { priceOption: priceOptionSelect.value }).catch((error) =>
+        pushStatus("price", String(error)),
+      );
+      return;
+    }
+
+    if (!currencySelect) {
+      return;
+    }
+
+    state.price_currency = currencySelect.value;
+    if (state.price_check) {
+      state.price_check.selected_currency = currencySelect.value;
+      state.price_check.status = "Refreshing currency-normalized listings...";
+      loadingMoreMarketplaceResults = false;
+      render();
+    }
+
+    await invoke("set_price_currency", { currency: currencySelect.value }).catch((error) =>
+      pushStatus("currency", String(error)),
+    );
+  });
+
+  root.addEventListener("input", (event) => {
+    const target = event.target as HTMLElement;
+    const tradeSearch = target.closest<HTMLInputElement>("[data-trade-search]");
+    const settingInput = target.closest<HTMLInputElement>("[data-setting]");
+    const templeSaveInput = target.closest<HTMLInputElement>("[data-temple-save-name]");
+    const buildProfileInput = target.closest<HTMLInputElement>("[data-build-profile-url]");
+    const buildProfileText = target.closest<HTMLTextAreaElement>("[data-build-profile-text]");
+    const atlasFocusNotes = target.closest<HTMLTextAreaElement>("[data-atlas-focus-notes]");
+    const atlasFocusCheck = target.closest<HTMLInputElement>("[data-atlas-focus-check]");
+
+    if (atlasFocusNotes) {
+      atlasFocusState.notes = atlasFocusNotes.value;
+      saveAtlasFocusState();
+      return;
+    }
+
+    if (atlasFocusCheck?.dataset.atlasFocusCheck) {
+      atlasFocusState.checklist[atlasFocusCheck.dataset.atlasFocusCheck] = atlasFocusCheck.checked;
+      saveAtlasFocusState();
+      render();
+      return;
+    }
+
+    if (buildProfileInput) {
+      buildProfileUrlInput = buildProfileInput.value;
+      return;
+    }
+
+    if (buildProfileText) {
+      buildProfileTextInput = buildProfileText.value;
+      return;
+    }
+
+    if (templeSaveInput) {
+      templeSaveName = templeSaveInput.value;
+      return;
+    }
+
+    if (settingInput?.dataset.setting) {
+      const name = settingInput.dataset.setting;
+      if (name === "discordPresenceEnabled") {
+        return;
+      }
+      if (name === "accentHue") {
+        appSettings.accentHue = clampNumber(Number(settingInput.value), 0, 359, DEFAULT_APP_SETTINGS.accentHue);
+        updateSettingOutput("accentHue");
+      }
+      if (name === "panelAlpha") {
+        appSettings.panelAlpha = clampNumber(1 - Number(settingInput.value) / 100, 0, 1, DEFAULT_APP_SETTINGS.panelAlpha);
+        updateSettingOutput("panelAlpha");
+      }
+      if (name === "saturation") {
+        appSettings.saturation = clampNumber(Number(settingInput.value), 0, 200, DEFAULT_APP_SETTINGS.saturation);
+        updateSettingOutput("saturation");
+      }
+      if (name === "scanMod" || name === "waystoneMod" || name === "tradeMod") {
+        const val = settingInput.value as "Ctrl" | "Alt";
+        if (val === "Ctrl" || val === "Alt") {
+          appSettings[name] = val;
+        }
+      }
+      if (name === "scanKey" || name === "waystoneKey" || name === "tradeKey") {
+        return; // handled via keydown listener below
+      }
+
+      applyAppSettings(appSettings);
+      saveAppSettings();
+      return;
+    }
+
+    if (!tradeSearch) {
+      return;
+    }
+
+    tradeSearchQuery = tradeSearch.value;
+    render();
+  });
+
+  root.addEventListener("keydown", (event) => {
+    const target = event.target as HTMLElement;
+    const keyInput = target.closest<HTMLInputElement>(".keybind-letter[data-setting]");
+    if (!keyInput?.dataset.setting) return;
+
+    const name = keyInput.dataset.setting;
+    if (name !== "scanKey" && name !== "waystoneKey" && name !== "tradeKey") return;
+
+    const key = event.key.toUpperCase();
+    if (isSupportedShortcutKey(key)) {
+      event.preventDefault();
+      appSettings[name] = key;
+      keyInput.value = key;
+      applyAppSettings(appSettings);
+      saveAppSettings();
+    } else if (event.key.length === 1) {
+      event.preventDefault();
+    }
+  });
+
+  root.addEventListener(
+    "scroll",
+    (event) => {
+      const target = event.target as HTMLElement;
+      const marketScroll = target.closest<HTMLElement>("[data-market-scroll]");
+
+      if (marketScroll?.dataset.marketScroll === "winner" || marketScroll?.dataset.marketScroll === "loser") {
+        const direction = marketScroll.dataset.marketScroll;
+        marketBoardScrollTop[direction] = marketScroll.scrollTop;
+        const dataset = marketBoardLoadState.key === marketBoardKey() ? marketBoardLoadState.dataset : null;
+        const movers = direction === "winner" ? dataset?.winners : dataset?.losers;
+        const remaining = marketScroll.scrollHeight - marketScroll.scrollTop - marketScroll.clientHeight;
+
+        if (movers && remaining <= 56 && marketBoardVisibleRows[direction] < movers.length) {
+          marketBoardVisibleRows[direction] += MARKET_ROW_INCREMENT;
+          render();
+          window.requestAnimationFrame(() => {
+            (Object.keys(marketBoardScrollTop) as MarketDirection[]).forEach((marketDirection) => {
+              const restored = root.querySelector<HTMLElement>(`[data-market-scroll="${marketDirection}"]`);
+              if (restored) restored.scrollTop = marketBoardScrollTop[marketDirection];
+            });
+          });
+        }
+        return;
+      }
+
+      const listingScroll = target.closest<HTMLElement>("[data-load-more-marketplace='true']");
+
+      if (!listingScroll || loadingMoreMarketplaceResults || !canLoadMoreMarketplaceResults()) {
+        return;
+      }
+
+      const remaining = listingScroll.scrollHeight - listingScroll.scrollTop - listingScroll.clientHeight;
+      if (remaining > 56) {
+        return;
+      }
+
+      loadingMoreMarketplaceResults = true;
+      void invoke("load_more_price_check_results").catch((error) => {
+        loadingMoreMarketplaceResults = false;
+        pushStatus("trade", String(error));
+      });
+    },
+    true,
+  );
+
+  root.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    const previewButton = target.closest<HTMLButtonElement>("[data-preview-listing]");
+
+    if (!previewButton?.dataset.previewListing) {
+      if (hoveredListingPreview) {
+        void hideListingPreview();
+      }
+      return;
+    }
+
+    event.preventDefault();
+
+    const index = Number(previewButton.dataset.previewListing);
+    if (!Number.isFinite(index)) {
+      return;
+    }
+
+    if (pinnedListingPreviewIndex === index) {
+      void hideListingPreview();
+      return;
+    }
+
+    const itemSection =
+      root.querySelector<HTMLElement>("[data-item-section]") ??
+      root.querySelector<HTMLElement>("[data-item-profile]") ??
+      root.querySelector<HTMLElement>(".poe-item-banner");
+    const anchorTop =
+      itemSection?.getBoundingClientRect().top ??
+      previewButton.closest<HTMLElement>(".listing-row")?.getBoundingClientRect().top ??
+      previewButton.getBoundingClientRect().top;
+    void showListingPreviewForIndex(index, anchorTop);
+  });
+
+  root.querySelectorAll<HTMLElement>("[data-drag-handle]").forEach((element) => {
+    element.addEventListener("mousedown", (event) => {
+      const target = event.target as HTMLElement;
+
+      if (
+        target.closest("button") ||
+        target.closest("select") ||
+        target.closest("input") ||
+        target.closest("textarea") ||
+        target.closest("option") ||
+        target.closest("[role='listbox']") ||
+        target.closest(".compact-strip.is-campaign > div:first-child") ||
+        target.closest("[data-campaign-step-key]") ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      void invoke("start_drag_window").catch((error) =>
+        pushStatus("window", String(error)),
+      );
     });
   });
 
-  document.querySelectorAll<HTMLButtonElement>("[data-action='line']").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.lineMode = true;
-      render();
-    });
+  window.addEventListener("keydown", (event) => {
+    if (
+      event.ctrlKey ||
+      event.altKey ||
+      event.metaKey ||
+      event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLTextAreaElement ||
+      event.target instanceof HTMLSelectElement ||
+      (event.target instanceof HTMLElement && event.target.isContentEditable)
+    ) {
+      return;
+    }
   });
 
-  document.querySelectorAll<HTMLButtonElement>("[data-action='full']").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.lineMode = false;
-      render();
-    });
+  void listen<ScannedItem>("scan://item-updated", (event) => {
+    loadingMoreMarketplaceResults = false;
+    compactMode = false;
+    recentPriceRequestSignatures.clear();
+    void hideListingPreview();
+    markFeedback("itemScannedAt");
+    state.scanned_item = event.payload;
+    applyProfileSelection(event.payload);
+    latestRequestedFilterSignature = event.payload.is_exchange
+      ? null
+      : currentRequestedFilterSignature();
+    state.price_check = {
+      status: `Applying ${priceProfileLabel(selectedPriceProfile)} profile...`,
+      matched: 0,
+      source_url: event.payload.trade_url,
+      selected_currency: state.price_currency,
+      selected_price_option: state.price_option,
+      rate_source: null,
+      rate_limit: null,
+      currencies: fallbackCurrencies(),
+      filters: [],
+      requested_filters: [],
+      applied_filters: [],
+      listings: [],
+      error: null,
+    };
+    if (event.payload.is_exchange) {
+      state.exchange_tab.status = `Loading cached exchange overview for ${event.payload.base_type ?? event.payload.name}...`;
+      setTradeSubView("category");
+      activeTab = "trade";
+    } else {
+      activeTab = "scan";
+      void pushActivePriceFilters();
+    }
+    render();
   });
 
-  document.querySelectorAll<HTMLInputElement>("[data-control='hue']").forEach((input) => {
-    input.addEventListener("input", () => {
-      state.hue = Number(input.value);
-      render();
-    });
+  void listen<PriceCheck>("scan://price-check-updated", (event) => {
+    loadingMoreMarketplaceResults = false;
+    const nextPriceCheck = normalizePriceCheck(event.payload);
+    if (!nextPriceCheck) {
+      return;
+    }
+
+    if (
+      state.scanned_item &&
+      !(state.scanned_item?.is_exchange ?? false) &&
+      latestRequestedFilterSignature !== null &&
+      activeFilterSignature(nextPriceCheck.requested_filters ?? []) !== latestRequestedFilterSignature
+    ) {
+      return;
+    }
+
+    state.price_check = nextPriceCheck;
+    markFeedback("priceCheckUpdatedAt");
+    if ((nextPriceCheck.rate_limit?.retry_after_seconds ?? 0) > 0 || (nextPriceCheck.rate_limit?.active_timeout_seconds ?? 0) > 0) {
+      markFeedback("rateLimitAt");
+    }
+    state.price_currency = nextPriceCheck.selected_currency;
+    state.price_option = nextPriceCheck.selected_price_option;
+    activeTab = (state.scanned_item?.is_exchange ?? false) ? "trade" : "scan";
+    render();
   });
 
-  document.querySelectorAll<HTMLInputElement>("[data-control='opacity']").forEach((input) => {
-    input.addEventListener("input", () => {
-      state.opacity = Number(input.value);
+  void listen<ExchangeTabState>("scan://exchange-tab-updated", (event) => {
+    state.exchange_tab = normalizeExchangeTab(event.payload);
+    markFeedback("exchangeUpdatedAt");
+    if ((state.scanned_item?.is_exchange ?? false)) {
+      activeTab = "trade";
+    }
+    render();
+  });
+
+  void listen<string>("scan://zone-updated", (event) => {
+    state.current_zone = event.payload;
+    render();
+  });
+
+  void listen<CurrentAreaInfo>("scan://area-updated", (event) => {
+    const prevArea = state.current_area;
+    const previousMapRun = state.active_map_run;
+    state.current_area = event.payload;
+    if (event.payload.area_type !== "map") {
+      state.active_map_run = null;
+    }
+    const rawAct = event.payload.act ?? 0;
+    const newAct = remapCampaignAct(rawAct);
+    if (newAct !== campaignGuideAct) {
+      campaignGuideAct = newAct;
+      campaignGuidePage = 0;
+    }
+
+    const eventTime = event.payload.entered_at_epoch_ms;
+    const eventAgeMs = Date.now() - eventTime;
+    const isReplay = eventAgeMs > 10_000;
+
+    if (
+      !isReplay &&
+      previousMapRun?.area.area_type === "map" &&
+      previousMapRun.started_at_epoch_ms !== event.payload.entered_at_epoch_ms
+    ) {
+      completeAtlasRun(previousMapRun, eventTime);
+    }
+
+    if (!isReplay && campaignCurrentZoneEnteredAt > 0 && prevArea && prevArea.area_type !== "hideout") {
+      const elapsed = eventTime - campaignCurrentZoneEnteredAt;
+      const prevName = normalizeZoneName(prevArea.name);
+      campaignZoneTimes.set(prevName, (campaignZoneTimes.get(prevName) ?? 0) + elapsed);
+      if (prevArea.area_type === "map" && campaignMapRuns.length > 0) {
+        const lastRun = campaignMapRuns[0];
+        if (lastRun.elapsed_ms === 0) {
+          lastRun.elapsed_ms = elapsed;
+        }
+      }
+    }
+
+    if (event.payload.area_type === "map") {
+      campaignMapRuns.unshift({
+        name: event.payload.name,
+        tier: event.payload.area_level ?? null,
+        boss: event.payload.boss ?? null,
+        elapsed_ms: 0,
+        entered_at: eventTime,
+        deaths: 0,
+      });
+      if (campaignMapRuns.length > 5) campaignMapRuns.pop();
+    }
+
+    if (!isReplay) {
+      campaignCurrentZoneEnteredAt = event.payload.area_type === "hideout" ? 0 : eventTime;
+      saveCampaignZoneData();
+    }
+
+    if (event.payload.area_type === "hideout") {
+      if (campaignTimerRunning) stopCampaignTimer();
+      saveCampaignProgress();
+    } else if (newAct > 0 && !campaignTimerRunning) {
+      startCampaignTimer();
+    }
+    render();
+  });
+
+  void listen<{ total: number; act: number }>("scan://death", (event) => {
+    const act = Number(event.payload.act ?? 0);
+    if (act > 0) {
+      state.deaths = { ...state.deaths, [act]: (state.deaths[act] ?? 0) + 1 };
+      saveCampaignProgress();
+    }
+
+    if (state.current_area?.area_type === "map" && campaignMapRuns.length > 0) {
+      campaignMapRuns[0].deaths = (campaignMapRuns[0].deaths ?? 0) + 1;
+      saveCampaignZoneData();
+      incrementAtlasRunDeaths(state.active_map_run);
+    }
+
+    if (activeTab === "campaign") {
       render();
+    }
+  });
+
+  void listen<TradeWhisper>("scan://trade-whisper", (event) => {
+    state.trade_queue = [...state.trade_queue, event.payload];
+    render();
+  });
+
+  void listen<TradeLeague[]>("scan://trade-leagues-updated", (event) => {
+    state.trade_leagues = event.payload;
+    render();
+  });
+
+  void listen<LeagueCatalogEntry[]>("scan://league-catalog-updated", (event) => {
+    state.league_catalog = event.payload;
+    render();
+  });
+
+  void listen<DataLeague[]>("scan://data-leagues-updated", (event) => {
+    state.data_leagues = event.payload;
+    render();
+  });
+
+  void listen<Poe2DbDataSnapshot>("scan://source-truth-updated", (event) => {
+    state.source_truth_snapshot = event.payload;
+    if (state.scanned_item && !state.scanned_item.is_exchange && selectedSpecKeys.size) {
+      scheduleActivePriceFilterPush();
+    }
+    render();
+  });
+
+  void listen<string>("scan://trade-league-updated", (event) => {
+    state.trade_league = event.payload;
+    if (state.exchange_tab.overview && state.exchange_tab.overview.league !== event.payload) {
+      state.exchange_tab = {
+        ...state.exchange_tab,
+        overview: null,
+        selected_item_id: null,
+        status: `Loading ${exchangeCategoryLabel(state.exchange_tab.selected_category_id)} overview for ${event.payload}...`,
+        error: null,
+      };
+    }
+    render();
+  });
+
+  void listen<WorkerStatus>("scan://worker-status", (event) => {
+    pushStatus(event.payload.worker, event.payload.message);
+  });
+
+  void listen<WorkerStatus>("scan://worker-error", (event) => {
+    markFeedback("errorAt");
+    pushStatus(event.payload.worker, event.payload.message);
+  });
+
+  void listen<DiscordPresenceStatus>("scan://discord-presence-status", (event) => {
+    discordPresenceStatus = event.payload;
+    updateDiscordPresenceStatusText();
+  });
+
+  listen<WaystoneSnapshot>("scan://pending-waystone-updated", (event) => {
+    state.pending_waystone = event.payload;
+    render();
+  });
+
+  listen("scan://pending-waystone-cleared", () => {
+    state.pending_waystone = null;
+    render();
+  });
+
+  listen<MapRunContext>("scan://map-run-updated", (event) => {
+    state.active_map_run = event.payload;
+    state.current_area = event.payload.area;
+    state.pending_waystone = null;
+    if (event.payload.ocr_evidence) {
+      markFeedback("ocrUpdatedAt");
+    }
+    upsertAtlasRun(event.payload);
+    render();
+  });
+
+  listen<string>("scan://hazard-profile-updated", (event) => {
+    state.hazard_profile_id = event.payload;
+    render();
+  });
+
+  listen<BuildProfileImportResult>("scan://build-profile-updated", (event) => {
+    state.build_snapshot = event.payload.snapshot;
+    state.build_fingerprint = event.payload.fingerprint;
+    state.hazard_profile_id = event.payload.fingerprint.recommended_profile_id;
+    buildProfileUrlInput = event.payload.snapshot.source_url ?? buildProfileUrlInput;
+    markFeedback("profileImportedAt");
+    render();
+  });
+
+  void invoke<HazardProfile[]>("get_hazard_profiles")
+    .then((profiles) => {
+      hazardProfiles = profiles;
+      render();
+    })
+    .catch((error) => pushStatus("hazards", String(error)));
+
+  invoke<AppState>("get_app_state")
+    .then((initialState) => {
+      state.scanned_item = initialState.scanned_item;
+      state.trade_queue = initialState.trade_queue;
+      state.current_zone = initialState.current_zone || "Unknown";
+      state.current_area = initialState.current_area || null;
+      state.pending_waystone = initialState.pending_waystone || null;
+      state.active_map_run = initialState.active_map_run || null;
+      state.hazard_profile_id = initialState.hazard_profile_id || state.hazard_profile_id;
+      state.build_snapshot = initialState.build_snapshot || null;
+      state.build_fingerprint = initialState.build_fingerprint || null;
+      buildProfileUrlInput = state.build_snapshot?.source_url ?? buildProfileUrlInput;
+      if (state.active_map_run) {
+        upsertAtlasRun(state.active_map_run);
+      }
+      state.world_area_status = initialState.world_area_status || state.world_area_status;
+      if (state.current_area) {
+        const rawAct = state.current_area.act ?? 0;
+        campaignGuideAct = remapCampaignAct(rawAct);
+        if (state.current_area.area_type !== "hideout") {
+          campaignCurrentZoneEnteredAt = state.current_area.entered_at_epoch_ms || Date.now();
+        }
+        if (campaignGuideAct > 0 && state.current_area.area_type !== "hideout") {
+          startCampaignTimer();
+        }
+      }
+      state.trade_league = initialState.trade_league || state.trade_league;
+      state.league_catalog = initialState.league_catalog || [];
+      state.trade_leagues = initialState.trade_leagues || [];
+      state.data_leagues = initialState.data_leagues || [];
+      state.source_truth_snapshot = initialState.source_truth_snapshot || null;
+      state.price_check = normalizePriceCheck(initialState.price_check);
+      state.exchange_tab = normalizeExchangeTab(initialState.exchange_tab);
+      state.price_currency = initialState.price_currency || state.price_currency;
+      state.price_option = initialState.price_option || state.price_option;
+      const backendDeaths = normalizeDeathRecord(initialState.deaths);
+      if (Object.keys(backendDeaths).length) {
+        state.deaths = { ...state.deaths, ...backendDeaths };
+      }
+      if (state.scanned_item && !state.scanned_item.is_exchange) {
+        applyProfileSelection(state.scanned_item);
+        latestRequestedFilterSignature = currentRequestedFilterSignature();
+      }
+      render();
+    })
+    .catch((error) => pushStatus("state", String(error)));
+
+  invoke<string>("debug_log_path")
+    .then((path) => {
+      state.debug_log_path = path;
+      render();
+    })
+    .catch((error) => pushStatus("debug", String(error)));
+} else {
+  startListingPreviewPolling();
+
+  void listen<ListingPreviewRequest>("preview://listing-updated", (event) => {
+    hoveredListingPreview = event.payload;
+    render();
+  });
+
+  void listen("preview://listing-cleared", () => {
+    hoveredListingPreview = null;
+    render();
+  });
+
+  invoke<ListingPreviewRequest | null>("get_listing_preview")
+    .then((preview) => {
+      hoveredListingPreview = preview;
+      render();
+    })
+    .catch((error) => {
+      console.error("failed to load initial listing preview", error);
     });
+
+  window.addEventListener("beforeunload", () => {
+    stopListingPreviewPolling();
   });
 }
 
 render();
+
+function formatListed(value: string) {
+  const indexed = new Date(value);
+  if (!Number.isFinite(indexed.getTime())) {
+    return value;
+  }
+
+  const seconds = Math.max(0, Math.floor((Date.now() - indexed.getTime()) / 1000));
+  if (seconds < 3600) {
+    return "<1h";
+  }
+
+  if (seconds < 86_400) {
+    return `${Math.floor(seconds / 3600)}h`;
+  }
+
+  if (seconds < 2_592_000) {
+    return `${Math.floor(seconds / 86_400)}d`;
+  }
+
+  if (seconds < 31_536_000) {
+    return `${Math.floor(seconds / 2_592_000)}mo`;
+  }
+
+  return `${Math.floor(seconds / 31_536_000)}y`;
+}
