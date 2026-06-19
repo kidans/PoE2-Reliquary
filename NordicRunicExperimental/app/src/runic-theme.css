@@ -1128,13 +1128,19 @@ body {
 /*
   Generated asset-backed cards
   ----------------------------
-  The runic asset pack frames are opaque crops, so they live as under-content
-  frame/texture layers. They give the app the generated-card look without
-  covering text or replacing game imagery.
+  The generated frame candidates are cleaned into transparent PNGs before they
+  are used here. They skin only Reliquary chrome; PoE item, currency, room, and
+  class imagery remains untouched by design.
 */
 :root {
+  --runic-card-frame-large: url("/runic/card-large.png");
   --runic-card-frame: url("/runic/card-medium.png");
   --runic-card-frame-small: url("/runic/card-small.png");
+  --runic-card-frame-wide: url("/runic/card-wide.png");
+  --runic-strip-frame: url("/runic/strip-long.png");
+  --runic-frame-image: var(--runic-card-frame);
+  --runic-frame-outset: -5px;
+  --runic-frame-opacity: 0.9;
 }
 
 :where(
@@ -1153,21 +1159,37 @@ body {
   .market-board-main,
   .market-board-state,
   .market-mover-column,
+  .market-column-empty,
   .settings-panel,
   .settings-hero,
   .settings-field,
+  .profile-panel-shell,
   .profile-hero,
   .profile-card,
+  .profile-stats-card,
+  .profile-skill-card,
+  .atlas-shell,
+  .atlas-main,
   .atlas-card,
   .atlas-stat-card,
   .atlas-profile-card,
   .atlas-empty-state,
+  .atlas-next-action-card,
+  .atlas-overview-run-card,
+  .atlas-overview-waystone-card,
+  .atlas-overview-safety-card,
   .atlas-ocr-evidence,
   .campaign-panel,
+  .campaign-panel-shell,
   .campaign-main,
   .campaign-sidebar,
   .campaign-map-card,
+  .campaign-maps-empty,
+  .campaign-guide-empty,
+  .campaign-zone-empty,
   .data-source-card,
+  .data-grid > div:not(.data-source-card),
+  .source-card-grid section,
   .temple-panel,
   .temple-sidebar,
   .temple-board-shell,
@@ -1177,10 +1199,10 @@ body {
   .temple-cell-info,
   .temple-effect-group
 ) {
-  border-color: rgba(117, 98, 70, 0.56) !important;
+  border-color: rgba(103, 90, 71, 0.46) !important;
   background:
-    linear-gradient(180deg, rgba(6, 7, 7, 0.96), rgba(1, 2, 3, 0.96)),
-    radial-gradient(circle at 12% 6%, rgba(148, 122, 82, 0.12), transparent 32%),
+    linear-gradient(180deg, rgba(7, 7, 6, 0.97), rgba(1, 2, 3, 0.96)),
+    radial-gradient(circle at 12% 6%, rgba(148, 122, 82, 0.09), transparent 32%),
     radial-gradient(circle at 100% 10%, var(--runic-accent-faint), transparent 34%) !important;
 }
 
@@ -1200,21 +1222,37 @@ body {
   .market-board-main,
   .market-board-state,
   .market-mover-column,
+  .market-column-empty,
   .settings-panel,
   .settings-hero,
   .settings-field,
+  .profile-panel-shell,
   .profile-hero,
   .profile-card,
+  .profile-stats-card,
+  .profile-skill-card,
+  .atlas-shell,
+  .atlas-main,
   .atlas-card,
   .atlas-stat-card,
   .atlas-profile-card,
   .atlas-empty-state,
+  .atlas-next-action-card,
+  .atlas-overview-run-card,
+  .atlas-overview-waystone-card,
+  .atlas-overview-safety-card,
   .atlas-ocr-evidence,
   .campaign-panel,
+  .campaign-panel-shell,
   .campaign-main,
   .campaign-sidebar,
   .campaign-map-card,
+  .campaign-maps-empty,
+  .campaign-guide-empty,
+  .campaign-zone-empty,
   .data-source-card,
+  .data-grid > div:not(.data-source-card),
+  .source-card-grid section,
   .temple-panel,
   .temple-sidebar,
   .temple-board-shell,
@@ -1224,34 +1262,81 @@ body {
   .temple-cell-info,
   .temple-effect-group
 )::before {
-  inset: -1px;
+  inset: var(--runic-frame-outset);
   border: 0;
   border-radius: inherit;
-  background-image:
-    linear-gradient(180deg, rgba(0, 0, 0, 0.24), transparent 28%, rgba(0, 0, 0, 0.2)),
-    var(--runic-card-frame);
+  background-image: var(--runic-frame-image);
   background-position: center;
   background-repeat: no-repeat;
   background-size: 100% 100%;
-  opacity: 0.72;
+  opacity: var(--runic-frame-opacity);
+  filter:
+    drop-shadow(0 0 8px rgba(0, 0, 0, 0.54))
+    drop-shadow(0 0 5px color-mix(in srgb, var(--runic-accent) 18%, transparent));
+}
+
+:where(
+  .trade-market-main,
+  .market-board-main,
+  .settings-panel,
+  .profile-panel-shell,
+  .atlas-shell,
+  .atlas-main,
+  .campaign-main,
+  .campaign-panel-shell,
+  .temple-panel,
+  .temple-board-shell,
+  .listing-preview-shell
+) {
+  --runic-frame-image: var(--runic-card-frame-large);
+  --runic-frame-outset: -8px;
+  --runic-frame-opacity: 0.88;
+}
+
+:where(
+  .trade-table-shell,
+  .market-mover-column,
+  .settings-hero,
+  .profile-hero,
+  .atlas-card,
+  .atlas-next-action-card,
+  .campaign-panel,
+  .campaign-sidebar,
+  .data-source-card,
+  .source-card-grid section,
+  .temple-sidebar,
+  .temple-inspector-card
+) {
+  --runic-frame-image: var(--runic-card-frame-wide);
+  --runic-frame-outset: -6px;
+  --runic-frame-opacity: 0.86;
 }
 
 :where(
   .settings-field,
   .atlas-stat-card,
   .atlas-profile-card,
+  .atlas-overview-run-card,
+  .atlas-overview-waystone-card,
+  .atlas-overview-safety-card,
   .campaign-map-card,
+  .campaign-maps-empty,
+  .campaign-guide-empty,
+  .campaign-zone-empty,
   .market-column-empty,
   .market-board-state,
+  .profile-card,
+  .profile-stats-card,
+  .profile-skill-card,
   .temple-save-card,
   .temple-destabilization-card,
   .temple-effect-group,
   .temple-cell-info,
   .listing-preview-card
-)::before {
-  background-image:
-    linear-gradient(180deg, rgba(0, 0, 0, 0.22), transparent 30%, rgba(0, 0, 0, 0.18)),
-    var(--runic-card-frame-small);
+) {
+  --runic-frame-image: var(--runic-card-frame-small);
+  --runic-frame-outset: -5px;
+  --runic-frame-opacity: 0.84;
 }
 
 :where(
@@ -1269,20 +1354,37 @@ body {
   .trade-table-shell,
   .market-board-main,
   .market-mover-column,
+  .market-board-state,
+  .market-column-empty,
   .settings-panel,
   .settings-hero,
   .settings-field,
+  .profile-panel-shell,
   .profile-hero,
   .profile-card,
+  .profile-stats-card,
+  .profile-skill-card,
+  .atlas-shell,
+  .atlas-main,
   .atlas-card,
   .atlas-stat-card,
   .atlas-profile-card,
   .atlas-empty-state,
+  .atlas-next-action-card,
+  .atlas-overview-run-card,
+  .atlas-overview-waystone-card,
+  .atlas-overview-safety-card,
   .campaign-panel,
+  .campaign-panel-shell,
   .campaign-main,
   .campaign-sidebar,
   .campaign-map-card,
+  .campaign-maps-empty,
+  .campaign-guide-empty,
+  .campaign-zone-empty,
   .data-source-card,
+  .data-grid > div:not(.data-source-card),
+  .source-card-grid section,
   .temple-panel,
   .temple-sidebar,
   .temple-board-shell,
@@ -1291,5 +1393,39 @@ body {
   .temple-destabilization-card,
   .temple-cell-info
 )::after {
-  opacity: 0.34;
+  opacity: 0.2;
+}
+
+:where(
+  .trade-table-header,
+  .listing-header,
+  .market-mover-column > header,
+  .atlas-card-header-row,
+  .campaign-main-header,
+  .campaign-maps-header,
+  .campaign-guide-header,
+  .temple-panel-heading,
+  .temple-cell-info-head,
+  .profile-card-header
+) {
+  background-image:
+    linear-gradient(180deg, rgba(16, 15, 13, 0.9), rgba(3, 4, 5, 0.68)),
+    var(--runic-strip-frame),
+    repeating-linear-gradient(90deg, rgba(255, 244, 214, 0.022) 0 1px, transparent 1px 11px) !important;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%, 100% 100%, auto !important;
+  border-color: rgba(103, 90, 71, 0.3) !important;
+}
+
+.compact-strip {
+  background-image:
+    radial-gradient(circle at 100% 50%, color-mix(in srgb, var(--compact-alert-color) 22%, transparent) 0, transparent 54%),
+    linear-gradient(90deg, rgba(3, 5, 6, 0.96), rgba(10, 11, 10, 0.94) 52%, color-mix(in srgb, var(--compact-alert-color) 12%, rgba(4, 6, 8, 0.96))),
+    var(--runic-strip-frame),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.016) 0 1px, transparent 1px 9px) !important;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: auto, auto, 100% 100%, auto !important;
+  border-color: color-mix(in srgb, var(--compact-alert-color) 34%, rgba(103, 90, 71, 0.62)) !important;
 }
