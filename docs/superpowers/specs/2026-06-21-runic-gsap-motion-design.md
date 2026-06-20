@@ -47,6 +47,18 @@ When a primary spine tab changes:
 
 Rapid tab changes supersede the active timeline immediately. The latest requested tab always wins, and interaction is never blocked while motion completes.
 
+## Cursor Aura
+
+The full overlay uses one GSAP-driven accent aura to make interactive surfaces respond to pointer location. It is visible only while the pointer is over a major Reliquary card or a floating-spine tab.
+
+- Cards use a `120-150px` radial glow at restrained opacity.
+- Tabs contract the aura to roughly `70px`, brighten it slightly, and reinforce the hovered bindrune.
+- The aura uses the current user accent hue and never recolors Path of Exile artwork.
+- Red warning surfaces suppress the normal aura so danger semantics remain unambiguous.
+- The aura fades out on pointer leave, window blur, compact mode, listing-preview windows, and reduced-motion mode.
+- Pointer movement updates one cached compositor layer through GSAP `quickTo`; it never calls `render()`, queries changing application state, or changes layout properties.
+- The glow is triggered only by cards and tabs. It does not illuminate empty transparent shell space or the game world behind Reliquary.
+
 ## Feature Motion
 
 ### Scan
