@@ -20,7 +20,7 @@ Reliquary motion should feel like a compact occult instrument waking up. It shou
 - Animate `opacity`, `transform`, and small `clip-path` masks only.
 - Do not animate `width`, `height`, `top`, `left`, `padding`, or `margin`.
 - Avoid heavy blur/filter on large panels.
-- Do not add Framer Motion, GSAP, or another animation runtime unless a later feature truly needs it.
+- GSAP core is approved as a selective orchestration layer for cursor aura, tab choreography, and bounded feature reveals. CSS remains responsible for ambient states and line-mode feedback.
 - Respect `prefers-reduced-motion`.
 - Keep tab transition duration around `160-220ms`.
 
@@ -92,6 +92,15 @@ Line mode should remain brutally fast and readable.
 - Avoid permanent motion unless severity is high.
 - Implementation keys compact updates off non-timer line signatures so the one-second map timer does not retrigger motion.
 - Warning severity flashes once; danger and critical severities may keep the compact pulse active.
+
+## Phase 6: GSAP Orchestration
+
+The approved implementation is defined in `docs/superpowers/specs/2026-06-21-runic-gsap-motion-design.md`.
+
+- One delegated, compositor-only cursor aura responds to major cards and floating-spine tabs.
+- GSAP replaces timer-owned tab transitions with cancellable timelines.
+- First-level feature sections reveal only on primary tab changes.
+- Compact line mode, clipboard listeners, OCR, hotkeys, and marketplace polling remain outside GSAP.
 
 ## Verification Checklist
 

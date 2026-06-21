@@ -121,3 +121,11 @@ Risks found:
 - Generated atlas micro-icons sometimes include labels or surrounding separators, so they need manual cleanup before production.
 - The style can become too ornate quickly; scan text needs to stay almost plain.
 - Some decorative material should remain prototype-only until the Tauri transparency/protrusion problem is solved.
+
+## Production Frame Contract
+
+- One ornamented frame belongs to one top-level visual region.
+- Nested cards are plain forged material; they never receive the same raster frame again.
+- Full-frame PNGs are not resized with `background-size: 100% 100%`.
+- Approved frame artwork is rendered as a nine-sliced border so the center stays clear and corners retain their proportions.
+- When a source cannot survive the target aspect ratio without distortion, implementation stops and requests a correctly sized source asset.

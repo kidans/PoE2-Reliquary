@@ -58,3 +58,29 @@ It is not the active implementation target.
 - Keep the outer app frame neutral. User hue/saturation can color accents and active states, but not the structural border that sits against the game world.
 - Avoid Viking cosplay, horned helmets, generic fantasy knots, and unreadable runic text.
 - Use runic details as structure and ornament, not as functional UI copy.
+
+## Frame Rules
+
+1. Never stretch a complete generated asset to fit a different aspect ratio. Use a proportion-preserving border slice only when the source supports it; otherwise stop and request an asset at the rendered dimensions.
+2. Never apply an ornamented frame to a card nested inside another ornamented region. A major region owns one frame; its child cards use quiet material, spacing, and simple hairline dividers.
+3. Generated frame art must render as a border, not as a background image inside the card. Transparent center pixels may not cover content, and corners must retain their original proportions.
+4. Path of Exile game assets remain outside the theme system, including currency, item, class, room, map, and rarity artwork.
+
+## Elder Futhark Navigation
+
+The floating spine uses eight UI-only bindrunes: `PR`, `SK`, `TR`, `KM`, `AT`, `DT`, `TM`, and `ST`. Their labels and tooltips remain plain language so the rune treatment adds identity without making navigation cryptic.
+
+The deterministic asset generator emits the canonical 24-rune Elder Futhark set, documented A-Z phonetic aliases, the eight tab bindrunes, and a machine-readable manifest:
+
+```powershell
+cd C:\Projects\Kalandra\NordicRunicExperimental\app
+npm run runes:generate
+```
+
+Generated files live in `app/public/runic/runes/`. They are monochrome SVG masks used only for Reliquary chrome; they never replace or recolor Path of Exile item, currency, class, map, temple, or rarity art.
+
+## Motion Runtime
+
+The isolated app uses GSAP core as a selective presentation layer. It owns the cards-and-tabs cursor aura, cancellable primary-tab choreography, and bounded first-level content reveals.
+
+GSAP does not participate in compact line mode, hotkeys, clipboard scanning, OCR capture, marketplace requests, or Path of Exile asset rendering. Ambient glows, warnings, and hot-path feedback remain CSS-driven, and `prefers-reduced-motion` disables the GSAP presentation layer.

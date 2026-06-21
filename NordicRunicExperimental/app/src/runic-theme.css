@@ -258,17 +258,6 @@ img[src*="poe2db.tw"] {
     drop-shadow(0 0 18px hsl(var(--accent-hue) 100% 52% / 0.24));
 }
 
-.reliquary-glyph .glyph-line,
-.reliquary-glyph .glyph-frame {
-  stroke: currentColor;
-}
-
-.reliquary-glyph .glyph-accent,
-.reliquary-glyph .glyph-fill {
-  stroke: var(--runic-bronze);
-  fill: hsl(var(--accent-hue) 72% 48% / 0.16);
-}
-
 .content-card,
 .scan-panel,
 .market-card,
@@ -381,7 +370,155 @@ img[src*="poe2db.tw"] {
 }
 
 .settings-field input[type="range"] {
+  width: 100%;
+  height: 24px;
+  appearance: none;
+  background: transparent;
   accent-color: var(--runic-blue);
+}
+
+.settings-field input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border: 1px solid rgba(161, 123, 76, 0.52);
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, hsl(var(--accent-hue) 82% 54% / 0.68), rgba(43, 38, 30, 0.88)),
+    #080a0a;
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.86),
+    0 0 8px hsl(var(--accent-hue) 76% 54% / 0.1);
+}
+
+.settings-field input[type="range"]::-webkit-slider-thumb {
+  width: 22px;
+  height: 22px;
+  margin-top: -9px;
+  appearance: none;
+  border: 1px solid var(--gold-bright);
+  border-radius: 50%;
+  background:
+    url("/runic/decor/control-rune.svg") center / 54% no-repeat,
+    radial-gradient(circle at 38% 32%, hsl(var(--accent-hue) 82% 64% / 0.4), transparent 42%),
+    linear-gradient(145deg, #332718, #090b0c 64%);
+  box-shadow:
+    0 0 0 2px #050606,
+    0 0 10px hsl(var(--accent-hue) 86% 58% / 0.3),
+    inset 0 0 0 1px rgba(255, 238, 199, 0.12);
+  transition: rotate 140ms ease, scale 140ms ease, box-shadow 140ms ease;
+}
+
+.settings-field input[type="range"]:is(:hover, :focus-visible)::-webkit-slider-thumb {
+  rotate: 28deg;
+  scale: 1.08;
+  box-shadow:
+    0 0 0 2px #050606,
+    0 0 15px hsl(var(--accent-hue) 92% 62% / 0.46),
+    inset 0 0 0 1px rgba(255, 238, 199, 0.2);
+}
+
+.settings-field input[type="range"]::-moz-range-track {
+  height: 6px;
+  border: 1px solid rgba(161, 123, 76, 0.52);
+  border-radius: 999px;
+  background: linear-gradient(90deg, hsl(var(--accent-hue) 82% 54% / 0.68), rgba(43, 38, 30, 0.88));
+}
+
+.settings-field input[type="range"]::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--gold-bright);
+  border-radius: 50%;
+  background:
+    url("/runic/decor/control-rune.svg") center / 54% no-repeat,
+    radial-gradient(circle at 38% 32%, hsl(var(--accent-hue) 82% 64% / 0.4), transparent 42%),
+    linear-gradient(145deg, #332718, #090b0c 64%);
+  box-shadow:
+    0 0 0 2px #050606,
+    0 0 10px hsl(var(--accent-hue) 86% 58% / 0.3);
+}
+
+.runic-toggle-track {
+  border: 1px solid rgba(161, 123, 76, 0.62);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(43, 34, 23, 0.96), rgba(4, 7, 8, 0.98)),
+    repeating-linear-gradient(90deg, transparent 0 7px, rgba(255, 255, 255, 0.025) 7px 8px);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.92),
+    inset 0 0 0 1px rgba(255, 234, 192, 0.025),
+    0 0 0 1px rgba(0, 0, 0, 0.66);
+}
+
+.runic-toggle-label {
+  color: #776c5c;
+  text-shadow: 0 1px 1px #000;
+}
+
+.runic-toggle-input:checked + .runic-toggle-track {
+  border-color: hsl(var(--accent-hue) 72% 54% / 0.72);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.92),
+    0 0 13px hsl(var(--accent-hue) 84% 56% / 0.18);
+}
+
+.runic-toggle-input:checked + .runic-toggle-track .runic-toggle-on,
+.runic-toggle-input:not(:checked) + .runic-toggle-track .runic-toggle-off {
+  color: #d8cab2;
+}
+
+.runic-toggle-medallion {
+  border: 1px solid var(--gold-bright);
+  background:
+    radial-gradient(circle at 36% 30%, hsl(var(--accent-hue) 90% 66% / 0.42), transparent 40%),
+    conic-gradient(from 22deg, #22190f, #775a36, #111617, #8d693d, #22190f);
+  box-shadow:
+    0 0 0 2px #040606,
+    0 0 10px hsl(var(--accent-hue) 88% 60% / 0.28),
+    inset 0 0 0 2px rgba(4, 6, 7, 0.76),
+    inset 0 0 9px rgba(0, 0, 0, 0.72);
+}
+
+.runic-toggle-rune {
+  background: hsl(var(--accent-hue) 88% 72% / 0.92);
+  filter: drop-shadow(0 0 4px hsl(var(--accent-hue) 94% 62% / 0.7));
+  mask: url("/runic/runes/elder-futhark/sowilo.svg") center / contain no-repeat;
+}
+
+.runic-toggle-input:focus-visible + .runic-toggle-track {
+  outline-color: hsl(var(--accent-hue) 92% 72% / 0.9);
+}
+
+[data-runic-trace] {
+  --runic-trace-cut: 50%;
+  position: relative;
+}
+
+[data-runic-trace]::after {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  z-index: 0;
+  width: min(72%, 96px);
+  height: 8px;
+  pointer-events: none;
+  content: "";
+  transform: translateX(-50%);
+  clip-path: inset(0 var(--runic-trace-cut) 0 var(--runic-trace-cut));
+  background: hsl(var(--accent-hue) var(--accent-sat, 70%) 68% / 0.82);
+  filter: drop-shadow(0 0 4px hsl(var(--accent-hue) 92% 60% / 0.42));
+  -webkit-mask: url("/runic/decor/button-trace.svg") center / contain no-repeat;
+  mask: url("/runic/decor/button-trace.svg") center / contain no-repeat;
+}
+
+[data-runic-trace] > * {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-field input[type="range"]::-webkit-slider-thumb {
+    transition: none;
+  }
 }
 
 .market-row:hover,
@@ -606,15 +743,6 @@ body {
     radial-gradient(circle at 50% 18%, var(--runic-accent-soft), transparent 42%),
     linear-gradient(180deg, rgba(42, 35, 25, 0.98), rgba(7, 10, 10, 0.99));
   color: #f2eadb;
-}
-
-.reliquary-glyph .glyph-accent,
-.reliquary-glyph .glyph-fill {
-  stroke: var(--runic-accent);
-}
-
-.reliquary-glyph .glyph-fill {
-  fill: var(--runic-accent-faint);
 }
 
 .content-card,
@@ -1126,50 +1254,63 @@ body {
 }
 
 /*
-  Generated asset-backed cards
-  ----------------------------
-  The generated frame candidates are cleaned into transparent PNGs before they
-  are used here. They skin only Reliquary chrome; PoE item, currency, room, and
-  class imagery remains untouched by design.
+  Generated border ownership
+  --------------------------
+  Generated art is structural chrome, never a card background. Only one direct
+  region owner receives an ornamented border; descendants use quiet CSS material.
+  The border is nine-sliced so corners keep their proportions and edge segments
+  tile instead of stretching the complete PNG over arbitrary aspect ratios.
 */
 :root {
-  --runic-card-frame-large: url("/runic/card-large.png");
-  --runic-card-frame: url("/runic/card-medium.png");
-  --runic-card-frame-small: url("/runic/card-small.png");
-  --runic-card-frame-wide: url("/runic/card-wide.png");
-  --runic-strip-frame: url("/runic/strip-long.png");
-  --runic-frame-image: var(--runic-card-frame);
-  --runic-frame-outset: -5px;
-  --runic-frame-opacity: 0.9;
+  --runic-region-frame: url("/runic/card-large.png");
+}
+
+/* Layout wrappers organize regions; they are not visual cards themselves. */
+:where(
+  .trade-market,
+  .atlas-shell,
+  .campaign-panel-shell,
+  .temple-panel
+) {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 :where(
+  .trade-market,
+  .atlas-shell,
+  .campaign-panel-shell,
+  .temple-panel
+)::before,
+:where(
+  .trade-market,
+  .atlas-shell,
+  .campaign-panel-shell,
+  .temple-panel
+)::after {
+  content: none !important;
+  display: none !important;
+}
+
+/* Remove inherited ornament from every nested surface before assigning owners. */
+:where(
   .content-card,
   .scan-panel,
-  .evaluate-card,
   .estimate-card,
   .empty-state,
   .scan-waiting-state,
-  .listing-preview-shell,
   .listing-preview-card,
-  .trade-market,
-  .trade-market-main,
-  .trade-sidebar,
   .trade-table-shell,
-  .market-board-main,
   .market-board-state,
   .market-mover-column,
   .market-column-empty,
-  .settings-panel,
   .settings-hero,
   .settings-field,
-  .profile-panel-shell,
   .profile-hero,
   .profile-card,
   .profile-stats-card,
   .profile-skill-card,
-  .atlas-shell,
-  .atlas-main,
   .atlas-card,
   .atlas-stat-card,
   .atlas-profile-card,
@@ -1180,222 +1321,141 @@ body {
   .atlas-overview-safety-card,
   .atlas-ocr-evidence,
   .campaign-panel,
-  .campaign-panel-shell,
   .campaign-main,
   .campaign-sidebar,
   .campaign-map-card,
   .campaign-maps-empty,
   .campaign-guide-empty,
   .campaign-zone-empty,
-  .data-source-card,
-  .data-grid > div:not(.data-source-card),
-  .source-card-grid section,
-  .temple-panel,
-  .temple-sidebar,
-  .temple-board-shell,
   .temple-inspector-card,
   .temple-save-card,
   .temple-destabilization-card,
   .temple-cell-info,
   .temple-effect-group
+)::before,
+:where(
+  .content-card,
+  .scan-panel,
+  .estimate-card,
+  .empty-state,
+  .scan-waiting-state,
+  .listing-preview-card,
+  .trade-table-shell,
+  .market-board-state,
+  .market-mover-column,
+  .market-column-empty,
+  .settings-hero,
+  .settings-field,
+  .profile-hero,
+  .profile-card,
+  .profile-stats-card,
+  .profile-skill-card,
+  .atlas-card,
+  .atlas-stat-card,
+  .atlas-profile-card,
+  .atlas-empty-state,
+  .atlas-next-action-card,
+  .atlas-overview-run-card,
+  .atlas-overview-waystone-card,
+  .atlas-overview-safety-card,
+  .atlas-ocr-evidence,
+  .campaign-panel,
+  .campaign-main,
+  .campaign-sidebar,
+  .campaign-map-card,
+  .campaign-maps-empty,
+  .campaign-guide-empty,
+  .campaign-zone-empty,
+  .temple-inspector-card,
+  .temple-save-card,
+  .temple-destabilization-card,
+  .temple-cell-info,
+  .temple-effect-group
+)::after {
+  content: none !important;
+  display: none !important;
+}
+
+/* One frame per major visual region. Never add descendant cards to this list. */
+:where(
+  .evaluate-card,
+  .price-check,
+  .listing-preview-shell,
+  .trade-market > .trade-sidebar,
+  .trade-market > .trade-market-main,
+  .settings-panel,
+  .profile-panel-shell,
+  .atlas-shell > .trade-sidebar,
+  .atlas-shell > .atlas-main,
+  .campaign-panel-shell > .campaign-sub-content > .campaign-sidebar,
+  .campaign-panel-shell > .campaign-sub-content > .campaign-main,
+  .temple-panel > .temple-sidebar,
+  .temple-panel > .temple-board-shell,
+  .data-grid > .data-source-card
 ) {
-  border-color: rgba(103, 90, 71, 0.46) !important;
+  position: relative;
+  isolation: isolate;
+  border-color: rgba(103, 90, 71, 0.42) !important;
   background:
     linear-gradient(180deg, rgba(7, 7, 6, 0.97), rgba(1, 2, 3, 0.96)),
-    radial-gradient(circle at 12% 6%, rgba(148, 122, 82, 0.09), transparent 32%),
-    radial-gradient(circle at 100% 10%, var(--runic-accent-faint), transparent 34%) !important;
+    radial-gradient(circle at 12% 6%, rgba(148, 122, 82, 0.08), transparent 34%) !important;
 }
 
 :where(
-  .content-card,
-  .scan-panel,
   .evaluate-card,
-  .estimate-card,
-  .empty-state,
-  .scan-waiting-state,
+  .price-check,
   .listing-preview-shell,
-  .listing-preview-card,
-  .trade-market,
-  .trade-market-main,
-  .trade-sidebar,
-  .trade-table-shell,
-  .market-board-main,
-  .market-board-state,
-  .market-mover-column,
-  .market-column-empty,
+  .trade-market > .trade-sidebar,
+  .trade-market > .trade-market-main,
   .settings-panel,
-  .settings-hero,
-  .settings-field,
   .profile-panel-shell,
-  .profile-hero,
-  .profile-card,
-  .profile-stats-card,
-  .profile-skill-card,
-  .atlas-shell,
-  .atlas-main,
-  .atlas-card,
-  .atlas-stat-card,
-  .atlas-profile-card,
-  .atlas-empty-state,
-  .atlas-next-action-card,
-  .atlas-overview-run-card,
-  .atlas-overview-waystone-card,
-  .atlas-overview-safety-card,
-  .atlas-ocr-evidence,
-  .campaign-panel,
-  .campaign-panel-shell,
-  .campaign-main,
-  .campaign-sidebar,
-  .campaign-map-card,
-  .campaign-maps-empty,
-  .campaign-guide-empty,
-  .campaign-zone-empty,
-  .data-source-card,
-  .data-grid > div:not(.data-source-card),
-  .source-card-grid section,
-  .temple-panel,
-  .temple-sidebar,
-  .temple-board-shell,
-  .temple-inspector-card,
-  .temple-save-card,
-  .temple-destabilization-card,
-  .temple-cell-info,
-  .temple-effect-group
+  .atlas-shell > .trade-sidebar,
+  .atlas-shell > .atlas-main,
+  .campaign-panel-shell > .campaign-sub-content > .campaign-sidebar,
+  .campaign-panel-shell > .campaign-sub-content > .campaign-main,
+  .temple-panel > .temple-sidebar,
+  .temple-panel > .temple-board-shell,
+  .data-grid > .data-source-card
 )::before {
-  inset: var(--runic-frame-outset);
-  border: 0;
-  border-radius: inherit;
-  background-image: var(--runic-frame-image);
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
-  opacity: var(--runic-frame-opacity);
+  position: absolute;
+  inset: -4px;
+  z-index: 0;
+  pointer-events: none;
+  content: "";
+  border: 18px solid transparent;
+  border-image-source: var(--runic-region-frame);
+  border-image-slice: 18% 14%;
+  border-image-width: 18px;
+  border-image-outset: 0;
+  border-image-repeat: round;
+  background: none !important;
+  opacity: 0.88;
   filter:
-    drop-shadow(0 0 8px rgba(0, 0, 0, 0.54))
-    drop-shadow(0 0 5px color-mix(in srgb, var(--runic-accent) 18%, transparent));
+    drop-shadow(0 0 8px rgba(0, 0, 0, 0.58))
+    drop-shadow(0 0 4px color-mix(in srgb, var(--runic-accent) 12%, transparent));
 }
 
 :where(
-  .trade-market-main,
-  .market-board-main,
-  .settings-panel,
-  .profile-panel-shell,
-  .atlas-shell,
-  .atlas-main,
-  .campaign-main,
-  .campaign-panel-shell,
-  .temple-panel,
-  .temple-board-shell,
-  .listing-preview-shell
-) {
-  --runic-frame-image: var(--runic-card-frame-large);
-  --runic-frame-outset: -8px;
-  --runic-frame-opacity: 0.88;
-}
-
-:where(
-  .trade-table-shell,
-  .market-mover-column,
-  .settings-hero,
-  .profile-hero,
-  .atlas-card,
-  .atlas-next-action-card,
-  .campaign-panel,
-  .campaign-sidebar,
-  .data-source-card,
-  .source-card-grid section,
-  .temple-sidebar,
-  .temple-inspector-card
-) {
-  --runic-frame-image: var(--runic-card-frame-wide);
-  --runic-frame-outset: -6px;
-  --runic-frame-opacity: 0.86;
-}
-
-:where(
-  .settings-field,
-  .atlas-stat-card,
-  .atlas-profile-card,
-  .atlas-overview-run-card,
-  .atlas-overview-waystone-card,
-  .atlas-overview-safety-card,
-  .campaign-map-card,
-  .campaign-maps-empty,
-  .campaign-guide-empty,
-  .campaign-zone-empty,
-  .market-column-empty,
-  .market-board-state,
-  .profile-card,
-  .profile-stats-card,
-  .profile-skill-card,
-  .temple-save-card,
-  .temple-destabilization-card,
-  .temple-effect-group,
-  .temple-cell-info,
-  .listing-preview-card
-) {
-  --runic-frame-image: var(--runic-card-frame-small);
-  --runic-frame-outset: -5px;
-  --runic-frame-opacity: 0.84;
-}
-
-:where(
-  .content-card,
-  .scan-panel,
   .evaluate-card,
-  .estimate-card,
-  .empty-state,
-  .scan-waiting-state,
+  .price-check,
   .listing-preview-shell,
-  .listing-preview-card,
-  .trade-market,
-  .trade-market-main,
-  .trade-sidebar,
-  .trade-table-shell,
-  .market-board-main,
-  .market-mover-column,
-  .market-board-state,
-  .market-column-empty,
+  .trade-market > .trade-sidebar,
+  .trade-market > .trade-market-main,
   .settings-panel,
-  .settings-hero,
-  .settings-field,
   .profile-panel-shell,
-  .profile-hero,
-  .profile-card,
-  .profile-stats-card,
-  .profile-skill-card,
-  .atlas-shell,
-  .atlas-main,
-  .atlas-card,
-  .atlas-stat-card,
-  .atlas-profile-card,
-  .atlas-empty-state,
-  .atlas-next-action-card,
-  .atlas-overview-run-card,
-  .atlas-overview-waystone-card,
-  .atlas-overview-safety-card,
-  .campaign-panel,
-  .campaign-panel-shell,
-  .campaign-main,
-  .campaign-sidebar,
-  .campaign-map-card,
-  .campaign-maps-empty,
-  .campaign-guide-empty,
-  .campaign-zone-empty,
-  .data-source-card,
-  .data-grid > div:not(.data-source-card),
-  .source-card-grid section,
-  .temple-panel,
-  .temple-sidebar,
-  .temple-board-shell,
-  .temple-inspector-card,
-  .temple-save-card,
-  .temple-destabilization-card,
-  .temple-cell-info
-)::after {
-  opacity: 0.2;
+  .atlas-shell > .trade-sidebar,
+  .atlas-shell > .atlas-main,
+  .campaign-panel-shell > .campaign-sub-content > .campaign-sidebar,
+  .campaign-panel-shell > .campaign-sub-content > .campaign-main,
+  .temple-panel > .temple-sidebar,
+  .temple-panel > .temple-board-shell,
+  .data-grid > .data-source-card
+) > * {
+  position: relative;
+  z-index: 1;
 }
 
+/* No raster strips until a source asset matches the exact rendered dimensions. */
 :where(
   .trade-table-header,
   .listing-header,
@@ -1410,11 +1470,10 @@ body {
 ) {
   background-image:
     linear-gradient(180deg, rgba(16, 15, 13, 0.9), rgba(3, 4, 5, 0.68)),
-    var(--runic-strip-frame),
     repeating-linear-gradient(90deg, rgba(255, 244, 214, 0.022) 0 1px, transparent 1px 11px) !important;
   background-position: center;
-  background-repeat: no-repeat;
-  background-size: 100% 100%, 100% 100%, auto !important;
+  background-repeat: repeat;
+  background-size: auto !important;
   border-color: rgba(103, 90, 71, 0.3) !important;
 }
 
@@ -1422,10 +1481,125 @@ body {
   background-image:
     radial-gradient(circle at 100% 50%, color-mix(in srgb, var(--compact-alert-color) 22%, transparent) 0, transparent 54%),
     linear-gradient(90deg, rgba(3, 5, 6, 0.96), rgba(10, 11, 10, 0.94) 52%, color-mix(in srgb, var(--compact-alert-color) 12%, rgba(4, 6, 8, 0.96))),
-    var(--runic-strip-frame),
     repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.016) 0 1px, transparent 1px 9px) !important;
   background-position: center;
-  background-repeat: no-repeat;
-  background-size: auto, auto, 100% 100%, auto !important;
+  background-repeat: no-repeat, no-repeat, repeat;
+  background-size: auto, auto, auto !important;
   border-color: color-mix(in srgb, var(--compact-alert-color) 34%, rgba(103, 90, 71, 0.62)) !important;
+}
+
+/* Compact mode is one etched rail, not a miniature framed panel. */
+.hud-card.is-compact {
+  border-color: rgba(126, 101, 63, 0.72);
+  background: transparent;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 240, 207, 0.025),
+    0 3px 12px rgba(0, 0, 0, 0.5);
+}
+
+.hud-card.is-compact::before {
+  content: none;
+}
+
+.hud-card.is-compact .compact-strip {
+  padding-inline: 18px;
+  border: 0;
+  border-radius: 0;
+  background-image:
+    url("/runic/line/rail.svg"),
+    url("/runic/line/rail.svg"),
+    radial-gradient(circle at 100% 50%, color-mix(in srgb, var(--compact-alert-color) 18%, transparent) 0, transparent 48%),
+    linear-gradient(180deg, rgba(14, 13, 11, 0.98), rgba(3, 5, 6, 0.98)),
+    repeating-linear-gradient(90deg, rgba(255, 244, 214, 0.016) 0 1px, transparent 1px 9px) !important;
+  background-position: left top, left bottom, right center, center, center;
+  background-repeat: repeat-x, repeat-x, no-repeat, no-repeat, repeat;
+  background-size: 64px 4px, 64px 4px, auto, auto, auto !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 238, 195, 0.04),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.72);
+}
+
+.hud-card.is-compact .compact-strip.is-mapping.has-map-detail {
+  padding-inline: 18px;
+}
+
+.compact-runic-endcap {
+  position: absolute;
+  top: 4px;
+  z-index: 2;
+  display: block;
+  width: 14px;
+  height: 32px;
+  pointer-events: none;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 14px 32px;
+  filter: drop-shadow(0 0 4px hsl(var(--accent-hue) 76% 54% / 0.16));
+}
+
+.compact-runic-endcap-left {
+  left: 2px;
+  background-image: url("/runic/line/endcap-left.svg");
+}
+
+.compact-runic-endcap-right {
+  right: 2px;
+  background-image: url("/runic/line/endcap-right.svg");
+}
+
+.hud-card.is-compact :is(
+  .compact-primary,
+  .compact-map-indicators,
+  .compact-risk-reason,
+  .compact-checklist,
+  .compact-difficulty-bar,
+  .compact-strip > .chrome-button
+) {
+  z-index: 3;
+}
+
+.hud-card.is-compact .compact-strip > .chrome-button {
+  border-color: rgba(151, 120, 72, 0.7);
+  background:
+    linear-gradient(180deg, rgba(42, 34, 23, 0.96), rgba(10, 10, 9, 0.98));
+  color: #e4d4b7;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 238, 195, 0.08),
+    0 0 9px color-mix(in srgb, var(--compact-alert-color) 14%, transparent);
+}
+
+.hud-card.is-compact .compact-strip > .chrome-button:is(:hover, :focus-visible) {
+  border-color: color-mix(in srgb, var(--compact-alert-color) 52%, var(--runic-bronze));
+  color: #fff3dd;
+  outline: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 245, 218, 0.12),
+    0 0 13px color-mix(in srgb, var(--compact-alert-color) 28%, transparent);
+}
+
+.hud-card.is-compact .compact-strip.is-campaign {
+  padding-inline: 0;
+}
+
+.hud-card.is-compact .compact-checklist.is-expanded {
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+}
+
+.hud-card.is-compact [data-runic-trace]::after {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compact-strip,
+  .compact-strip::before,
+  .compact-strip::after,
+  .compact-strip .compact-indicator,
+  .compact-strip .compact-risk-reason,
+  .compact-strip .timer-running,
+  .compact-strip .scroll-text {
+    animation: none !important;
+    transition: none !important;
+  }
 }
