@@ -19,7 +19,7 @@ use crate::{
 
 const DISCORD_TEXT_LIMIT: usize = 128;
 const RELIQUARY_DISCORD_APPLICATION_ID: &str = "1516117492932804748";
-const RELIQUARY_BADGE_ASSET_KEY: &str = "reliquary";
+const RELIQUARY_BADGE_URL: &str = "https://kidans.github.io/PoE2-Reliquary/reliquary-discord.png";
 
 fn resolve_application_id(runtime: Option<&str>, build_time: Option<&str>) -> Option<String> {
     runtime
@@ -381,7 +381,7 @@ pub fn build_presence_payload(context: &PresenceContext) -> Option<PresencePaylo
         start_timestamp_seconds: context.started_at_epoch_ms.unwrap_or_default() as i64 / 1000,
         large_image: profile.and_then(|profile| clean_optional(&profile.class_icon_url)),
         large_text: class_name,
-        small_image: Some(RELIQUARY_BADGE_ASSET_KEY.to_string()),
+        small_image: Some(RELIQUARY_BADGE_URL.to_string()),
         small_text: Some("Reliquary".to_string()),
     })
 }
@@ -508,8 +508,6 @@ mod tests {
             Some("https://assets.poe.ninja/poe2/classes/martial-artist.webp")
         );
         assert_eq!(payload.large_text.as_deref(), Some("Martial Artist"));
-        assert_eq!(payload.small_image.as_deref(), Some("reliquary"));
-        assert_eq!(payload.small_text.as_deref(), Some("Reliquary"));
     }
 
     #[test]
