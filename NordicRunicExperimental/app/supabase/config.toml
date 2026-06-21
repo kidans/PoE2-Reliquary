@@ -1,7 +1,0 @@
-project_id = "reliquary-market"
-
-[functions.collect-market]
-verify_jwt = false
-
-[functions.market-feed]
-verify_jwt = false
