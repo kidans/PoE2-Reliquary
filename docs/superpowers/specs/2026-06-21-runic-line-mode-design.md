@@ -58,10 +58,13 @@ The risk rail is an inset etched channel rather than a nested card. It truncates
 Hideout, town, campaign, and map-without-OCR states use one vertically centered content lane within the same frame.
 
 - The title and context text stay left aligned.
+- The title/meta block is vertically centered as a unit within the `40px` line.
+- The primary block consumes all space between the left end cap and Open action; it must not inherit the narrow endgame map-column cap.
 - The Open button stays anchored to the right.
 - No empty second row is reserved when no map details exist.
 - A map awaiting OCR keeps the existing prompt and status language.
 - Campaign timing remains live without animating each timer tick.
+- Text truncation is permitted only in endgame map-detail mode. Campaign, hideout, town, waiting, and map-without-OCR states use the full available lane; campaign marquee behavior may begin only after measured overflow across that full lane.
 
 ## Campaign Expansion
 
@@ -113,6 +116,7 @@ Run the full isolated TypeScript test suite, production build, Rust tests, secur
 - Collapsed line mode remains exactly `560x40px` in every non-expanded state.
 - Map name, OCR/runtime, four indicators, risk reason, and Open action remain legible and aligned.
 - Hideout, campaign, waiting, and OCR-prompt states do not reserve an empty second row.
+- Non-map content is vertically centered and does not truncate against the endgame map-column width.
 - The frame reads as iron and etched bronze rather than a plain tinted rectangle.
 - The main line has square corners; indicator and Open controls may remain rounded.
 - Severity appears as a right-edge gradient and risk-channel emphasis, not a full-frame recolor.
