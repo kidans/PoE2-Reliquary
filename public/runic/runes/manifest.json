@@ -1,0 +1,210 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "scripts/generate-rune-assets.mjs",
+  "policy": {
+    "canonicalAlphabet": "Elder Futhark (24 runes)",
+    "modernLetters": "phonetic aliases; approximations are explicitly documented",
+    "gameAssetSafeguard": "UI chrome only; never replace Path of Exile game art or icons"
+  },
+  "canonical": [
+    "fehu",
+    "uruz",
+    "thurisaz",
+    "ansuz",
+    "raidho",
+    "kenaz",
+    "gebo",
+    "wunjo",
+    "hagalaz",
+    "nauthiz",
+    "isa",
+    "jera",
+    "eihwaz",
+    "perthro",
+    "algiz",
+    "sowilo",
+    "tiwaz",
+    "berkano",
+    "ehwaz",
+    "mannaz",
+    "laguz",
+    "ingwaz",
+    "dagaz",
+    "othala"
+  ],
+  "letters": {
+    "a": {
+      "rune": "ansuz",
+      "note": "phonetic A"
+    },
+    "b": {
+      "rune": "berkano",
+      "note": "phonetic B"
+    },
+    "c": {
+      "rune": "kenaz",
+      "note": "hard C represented by K"
+    },
+    "d": {
+      "rune": "dagaz",
+      "note": "phonetic D"
+    },
+    "e": {
+      "rune": "ehwaz",
+      "note": "practical E alias"
+    },
+    "f": {
+      "rune": "fehu",
+      "note": "phonetic F"
+    },
+    "g": {
+      "rune": "gebo",
+      "note": "phonetic G"
+    },
+    "h": {
+      "rune": "hagalaz",
+      "note": "phonetic H"
+    },
+    "i": {
+      "rune": "isa",
+      "note": "phonetic I"
+    },
+    "j": {
+      "rune": "jera",
+      "note": "phonetic J/Y"
+    },
+    "k": {
+      "rune": "kenaz",
+      "note": "phonetic K"
+    },
+    "l": {
+      "rune": "laguz",
+      "note": "phonetic L"
+    },
+    "m": {
+      "rune": "mannaz",
+      "note": "phonetic M"
+    },
+    "n": {
+      "rune": "nauthiz",
+      "note": "phonetic N"
+    },
+    "o": {
+      "rune": "othala",
+      "note": "phonetic O"
+    },
+    "p": {
+      "rune": "perthro",
+      "note": "phonetic P"
+    },
+    "q": {
+      "rune": "kenaz",
+      "note": "Q represented by K sound"
+    },
+    "r": {
+      "rune": "raidho",
+      "note": "phonetic R"
+    },
+    "s": {
+      "rune": "sowilo",
+      "note": "phonetic S"
+    },
+    "t": {
+      "rune": "tiwaz",
+      "note": "phonetic T"
+    },
+    "u": {
+      "rune": "uruz",
+      "note": "phonetic U"
+    },
+    "v": {
+      "rune": "wunjo",
+      "note": "V represented by related W sound"
+    },
+    "w": {
+      "rune": "wunjo",
+      "note": "phonetic W"
+    },
+    "x": {
+      "runes": [
+        "kenaz",
+        "sowilo"
+      ],
+      "note": "X represented by KS bindrune"
+    },
+    "y": {
+      "rune": "jera",
+      "note": "Y represented by Jera's Y sound"
+    },
+    "z": {
+      "rune": "algiz",
+      "note": "practical Z alias"
+    }
+  },
+  "tabs": {
+    "profile-pr": {
+      "pair": "PR",
+      "runes": [
+        "perthro",
+        "raidho"
+      ],
+      "file": "tabs/profile-pr.svg"
+    },
+    "scan-sk": {
+      "pair": "SK",
+      "runes": [
+        "sowilo",
+        "kenaz"
+      ],
+      "file": "tabs/scan-sk.svg"
+    },
+    "trade-tr": {
+      "pair": "TR",
+      "runes": [
+        "tiwaz",
+        "raidho"
+      ],
+      "file": "tabs/trade-tr.svg"
+    },
+    "campaign-km": {
+      "pair": "KM",
+      "runes": [
+        "kenaz",
+        "mannaz"
+      ],
+      "file": "tabs/campaign-km.svg"
+    },
+    "atlas-at": {
+      "pair": "AT",
+      "runes": [
+        "ansuz",
+        "tiwaz"
+      ],
+      "file": "tabs/atlas-at.svg"
+    },
+    "data-dt": {
+      "pair": "DT",
+      "runes": [
+        "dagaz",
+        "tiwaz"
+      ],
+      "file": "tabs/data-dt.svg"
+    },
+    "temple-tm": {
+      "pair": "TM",
+      "runes": [
+        "tiwaz",
+        "mannaz"
+      ],
+      "file": "tabs/temple-tm.svg"
+    },
+    "settings-st": {
+      "pair": "ST",
+      "runes": [
+        "sowilo",
+        "tiwaz"
+      ],
+      "file": "tabs/settings-st.svg"
+    }
+  }
+}

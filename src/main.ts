@@ -87,12 +87,15 @@ import {
   type MapRunConfidence,
 } from "./atlas-run-history";
 import "./styles.css";
+import "./runic-theme.css";
 import { DEFAULT_APP_SETTINGS, type AppSettings } from "./app-settings";
+import { TAB_RUNE_ASSETS } from "./rune-assets";
 import {
   shouldAnimateTabTransition,
   tabMotionDirection,
   type MotionTabId,
 } from "./ui-motion";
+import { createReliquaryMotionRuntime } from "./motion-runtime";
 
 type GuideStep = {
   text: string;
@@ -505,7 +508,6 @@ const state: AppState = {
 
 let activeTab: TabId = "profile";
 let lastRenderedPanelTab: TabId | null = null;
-let panelTransitionTimer: number | null = null;
 let workerMessages: WorkerStatus[] = [];
 let compactMode = false;
 let selectedSpecKeys = new Set<string>();
@@ -1150,7 +1152,7 @@ let requestedScanWindowHeight = 0;
 const PRICE_REQUEST_COOLDOWN_MS = 10_000;
 const recentPriceRequestSignatures = new Map<string, number>();
 
-const SETTINGS_STORAGE_KEY = "reliquary.ui.settings";
+const SETTINGS_STORAGE_KEY = "reliquary.runic.ui.settings";
 let discordPresenceStatus: DiscordPresenceStatus | null = null;
 let lastSyncedDiscordPresenceEnabled: boolean | null = null;
 let appSettings = readAppSettings();
@@ -1195,58 +1197,8 @@ const CURRENCY_ICON_ALIASES: Record<string, string> = {
 };
 
 function renderTabGlyph(tab: TabId) {
-  const glyphs: Record<TabId, string> = {
-    profile: `
-      <path class="glyph-frame" d="M12 2.5 20.5 8v8L12 21.5 3.5 16V8Z" />
-      <path class="glyph-line" d="M12 7.1a2.7 2.7 0 1 0 0 5.4 2.7 2.7 0 0 0 0-5.4Z" />
-      <path class="glyph-line" d="M7.2 17.2c1-2.1 2.6-3.2 4.8-3.2s3.8 1.1 4.8 3.2" />
-      <path class="glyph-accent" d="M6.7 8.5 4.9 10m12.4-1.5 1.8 1.5" />
-    `,
-    scan: `
-      <path class="glyph-frame" d="M5.1 8V5.1H8M16 5.1h2.9V8M18.9 16v2.9H16M8 18.9H5.1V16" />
-      <path class="glyph-line" d="M12 6.3v11.4M6.3 12h11.4" />
-      <path class="glyph-fill" d="M12 9.2 14.8 12 12 14.8 9.2 12Z" />
-    `,
-    trade: `
-      <path class="glyph-frame" d="M4.7 7.2h11.6l2.9 2.8-2.9 2.8H4.7" />
-      <path class="glyph-frame" d="M19.3 16.8H7.7l-2.9-2.8 2.9-2.8h11.6" />
-      <path class="glyph-accent" d="M8.2 7.2 5.4 10l2.8 2.8M15.8 11.2l2.8 2.8-2.8 2.8" />
-    `,
-    campaign: `
-      <path class="glyph-frame" d="M12 3.4a8.6 8.6 0 1 0 0 17.2 8.6 8.6 0 0 0 0-17.2Z" />
-      <path class="glyph-line" d="M12 7.1v5.1l3.4 2" />
-      <path class="glyph-accent" d="M7.3 5.3 5.6 3.6M16.7 5.3l1.7-1.7M12 20.6v-2.1" />
-    `,
-    atlas: `
-      <path class="glyph-frame" d="M12 2.8 19.6 7v10L12 21.2 4.4 17V7Z" />
-      <path class="glyph-line" d="M12 2.8v18.4M4.4 7l7.6 4.2L19.6 7" />
-      <path class="glyph-accent" d="M6.1 16.1 12 12.8l5.9 3.3" />
-    `,
-    data: `
-      <path class="glyph-frame" d="M6 6.6c0-1.8 2.7-3.1 6-3.1s6 1.3 6 3.1-2.7 3.1-6 3.1-6-1.3-6-3.1Z" />
-      <path class="glyph-line" d="M6 6.6v5.2c0 1.8 2.7 3.1 6 3.1s6-1.3 6-3.1V6.6" />
-      <path class="glyph-line" d="M6 11.8V17c0 1.8 2.7 3.1 6 3.1s6-1.3 6-3.1v-5.2" />
-      <path class="glyph-accent" d="M8.4 15.7c.9.6 2.1.9 3.6.9s2.7-.3 3.6-.9" />
-    `,
-    temple: `
-      <path class="glyph-frame" d="M12 2.5 21.5 12 12 21.5 2.5 12Z" />
-      <path class="glyph-line" d="M12 6.2 17.8 12 12 17.8 6.2 12Z" />
-      <path class="glyph-accent" d="M12 2.5v3.7M12 17.8v3.7M2.5 12h3.7M17.8 12h3.7" />
-    `,
-    settings: `
-      <path class="glyph-frame" d="M12 3.3 14.2 5l2.7-.5 1.2 2.5-1.5 2.3.6 2.7 2.1 1.7-1.2 2.5-2.8-.1-2.1 1.8-.7 2.7h-3l-.7-2.7-2.1-1.8-2.8.1-1.2-2.5L4.8 12l.6-2.7L3.9 7l1.2-2.5 2.7.5Z" />
-      <path class="glyph-line" d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" />
-      <path class="glyph-fill" d="M12 10.6 13.4 12 12 13.4 10.6 12Z" />
-    `,
-  };
-
-  return `
-    <span class="tab-icon tab-icon-${tab}" aria-hidden="true">
-      <svg class="reliquary-glyph" viewBox="0 0 24 24" focusable="false">
-        ${glyphs[tab]}
-      </svg>
-    </span>
-  `;
+  const asset = TAB_RUNE_ASSETS[tab];
+  return `<span class="tab-icon tab-rune tab-rune-${tab}" style="--tab-rune: url('${asset.url}')" data-rune-pair="${asset.pair}" aria-hidden="true"></span>`;
 }
 
 root.innerHTML = isListingPreviewWindow
@@ -1258,6 +1210,7 @@ root.innerHTML = isListingPreviewWindow
   : `
     <main class="overlay-root">
       <section class="hud-card interactive" data-interactive>
+        <div class="cursor-aura" data-cursor-aura aria-hidden="true"></div>
         <header class="hud-header" data-drag-handle>
           <div class="brand-lockup">
             <h1 class="brand-title">reliquary</h1>
@@ -1276,6 +1229,8 @@ root.innerHTML = isListingPreviewWindow
         </header>
 
         <div class="compact-strip" data-drag-handle>
+          <span class="compact-runic-endcap compact-runic-endcap-left" aria-hidden="true"></span>
+          <span class="compact-runic-endcap compact-runic-endcap-right" aria-hidden="true"></span>
           <div class="compact-primary">
             <span data-compact-title>Reliquary ready</span>
             <strong data-compact-meta>Ctrl+C scan | Alt+D trade</strong>
@@ -1331,6 +1286,7 @@ const panelElement = root.querySelector<HTMLElement>(isListingPreviewWindow ? "[
 const zoneElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-zone]");
 const leagueElement = isListingPreviewWindow ? null : root.querySelector<HTMLSelectElement>("[data-league]");
 const hudElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>(".hud-card");
+const cursorAuraElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-cursor-aura]");
 const compactTitleElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-title]");
 const compactMetaElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-meta]");
 const compactIndicatorsElement = isListingPreviewWindow ? null : root.querySelector<HTMLElement>("[data-compact-indicators]");
@@ -1348,6 +1304,7 @@ if (
       !zoneElement
       || !leagueElement
       || !hudElement
+      || !cursorAuraElement
       || !compactTitleElement
       || !compactMetaElement
       || !compactIndicatorsElement
@@ -1356,6 +1313,17 @@ if (
   )
 ) {
   throw new Error("Reliquary UI shell failed to initialize.");
+}
+
+const motionRuntime = !isListingPreviewWindow && hudElement && cursorAuraElement
+  ? createReliquaryMotionRuntime(hudElement, cursorAuraElement, {
+      compactMode,
+      previewWindow: false,
+    })
+  : null;
+
+if (motionRuntime) {
+  window.addEventListener("beforeunload", motionRuntime.destroy, { once: true });
 }
 
 if (!isListingPreviewWindow) {
@@ -1380,6 +1348,7 @@ function render() {
   zoneElement!.textContent = state.current_zone || "Unknown";
   renderLeagueOptions();
   hudElement!.classList.toggle("is-compact", compactMode);
+  motionRuntime?.setContext({ compactMode });
   hudElement!.dataset.tab = activeTab;
   panelElement!.dataset.tab = activeTab;
   const previousPanelTab = lastRenderedPanelTab as MotionTabId | null;
@@ -1551,33 +1520,22 @@ function render() {
 }
 
 function commitPanelTransition(shouldAnimate: boolean) {
+  const previousPanelTab = lastRenderedPanelTab as MotionTabId | null;
   lastRenderedPanelTab = activeTab;
   if (!shouldAnimate || !panelElement) {
     clearPanelTransition();
     return;
   }
 
-  if (panelTransitionTimer) {
-    window.clearTimeout(panelTransitionTimer);
-    panelTransitionTimer = null;
-  }
-
-  panelElement.classList.remove("is-tab-entering");
-  void panelElement.offsetWidth;
-  panelElement.classList.add("is-tab-entering");
-  panelTransitionTimer = window.setTimeout(() => {
-    panelElement?.classList.remove("is-tab-entering");
-    panelTransitionTimer = null;
-  }, 280);
+  const activeTabButton = tabButtons.find((button) => button.dataset.tab === activeTab) ?? null;
+  const direction = tabMotionDirection(previousPanelTab, activeTab as MotionTabId);
+  motionRuntime?.animatePanelEntry(activeTab as MotionTabId, panelElement, direction, activeTabButton);
+  motionRuntime?.animateFeatureArrival(activeTab as MotionTabId, panelElement);
 }
 
 function clearPanelTransition() {
   if (!panelElement) return;
-  if (panelTransitionTimer) {
-    window.clearTimeout(panelTransitionTimer);
-    panelTransitionTimer = null;
-  }
-  panelElement.classList.remove("is-tab-entering");
+  motionRuntime?.clearPanelMotion(panelElement);
 }
 
 function renderLeagueOptions() {
@@ -2179,8 +2137,10 @@ function renderScanPanel(item: ScannedItem | null, priceCheck: PriceCheck | null
   if (!item) {
     return `
       <div class="empty-state scan-waiting-state">
-        <p class="section-label">Waiting for clipboard scan</p>
-        <p>Hover an item in PoE2 and press ${renderScanShortcut()}. The parsed item and hazard profile will land here.</p>
+        <div class="scan-waiting-copy">
+          <p class="section-label">Waiting for clipboard scan</p>
+          <p>Hover an item in PoE2 and press ${renderScanShortcut()}. The parsed item and hazard profile will land here.</p>
+        </div>
       </div>
     `;
   }
@@ -4772,12 +4732,21 @@ function renderSettingsPanel() {
             <small>Opt in to show your character, level, current campaign area, hideout, or map on Discord. Confirmed OCR mechanics may appear beside the map name.</small>
             <small data-discord-presence-status>${escapeHtml(discordPresenceStatus?.message ?? "Checking Discord availability...")}</small>
           </span>
-          <input
-            data-setting="discordPresenceEnabled"
-            type="checkbox"
-            ${appSettings.discordPresenceEnabled ? "checked" : ""}
-            aria-label="Enable Discord Rich Presence"
-          />
+          <span class="runic-toggle" data-runic-toggle>
+            <input
+              class="runic-toggle-input"
+              data-runic-toggle-input
+              data-setting="discordPresenceEnabled"
+              type="checkbox"
+              ${appSettings.discordPresenceEnabled ? "checked" : ""}
+              aria-label="Enable Discord Rich Presence"
+            />
+            <span class="runic-toggle-track" aria-hidden="true">
+              <span class="runic-toggle-label runic-toggle-off">Off</span>
+              <span class="runic-toggle-label runic-toggle-on">On</span>
+              <span class="runic-toggle-medallion"><span class="runic-toggle-rune"></span></span>
+            </span>
+          </span>
         </label>
 
       </div>

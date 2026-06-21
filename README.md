@@ -6,11 +6,19 @@ It runs as a transparent, always-on-top overlay using Tauri v2, with a Rust back
 
 Reliquary is local-first. It does not use OAuth, does not track personal data, and keeps user-specific settings and progress on your own machine. It only fetches current game data from trusted Path of Exile sources.
 
-Current release: **v0.1.4**.
+Current release: **v0.1.5**.
 
 ---
 
 ## Features
+
+### Nordic Runic Interface
+
+Reliquary now uses a darker Nordic runic visual language built specifically for the overlay. The floating navigation spine uses eight distinct bindrunes, major panels use restrained etched-metal framing, and the 40px line mode has its own seamless vector rail instead of a scaled-down full window.
+
+The theme only changes Reliquary's interface chrome. Path of Exile item art, currencies, rarity banners, class portraits, map imagery, and Temple room icons always keep their original pixels and colors.
+
+Motion is intentionally selective. GSAP powers card and tab focus, cancellable panel transitions, cursor-aware aura lighting, and small control responses in the full overlay. Compact mode, hotkeys, OCR, marketplace requests, and parsing remain outside the animation runtime. Windows reduced-motion preferences disable the presentation layer automatically.
 
 ### Quick Price Check Beta
 
@@ -89,6 +97,7 @@ Reliquary is tested for Path of Exile 2 version 0.5. It includes updated league 
 - **Tauri v2** - Desktop shell with native webview support
 - **Rust** - Parsing, workers, hotkeys, window management, caching, and API calls
 - **Vite + TypeScript** - Overlay UI with custom CSS and no frontend framework
+- **GSAP Core** - Bounded full-overlay motion; excluded from compact and backend hot paths
 
 ---
 
